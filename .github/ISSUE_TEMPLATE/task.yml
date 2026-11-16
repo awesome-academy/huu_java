@@ -1,0 +1,49 @@
+name: Task kỹ thuật
+description: Việc không phải tính năng hay bug (setup, cấu hình, refactor, test coverage, đóng gói, demo)
+title: "[Task] "
+# Repo academy không có label "task" (và không tự tạo được) — phân biệt bằng tiền tố [Task] trong tiêu đề
+body:
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase
+      description: Theo CLAUDE.md, mục "Lộ trình Advance → Giai đoạn". Việc trên chức năng làm trước khóa Advance chọn dòng cuối.
+      options:
+        - 0. Hạ tầng (Docker)
+        - 1. Logging (Logback, MDC, audit log)
+        - 2. Security hardening (OWASP)
+        - 3. Testing (Mockito, WebMvcTest, Testcontainers)
+        - 4. Scheduler & Multithread
+        - 5. JMS (ActiveMQ Artemis)
+        - 6. WebSocket + STOMP + Chart
+        - 7. Excel import/export (Apache POI)
+        - 8. SOAP (Spring-WS) + Tổng kết
+        - Chức năng có sẵn (trước khóa Advance)
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Mô tả
+      description: Cần làm gì, vì sao
+      placeholder: |
+        - Thêm logback-spring.xml: dev ghi console, prod ghi file theo ngày
+        - Thêm filter đặt requestId vào MDC
+    validations:
+      required: true
+  - type: input
+    id: estimate
+    attributes:
+      label: Estimate (giờ)
+      placeholder: "2"
+    validations:
+      required: true
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done
+      description: Tick dần khi làm — không cần tick lúc tạo issue
+      options:
+        - label: Hoàn thành đúng mô tả
+        - label: "`./mvnw test` (hoặc `docker compose run --rm maven test`) pass"
+        - label: Cập nhật CLAUDE.md / README / .env.example nếu thay đổi lệnh, cấu hình, quy ước

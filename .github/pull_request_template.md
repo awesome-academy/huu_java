@@ -2,10 +2,9 @@
 <!-- Mô tả ngắn gọn những thay đổi trong PR này -->
 
 
-## 🔗 Related Issue / Redmine Ticket
-<!-- Link ticket Redmine liên quan -->
-- Redmine Ticket: #
-- Issue: #
+## 🔗 Related Issue
+<!-- "Closes #<số issue>" — issue tự đóng khi PR được merge vào master -->
+- Closes #
 
 ---
 
@@ -85,7 +84,7 @@
 **Documentation**
 - [ ] API documentation updated (Swagger/OpenAPI) if applicable
 - [ ] README updated if applicable
-- [ ] Redmine ticket status updated
+- [ ] Definition of Done trong issue đã tick đủ
 
 **Security**
 - [ ] Input validation is in place
@@ -110,7 +109,7 @@
 ---
 
 ## ⏱️ Estimate vs Actual
-<!-- So sánh thời gian estimate và thực tế (theo Redmine ticket) -->
+<!-- So sánh thời gian estimate (trong issue) và thực tế -->
 
 | Task | Estimated | Actual |
 |------|-----------|--------|

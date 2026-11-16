@@ -21,52 +21,70 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 
 ## Prerequisites
 
-- **JDK 25** (pom.xml pin `<java.version>25</java.version>` — JDK 17/21 sẽ không build được)
-- **MySQL 8.x** đang chạy tại `localhost:3306` (hoặc override qua env var)
-- Không cần cài Maven — dùng Maven Wrapper (`mvnw.cmd` trên Windows, `./mvnw` trên Mac/Linux)
+- **Docker** (Docker Desktop trên Windows/Mac) — đủ để build, chạy và test toàn bộ dự án, **không cần cài JDK/Maven/MySQL**.
+- *(Tuỳ chọn)* **JDK 25** nếu muốn chạy app trực tiếp trên máy (pom.xml pin `<java.version>25</java.version>` — JDK 17/21 không build được). Không cần cài Maven — dùng Maven Wrapper (`mvnw.cmd` trên Windows, `./mvnw` trên Mac/Linux).
 
 ## Quick Start
 
-1. **Tạo database:**
-
-   ```sql
-   CREATE DATABASE foodsndrinks CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-   ```
-
-2. **Khai báo biến môi trường bắt buộc** (dev profile không có default cho DB credentials):
+1. **Tạo file `.env`** từ mẫu và điền các giá trị bắt buộc (`DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `ARTEMIS_PASSWORD`; các mục tuỳ chọn như OAuth, mail, Slack xem giải thích trong file):
 
    ```bash
-   # Windows (PowerShell)
-   $env:DB_USERNAME = "root"
-   $env:DB_PASSWORD = "your-password"
-
-   # Mac/Linux
-   export DB_USERNAME=root
-   export DB_PASSWORD=your-password
+   cp .env.example .env
    ```
 
-3. **Chạy ứng dụng** (Flyway tự tạo bảng khi khởi động):
+   `.env` đã có trong `.gitignore` — **không commit**. Biến không dùng thì để nguyên dấu `#` (dòng `KEY=` rỗng sẽ ghi đè giá trị mặc định thành rỗng).
+
+2. **Chạy ứng dụng** — Flyway tự tạo bảng khi khởi động.
+
+   **Cách A — Toàn bộ trong Docker (không cần JDK):**
 
    ```bash
-   # Windows
-   mvnw.cmd spring-boot:run
-
-   # Mac/Linux
-   ./mvnw spring-boot:run
+   docker compose up -d --build     # MySQL 8.4 + ActiveMQ Artemis + app (profile dev)
+   docker compose logs -f app       # Xem log app
    ```
 
-4. Truy cập:
+   **Cách B — Hạ tầng trong Docker, app chạy bằng JDK 25 trên máy:** bỏ comment dòng `DB_FOODSNDRINKS_URL` trong `.env` (trỏ tới MySQL của compose ở `localhost:33070`), rồi:
+
+   ```bash
+   docker compose up -d mysql artemis
+
+   mvnw.cmd spring-boot:run     # Windows
+   ./mvnw spring-boot:run       # Mac/Linux
+   ```
+
+   App tự đọc `.env` ở thư mục chạy lệnh (`spring.config.import: optional:file:.env[.properties]`); biến môi trường của hệ điều hành vẫn được ưu tiên. Muốn dùng MySQL cài sẵn trên máy thì giữ `DB_FOODSNDRINKS_URL` bị comment và đặt `DB_USERNAME`/`DB_PASSWORD` của MySQL đó bằng biến môi trường.
+
+3. **Truy cập:**
    - Web (người dùng): http://localhost:8080
    - Admin: http://localhost:8080/admin (cần tài khoản `ROLE_ADMIN`)
    - Swagger UI (chỉ dev): http://localhost:8080/api-docs/swagger
+   - Artemis console: http://localhost:8161 (đăng nhập bằng `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
 
-**Các lệnh khác:**
+4. **Tạo tài khoản admin** (database mới chưa có dữ liệu): đăng ký user tại `/register`, sau đó nâng quyền:
+
+   ```bash
+   docker compose exec mysql sh -c 'mysql -u root -p"$MYSQL_ROOT_PASSWORD" foodsndrinks -e "UPDATE users SET role = '\''ROLE_ADMIN'\'' WHERE username = '\''<username>'\''"'
+   ```
+
+   Đăng nhập lại để nhận quyền mới.
+
+**Build & test:**
 
 ```bash
-./mvnw test                        # Chạy unit test
-./mvnw clean package -DskipTests   # Build file JAR (bỏ qua test)
-./mvnw clean                       # Clean dự án
+# Trong Docker (container JDK 25, dùng MySQL của compose — không cần JDK local)
+docker compose run --rm maven test                          # Toàn bộ test
+docker compose run --rm maven test -Dtest=AuthProductApiTest # Chạy 1 class test
+docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
+
+# Hoặc bằng JDK local (cần MySQL: compose ở Cách B hoặc MySQL trên máy)
+./mvnw test
+./mvnw clean package -DskipTests
+
+docker compose up -d --build app     # Build lại image và chạy app sau khi sửa code
+docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
+
+Test hiện tại là `@SpringBootTest` chạy trên database `foodsndrinks` (của compose hoặc của máy) và rollback sau mỗi test.
 
 ## Project Structure
 
@@ -113,9 +131,14 @@ Profile mặc định là `dev` (đổi qua env `SPRING_PROFILES_ACTIVE=prod` kh
 
 ### Biến môi trường
 
+Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng biến môi trường của hệ điều hành (được ưu tiên hơn `.env`). **Không đặt secret thật làm giá trị mặc định `${VAR:default}` trong `application*.yml`.**
+
 | Biến | Bắt buộc | Mô tả |
 |---|---|---|
-| `DB_USERNAME` / `DB_PASSWORD` | ✅ | Tài khoản MySQL |
+| `DB_USERNAME` / `DB_PASSWORD` | ✅ | Tài khoản MySQL (với Docker: compose tạo user này lần đầu khởi động) |
+| `MYSQL_ROOT_PASSWORD` / `DB_NAME` | Docker | Mật khẩu root và tên database của container MySQL |
+| `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | Docker | Tài khoản broker ActiveMQ Artemis của compose |
+| `DB_HOST_PORT` / `APP_PORT` / `ARTEMIS_PORT` / `ARTEMIS_CONSOLE_PORT` | — | Port compose mở ra máy host (mặc định 33070 / 8080 / 61616 / 8161, chỉ bind `127.0.0.1`) |
 | `DB_FOODSNDRINKS_URL` | Prod | JDBC URL (dev mặc định `jdbc:mysql://localhost:3306/foodsndrinks`) |
 | `JWT_SECRET` | Prod | Secret ký JWT, ≥ 32 ký tự (dev có fallback) |
 | `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random) |

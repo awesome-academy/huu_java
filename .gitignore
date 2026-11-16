@@ -34,3 +34,9 @@ build/
 
 ### Ignore ###
 uploads/*
+logs/
+
+### Secrets (Docker / spring.config.import) ###
+.env
+.env.*
+!.env.example

@@ -1,0 +1,99 @@
+# Chạy toàn bộ trong Docker, không cần JDK/Maven/MySQL trên máy:
+#   docker compose up -d --build                 # MySQL + Artemis + app (http://localhost:8080)
+#   docker compose run --rm maven test           # Chạy lệnh Maven bất kỳ trong container JDK 25
+#   docker compose up -d mysql artemis           # Chỉ hạ tầng, app chạy bằng JDK local
+# Biến môi trường lấy từ file .env (copy từ .env.example). Compose này chỉ dành cho môi trường LOCAL:
+# mọi port chỉ bind 127.0.0.1.
+
+# Cấu hình dùng chung cho app và maven — trong mạng Docker dùng tên service + port nội bộ.
+# env_file truyền toàn bộ .env vào container (OAuth, mail, Slack, JWT...); các biến dưới đây ghi đè giá trị trong .env.
+x-app-common: &app-common
+  env_file: .env
+  environment: &app-env
+    DB_FOODSNDRINKS_URL: jdbc:mysql://mysql:3306/${DB_NAME:-foodsndrinks}?serverTimezone=UTC
+    ARTEMIS_HOST: artemis
+    ARTEMIS_PORT: 61616
+    # @CreationTimestamp / LocalDateTime.now() dùng múi giờ JVM — giữ giống khi chạy app trên máy (giờ VN)
+    TZ: Asia/Ho_Chi_Minh
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: foodsndrinks-mysql
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-foodsndrinks}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME is required}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-33070}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # Ping qua TCP (127.0.0.1) thay vì socket: lúc khởi tạo lần đầu MySQL chạy server tạm với --skip-networking,
+      # ping qua socket sẽ báo healthy quá sớm khiến app bị "Connection refused"
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Broker JMS cho các tính năng messaging sắp làm (app hiện chưa kết nối tới).
+  artemis:
+    image: apache/activemq-artemis:2.38.0
+    container_name: foodsndrinks-artemis
+    environment:
+      ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
+      ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${ARTEMIS_PORT:-61616}:61616"           # JMS (core / OpenWire / AMQP)
+      - "127.0.0.1:${ARTEMIS_CONSOLE_PORT:-8161}:8161"     # Web console
+    volumes:
+      - artemis-data:/var/lib/artemis-instance
+
+  app:
+    <<: *app-common
+    build: .
+    image: foodsndrinks:local
+    container_name: foodsndrinks-app
+    environment:
+      <<: *app-env
+      # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    volumes:
+      # Dùng chung thư mục uploads/ của project (có sẵn ảnh mặc định default-food.png, default-avatar.png)
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      artemis:
+        condition: service_started
+
+  # Container JDK 25 để chạy lệnh Maven (compile, package, test...) mà không cần cài JDK local.
+  # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
+  # Test hiện tại (@SpringBootTest) dùng database của service mysql và rollback sau mỗi test.
+  # Không mount Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host.
+  maven:
+    <<: *app-common
+    image: eclipse-temurin:25-jdk
+    profiles: ["tools"]
+    working_dir: /workspace
+    entrypoint: ["sh", "./mvnw", "-B"]
+    command: ["package", "-DskipTests"]
+    volumes:
+      - .:/workspace
+      - maven-repo:/root/.m2
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  artemis-data:
+  maven-repo:
