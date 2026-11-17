@@ -126,7 +126,7 @@ Profile mặc định là `dev` (đổi qua env `SPRING_PROFILES_ACTIVE=prod` kh
 | File | Vai trò |
 |---|---|
 | `application.yml` | Cấu hình chung: mail (SMTP), OAuth2 client (Google/Facebook/Twitter), Slack webhook, cron thống kê |
-| `application-dev.yml` | Datasource local, logging DEBUG, Swagger UI bật, JWT secret fallback, upload dir |
+| `application-dev.yml` | Datasource local, logging DEBUG, Swagger UI bật, JWT secret/remember-me key tự sinh ngẫu nhiên nếu không đặt, upload dir |
 | `application-prod.yml` | Datasource từ env (bắt buộc), logging ra file `logs/foodsndrinks.log`, **Swagger tắt hoàn toàn** |
 
 ### Biến môi trường
@@ -139,9 +139,11 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `MYSQL_ROOT_PASSWORD` / `DB_NAME` | Docker | Mật khẩu root và tên database của container MySQL |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | Docker | Tài khoản broker ActiveMQ Artemis của compose |
 | `DB_HOST_PORT` / `APP_PORT` / `ARTEMIS_PORT` / `ARTEMIS_CONSOLE_PORT` | — | Port compose mở ra máy host (mặc định 33070 / 8080 / 61616 / 8161, chỉ bind `127.0.0.1`) |
+| `APP_TZ` | Docker | Múi giờ JVM của container, compose truyền vào dưới tên `TZ` (mặc định `Asia/Ho_Chi_Minh`, đặt sẵn trong image; `docker run` không qua compose thì dùng `-e TZ=...`). Ngày/tháng của đơn và báo cáo tính theo múi giờ JVM → mọi instance phải dùng chung một giá trị. App chạy bằng JDK local không đọc biến này từ `.env` (dùng `-Duser.timezone`) |
+| `HOST_UID` / `HOST_GID` | Linux/WSL2 nếu khác 1000 | UID/GID user máy host (`id -u` / `id -g`): container app chạy bằng user này để ghi được `uploads/`, `logs/` mà file vẫn thuộc user máy host (mặc định 1000). Container maven tự chạy bằng chủ sở hữu thư mục project (`docker/maven-entrypoint.sh`), không dùng biến này |
 | `DB_FOODSNDRINKS_URL` | Prod | JDBC URL (dev mặc định `jdbc:mysql://localhost:3306/foodsndrinks`) |
-| `JWT_SECRET` | Prod | Secret ký JWT, ≥ 32 ký tự (dev có fallback) |
-| `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random) |
+| `JWT_SECRET` | Prod | Secret ký JWT, ≥ 32 byte / 256 bit (dev không đặt thì tự sinh khoá random 256 bit mỗi khi context khởi động — token cũ hết hiệu lực sau restart, kể cả hot restart của devtools) |
+| `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random 256 bit) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Khi dùng login Google | OAuth2 credentials từ Google Console |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Khi dùng login Facebook | OAuth2 credentials |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Khi dùng login Twitter/X | OAuth2 credentials |
@@ -149,7 +151,7 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `ADMIN_NOTIFY_EMAIL` | — | Email nhận thông báo đơn hàng & báo cáo tháng |
 | `SLACK_WEBHOOK_URL` / `SLACK_NOTIFY_ENABLED` | — | Slack incoming webhook thông báo đơn mới |
 | `MAIL_NOTIFY_ENABLED` | — | Bật/tắt email thông báo |
-| `ORDER_STATS_CRON` | — | Cron gửi báo cáo tháng (mặc định `0 0 23 L * *`, 23h ngày cuối tháng, giờ VN) |
+| `ORDER_STATS_CRON` | — | Cron gửi báo cáo tháng (mặc định `0 0 23 L * *`, 23h ngày cuối tháng, theo múi giờ JVM — `APP_TZ` khi chạy bằng compose) |
 | `UPLOAD_DIR` | — | Thư mục lưu ảnh upload (mặc định `./uploads`) |
 | `SERVER_PORT` | — | Port (mặc định 8080) |
 
@@ -175,7 +177,7 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 ## Notification & Batch Job
 
 - **Đơn hàng mới:** sau khi checkout commit thành công (`OrderPlacedEvent` + `@TransactionalEventListener`), hệ thống gửi **Slack** + **email** cho admin (chạy async qua thread pool `notify-*`).
-- **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 23h ngày cuối tháng, `Asia/Ho_Chi_Minh`) — tổng hợp doanh thu, số đơn theo trạng thái và email cho admin.
+- **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 23h ngày cuối tháng, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái và email cho admin.
 
 ## Xử Lý Lỗi
 

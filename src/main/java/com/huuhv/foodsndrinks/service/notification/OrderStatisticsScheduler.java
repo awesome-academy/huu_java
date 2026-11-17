@@ -24,7 +24,8 @@ public class OrderStatisticsScheduler {
     private final EmailNotificationService emailNotificationService;
 
     @Transactional(readOnly = true)
-    @Scheduled(cron = "${app.notification.statistics.cron}", zone = "${app.notification.statistics.zone}")
+    // Không đặt zone: cron chạy theo múi giờ JVM, cùng múi giờ với LocalDate.now() bên dưới
+    @Scheduled(cron = "${app.notification.statistics.cron}")
     public void sendMonthlyStatistics() {
         LocalDate today = LocalDate.now();
         LocalDateTime startOfMonth = today.withDayOfMonth(1).atStartOfDay();

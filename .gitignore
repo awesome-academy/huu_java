@@ -33,8 +33,10 @@ build/
 .vscode/
 
 ### Ignore ###
+# logs/.gitignore được giữ lại để thư mục logs/ có sẵn khi clone (bind mount của docker-compose)
 uploads/*
-logs/
+logs/*
+!logs/.gitignore
 
 ### Secrets (Docker / spring.config.import) ###
 .env

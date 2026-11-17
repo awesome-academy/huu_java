@@ -1,0 +1,2 @@
+# Giữ thư mục logs/ trong repo: docker-compose bind mount ./logs, nếu máy host chưa có thì Docker tự tạo nó thuộc root.
+# Quy tắc ignore nằm ở .gitignore gốc (logs/* và !logs/.gitignore) — không khai báo lại ở đây.

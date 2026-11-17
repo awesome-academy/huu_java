@@ -18,7 +18,13 @@ RUN --mount=type=cache,target=/root/.m2 sh ./mvnw -B -q package -DskipTests \
 FROM eclipse-temurin:25-jre
 WORKDIR /app
 
-# logs/ (profile prod ghi file log) và uploads/ (FileStorageService, UPLOAD_DIR) phải ghi được bởi user spring
+# OrderService/OrderStatisticsScheduler dùng LocalDateTime.now()/LocalDate.now() (múi giờ JVM): đặt sẵn giờ VN trong image
+# để chạy ở đâu (docker run, server) cũng tính ngày/tháng đúng. JVM đọc TZ và tự có dữ liệu múi giờ, không cần tzdata.
+# Đây là giá trị mặc định: compose ghi đè bằng APP_TZ trong .env, docker run thì -e TZ=... — mọi instance phải dùng chung một giá trị.
+ENV TZ=Asia/Ho_Chi_Minh
+
+# logs/ (profile prod ghi file log) và uploads/ (FileStorageService, UPLOAD_DIR) phải ghi được bởi user spring.
+# docker-compose ghi đè user bằng UID/GID của máy host (HOST_UID/HOST_GID) vì 2 thư mục này là bind mount.
 RUN groupadd --system spring && useradd --system --gid spring --no-create-home spring \
     && mkdir -p /app/logs /app/uploads && chown spring:spring /app/logs /app/uploads
 COPY --from=build --chown=spring:spring /workspace/app.jar app.jar

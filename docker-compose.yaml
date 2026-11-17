@@ -13,8 +13,10 @@ x-app-common: &app-common
     DB_FOODSNDRINKS_URL: jdbc:mysql://mysql:3306/${DB_NAME:-foodsndrinks}?serverTimezone=UTC
     ARTEMIS_HOST: artemis
     ARTEMIS_PORT: 61616
-    # @CreationTimestamp / LocalDateTime.now() dùng múi giờ JVM — giữ giống khi chạy app trên máy (giờ VN)
-    TZ: Asia/Ho_Chi_Minh
+    # @CreationTimestamp / LocalDateTime.now() dùng múi giờ JVM — lấy từ APP_TZ trong .env để mọi instance chung một múi giờ,
+    # truyền vào container dưới tên TZ (biến JVM đọc). Thiếu biến thì dùng giờ VN (giống default của image app;
+    # service maven dùng image eclipse-temurin gốc, mặc định UTC).
+    TZ: ${APP_TZ:-Asia/Ho_Chi_Minh}
 
 services:
   mysql:
@@ -28,6 +30,10 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      # Cố định UTC cho khớp serverTimezone=UTC trong JDBC URL: driver đổi mọi thời gian app ghi (orderedAt,
+      # @CreationTimestamp/@UpdateTimestamp) từ múi giờ JVM (APP_TZ) sang UTC trước khi gửi, nên DB lưu thống nhất
+      # theo UTC. KHÔNG đặt TZ/APP_TZ cho service này: session lệch UTC thì cột TIMESTAMP bị lưu lệch giờ.
+      - --default-time-zone=+00:00
     ports:
       - "127.0.0.1:${DB_HOST_PORT:-33070}:3306"
     volumes:
@@ -58,6 +64,9 @@ services:
     build: .
     image: foodsndrinks:local
     container_name: foodsndrinks-app
+    # Chạy bằng UID/GID của user máy host (không phải root): uploads/ và logs/ là bind mount thuộc user máy host,
+    # user `spring` của image (UID hệ thống ~999) không ghi được trên Linux/WSL2. File container ghi ra vẫn thuộc user máy host.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
@@ -66,7 +75,8 @@ services:
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     volumes:
-      # Dùng chung thư mục uploads/ của project (có sẵn ảnh mặc định default-food.png, default-avatar.png)
+      # Dùng chung thư mục uploads/ của project (có sẵn ảnh mặc định default-food.png, default-avatar.png).
+      # logs/ có sẵn trong repo (logs/.gitignore) để Docker không tự tạo nó thuộc root.
       - ./uploads:/app/uploads
       - ./logs:/app/logs
     depends_on:
@@ -79,16 +89,26 @@ services:
   # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
   # Test hiện tại (@SpringBootTest) dùng database của service mysql và rollback sau mỗi test.
   # Không mount Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host.
+  # Chạy Maven bằng đúng chủ sở hữu thư mục project (tự nhận diện, không cần HOST_UID) — xem docker/maven-entrypoint.sh:
+  # Linux/WSL2 thì target/ và mọi file test ghi ra thuộc user máy host ngay từ đầu, không cần chown sau khi chạy.
+  # UID của user máy host không có trong /etc/passwd của image nên đặt HOME, MAVEN_USER_HOME (mvnw tải Maven vào
+  # /m2/wrapper) và maven.repo.local trỏ vào volume maven-repo ở /m2.
   maven:
     <<: *app-common
     image: eclipse-temurin:25-jdk
     profiles: ["tools"]
     working_dir: /workspace
-    entrypoint: ["sh", "./mvnw", "-B"]
+    environment:
+      <<: *app-env
+      HOME: /m2
+      MAVEN_USER_HOME: /m2
+      MAVEN_OPTS: -Duser.home=/m2 -Dmaven.repo.local=/m2/repository
+    # Gọi qua sh: script và mvnw trong git không có quyền thực thi (mode 100644)
+    entrypoint: ["sh", "docker/maven-entrypoint.sh"]
     command: ["package", "-DskipTests"]
     volumes:
       - .:/workspace
-      - maven-repo:/root/.m2
+      - maven-repo:/m2
     depends_on:
       mysql:
         condition: service_healthy
