@@ -10,6 +10,7 @@ import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
     // -------------------------------------------------------
     // Existence checks (used by registration)
@@ -214,18 +216,33 @@ public class UserService {
             throw new DuplicateResourceException("Số điện thoại đã được sử dụng bởi tài khoản khác!");
         }
 
+        Role oldRole = user.getRole();
+        boolean wasActive = Boolean.TRUE.equals(user.getIsActive());
+        boolean active = Boolean.TRUE.equals(dto.getIsActive());
+        boolean passwordReset = dto.getNewPassword() != null && !dto.getNewPassword().isBlank();
+
         user.setFullName(dto.getFullName());
         user.setEmail(dto.getEmail());
         user.setPhone(dto.getPhone());
         user.setRole(dto.getRole());
-        user.setIsActive(dto.getIsActive() != null && dto.getIsActive());
+        user.setIsActive(active);
 
-        if (dto.getNewPassword() != null && !dto.getNewPassword().isBlank()) {
+        if (passwordReset) {
             user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         }
 
         userRepository.save(user);
         log.info("Admin updated user #{}: {}", id, user.getUsername());
+
+        if (oldRole != dto.getRole()) {
+            auditLogService.userRoleChanged(id, user.getUsername(), oldRole, dto.getRole());
+        }
+        if (wasActive != active) {
+            auditLogService.userActiveChanged(id, user.getUsername(), active);
+        }
+        if (passwordReset) {
+            auditLogService.userPasswordReset(id, user.getUsername());
+        }
     }
 
     // -------------------------------------------------------
@@ -235,8 +252,10 @@ public class UserService {
     @Transactional
     public void toggleActive(Long id) {
         User user = findById(id);
-        user.setIsActive(!Boolean.TRUE.equals(user.getIsActive()));
+        boolean active = !Boolean.TRUE.equals(user.getIsActive());
+        user.setIsActive(active);
         userRepository.save(user);
+        auditLogService.userActiveChanged(id, user.getUsername(), active);
     }
 
     // -------------------------------------------------------

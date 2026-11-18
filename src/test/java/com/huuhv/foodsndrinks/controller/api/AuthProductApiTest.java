@@ -1,7 +1,9 @@
 package com.huuhv.foodsndrinks.controller.api;
 
 import com.huuhv.foodsndrinks.entity.User;
+import com.huuhv.foodsndrinks.logging.RequestIdFilter;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,8 +14,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -109,5 +113,30 @@ class AuthProductApiTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void anyRequest_echoesValidRequestId_andReplacesInvalidOne() throws Exception {
+        mockMvc.perform(get("/api/v1/products").header(RequestIdFilter.HEADER, "trace-abc-123"))
+                .andExpect(header().string(RequestIdFilter.HEADER, "trace-abc-123"));
+
+        mockMvc.perform(get("/api/v1/products").header(RequestIdFilter.HEADER, "bad id;injected"))
+                .andExpect(header().string(RequestIdFilter.HEADER,
+                        org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}")));
+    }
+
+    @Test
+    void login_successAndFailure_areWrittenToAuditLog() throws Exception {
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            obtainToken();
+            mockMvc.perform(post("/api/v1/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(loginBody(USERNAME, "wrong-password")))
+                    .andExpect(status().isUnauthorized());
+
+            assertThat(audit.messages()).containsExactly(
+                    "event=LOGIN_SUCCESS method=API user=" + USERNAME + " ip=127.0.0.1",
+                    "event=LOGIN_FAILURE method=API user=" + USERNAME + " reason=BAD_CREDENTIALS ip=127.0.0.1");
+        }
     }
 }

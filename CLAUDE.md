@@ -60,9 +60,10 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 - **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), đặt tên file bằng UUID, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`.
 - **Dashboard admin** đã dùng Chart.js 4.4.0 (CDN jsDelivr) với dữ liệu inline qua `th:inline="javascript"` trong `admin/dashboard.html`.
 - Slug được sinh bằng `utils/SlugUtils`; trang chi tiết sản phẩm ở storefront tìm sản phẩm theo slug.
+- **Logging/audit:** `logging/RequestIdFilter` (servlet filter chạy đầu tiên, cả dispatch ERROR/ASYNC) đặt MDC `requestId` từ header `X-Request-Id` hợp lệ hoặc UUID và trả lại trong response; `logging/MdcUserFilter` (ngay sau `springSecurityFilterChain`) đặt MDC `user`; `logging/MdcTaskDecorator` (gắn vào `taskExecutor` trong `AsyncConfig`) mang MDC sang thread `@Async`. Sự kiện bảo mật đi qua `service/audit/AuditLogService` (logger `AUDIT`, định dạng `event=... key=value`, giá trị người dùng qua `LogSanitizer`; thay đổi dữ liệu chỉ ghi sau commit nên test `@Transactional` không thấy được — test bằng unit test như `AuthenticationAuditTest`). Đăng nhập được audit tự động qua event của `ProviderManager` (`AuthenticationAuditListener`: form, API, remember-me, OAuth2 thành công); riêng lỗi OAuth2 không sinh event nên được ghi trong `security/OAuth2LoginFailureHandler`. Thao tác nhạy cảm mới (vd. import Excel) thì thêm method vào `AuditLogService`, không tự tạo logger `AUDIT` ở chỗ khác.
 
 ### Cấu hình
-`application.yml` (dùng chung: mail, OAuth2 client, Slack, cron) + `application-dev.yml` (datasource local, log DEBUG, bật Swagger, giá trị fallback cho JWT/remember-me) / `application-prod.yml` (mọi thứ lấy từ biến môi trường, ghi log ra file, tắt Swagger, actuator chỉ expose `health`). Chọn profile qua `SPRING_PROFILES_ACTIVE` (mặc định `dev`). Bảng đầy đủ các biến môi trường nằm trong [README.md](README.md).
+`application.yml` (dùng chung: mail, OAuth2 client, Slack, cron) + `application-dev.yml` (datasource local, log DEBUG, bật Swagger, giá trị fallback cho JWT/remember-me) / `application-prod.yml` (mọi thứ lấy từ biến môi trường, log level WARN/INFO, tắt Swagger, actuator chỉ expose `health`). Appender/pattern log nằm ở `logback-spring.xml` (`dev`/`prod`: console + `logs/foodsndrinks.log` 30 ngày; `prod` thêm `logs/audit.log` 90 ngày; không bật profile nào: chỉ console) — không đặt `logging.file.name` trong yml. Chọn profile qua `SPRING_PROFILES_ACTIVE` (mặc định `dev`). Bảng đầy đủ các biến môi trường nằm trong [README.md](README.md).
 
 ## Quy ước
 
@@ -86,13 +87,13 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | Messaging: JMS (ActiveMQ Artemis) | ❌ | Chuyển thông báo đơn hàng sang JMS (xem bên dưới). |
 | WebSocket + STOMP | ❌ | Realtime đơn mới cho admin, trạng thái đơn cho user. |
 | `@Scheduled` + `@Async` | ✅ | Cấu hình scheduler pool, tách executor theo loại việc. |
-| `ThreadPoolTaskExecutor` | 🟡 | Thiếu rejection policy, graceful shutdown, `TaskDecorator` truyền MDC. |
+| `ThreadPoolTaskExecutor` | 🟡 | Đã có `TaskDecorator` truyền MDC; thiếu rejection policy, graceful shutdown. |
 | Apache POI (Excel import/export) | ❌ | Export đơn hàng/sản phẩm, import sản phẩm. |
 | SOAP (Spring-WS) | ❌ | Expose web service contract-first. |
 | Chart (Chart.js) | 🟡 | Đã có 2 chart; cần SRI/self-host, thêm chart, cập nhật realtime. |
 | JUnit 5 + Mockito + MockMvc | 🟡 | Chỉ có 2 integration test; thiếu unit test Mockito và test slice `@WebMvcTest`. |
 | Swagger / OpenAPI | ✅ | Bổ sung `@Operation`/`@ApiResponse` cho endpoint mới. |
-| SLF4J + Logback | 🟡 | Có `@Slf4j` nhưng chưa có `logback-spring.xml`, chưa có MDC/audit log. |
+| SLF4J + Logback | ✅ | `logback-spring.xml`, MDC `requestId`/`user`, logger `AUDIT`. |
 | Thymeleaf | ✅ | — |
 
 ### Giai đoạn
@@ -100,7 +101,7 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 Thứ tự thực hiện. Tên giai đoạn trùng với dropdown "Roadmap phase" trong `.github/ISSUE_TEMPLATE/*.yml` — đổi ở đây thì đổi cả ở template. Tick khi hoàn thành cả giai đoạn.
 
 - [x] 0. Hạ tầng (Docker)
-- [ ] 1. Logging (Logback, MDC, audit log)
+- [x] 1. Logging (Logback, MDC, audit log)
 - [ ] 2. Security hardening (OWASP)
 - [ ] 3. Testing (Mockito, WebMvcTest, Testcontainers)
 - [ ] 4. Scheduler & Multithread
@@ -164,7 +165,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Scheduler, `@Async`, `ThreadPoolTaskExecutor`.** Giữ `config/AsyncConfig`, bổ sung:
 - `setRejectedExecutionHandler(new CallerRunsPolicy())`, `setWaitForTasksToCompleteOnShutdown(true)`, `setAwaitTerminationSeconds(...)`.
-- `TaskDecorator` sao chép MDC (requestId) sang thread async. Không tự truyền `SecurityContext` sang thread khác trừ khi thật sự cần.
+- `TaskDecorator` sao chép MDC sang thread async: đã có `logging/MdcTaskDecorator` — executor mới cũng phải `setTaskDecorator(new MdcTaskDecorator())`. Không tự truyền `SecurityContext` sang thread khác trừ khi thật sự cần.
 - Executor riêng cho việc nặng (vd. `excelExecutor` cho import/export) để không chiếm pool `notify-*`; luôn ghi tên executor tường minh, vd. `@Async("excelExecutor")`.
 - Pool cho `@Scheduled` qua `spring.task.scheduling.pool.size`; job dùng `CompletableFuture` khi cần chạy song song (vd. tổng hợp nhiều thống kê dashboard cùng lúc).
 
@@ -189,9 +190,9 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - Integration test: chuyển sang Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:mysql`, `@ServiceConnection`) để không đụng DB dev (cần Docker trên máy). JMS test dùng Artemis embedded, không cần container.
 - JaCoCo sinh báo cáo coverage khi `./mvnw test` (issue 3.2); chưa đặt ngưỡng chặn build.
 
-**Logging (SLF4J + Logback).** Tạo `src/main/resources/logback-spring.xml` với `<springProfile>`: dev ghi console; prod ghi file `SizeAndTimeBasedRollingPolicy` (khi đó bỏ `logging.file.name` trong `application-prod.yml` để tránh cấu hình trùng).
-- `OncePerRequestFilter` đặt `requestId` (và username nếu đã đăng nhập) vào MDC, in trong pattern log.
-- Logger riêng `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại, khóa tài khoản, đổi role/khóa user, đổi trạng thái đơn, import Excel.
+**Logging (SLF4J + Logback)** — đã làm ở issue 1.1 (xem "Logging/audit" trong Ghi chú nghiệp vụ).
+- `logback-spring.xml` với `<springProfile>`: `dev`/`prod` ghi console + file `SizeAndTimeBasedRollingPolicy`, `prod` thêm `audit.log`. Pattern có `%X{requestId}`, `%X{user}` và `%replace(%msg){'[\r\n]+', '_'}`. `LogbackConfigTest` nạp file thật để kiểm tra — sửa pattern/appender thì chạy lại test này.
+- Logger `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại, khóa/mở khóa user, đổi role, đặt lại mật khẩu, đổi trạng thái đơn; import Excel (giai đoạn 7) thêm vào `AuditLogService`.
 - Luôn dùng placeholder `log.info("... {}", x)`, không nối chuỗi.
 
 ## OWASP Secure Coding — quy tắc bắt buộc
@@ -255,5 +256,5 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - [ ] `FileStorageService` chưa kiểm tra magic bytes.
 - [ ] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI.
 - [ ] Chưa cấu hình cờ cookie session và timeout tường minh.
-- [ ] Chưa có audit log và `logback-spring.xml`.
+- [x] Chưa có audit log và `logback-spring.xml`.
 - [ ] Chưa quét dependency (OWASP Dependency-Check) — issue 2.5.

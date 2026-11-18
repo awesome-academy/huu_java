@@ -104,9 +104,11 @@ src/main/java/com/huuhv/foodsndrinks/
 ├── entity/          # User, Product, ProductImage, Category, Order, OrderDetail, Rating, Suggestion
 ├── enums/           # Role, AuthProvider, CategoryType, ProductType, OrderStatus, SuggestionStatus
 ├── exception/       # AdminExceptionHandler, WebExceptionHandler, ApiExceptionHandler + custom exceptions
+├── logging/         # RequestIdFilter, MdcUserFilter (MDC requestId/user), MdcTaskDecorator (MDC sang @Async)
 ├── repository/      # Spring Data JPA repositories
 ├── security/        # JwtUtil, JwtAuthenticationFilter, CustomUserDetailsService, OAuth2 user services
 ├── service/         # Toàn bộ business logic (Controller chỉ gọi Service)
+│   ├── audit/         # AuditLogService (logger AUDIT), AuthenticationAuditListener
 │   └── notification/  # Slack/Email notification, order event listener, statistics scheduler
 └── utils/           # SlugUtils...
 
@@ -114,7 +116,8 @@ src/main/resources/
 ├── db/migration/    # Flyway migrations
 ├── templates/       # Thymeleaf (admin/, web/, error/)
 ├── static/          # CSS, JS, images
-└── application*.yml # Cấu hình theo profile
+├── application*.yml # Cấu hình theo profile
+└── logback-spring.xml # Appender/pattern log theo profile (dev: console + file, prod: thêm audit.log)
 ```
 
 **Quy ước quan trọng:** Constructor Injection qua `@RequiredArgsConstructor` + `private final` (không dùng field injection); Controller mỏng, logic nằm ở Service; query quan hệ dùng `LEFT JOIN FETCH` chống N+1. Xem thêm `CLAUDE.md`.
@@ -127,7 +130,8 @@ Profile mặc định là `dev` (đổi qua env `SPRING_PROFILES_ACTIVE=prod` kh
 |---|---|
 | `application.yml` | Cấu hình chung: mail (SMTP), OAuth2 client (Google/Facebook/Twitter), Slack webhook, cron thống kê |
 | `application-dev.yml` | Datasource local, logging DEBUG, Swagger UI bật, JWT secret/remember-me key tự sinh ngẫu nhiên nếu không đặt, upload dir |
-| `application-prod.yml` | Datasource từ env (bắt buộc), logging ra file `logs/foodsndrinks.log`, **Swagger tắt hoàn toàn** |
+| `application-prod.yml` | Datasource từ env (bắt buộc), log level WARN/INFO, **Swagger tắt hoàn toàn** |
+| `logback-spring.xml` | Appender + pattern log: `dev` và `prod` ghi console + file xoay vòng, `prod` thêm `audit.log`; không bật profile nào thì chỉ console (xem [Logging](#logging)) |
 
 ### Biến môi trường
 
@@ -183,6 +187,24 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 - Mỗi luồng có `@ControllerAdvice` riêng cùng package: `AdminExceptionHandler` (view lỗi admin), `WebExceptionHandler` (view lỗi web), `ApiExceptionHandler` (JSON `ErrorResponse`).
 - `GlobalErrorController` (`/error`) chỉ xử lý lỗi dispatch cấp servlet (404/403/405/409 và exception thoát khỏi mọi advice) — tự chọn trả JSON hay view theo prefix URI.
+
+## Logging
+
+- Mỗi dòng log có `[requestId] [user]`. `requestId` lấy từ header `X-Request-Id` của request nếu hợp lệ (chữ/số/`-`, ≤ 64 ký tự), nếu không thì sinh UUID; luôn được trả lại trong response header `X-Request-Id` và được mang sang thread `@Async` (`notify-*`). Khi người dùng báo lỗi, lấy `X-Request-Id` của response để `grep` toàn bộ log của request đó.
+- Ký tự xuống dòng trong message bị thay bằng `_` (chống log injection).
+- Profile `dev` và `prod` ghi thêm file trong `logs/` (đổi thư mục bằng `LOGGING_FILE_PATH`), xoay vòng theo ngày hoặc khi vượt 10MB, nén `.gz`. `audit.log` chỉ có ở `prod`. Chạy test với profile mặc định `dev` cũng ghi vào `logs/foodsndrinks.log`.
+
+  | File | Nội dung | Giữ lại |
+  |---|---|---|
+  | `logs/foodsndrinks.log` | Toàn bộ log của app | 30 ngày, tối đa 1GB |
+  | `logs/audit.log` | Chỉ logger `AUDIT` (sự kiện bảo mật) | 90 ngày, tối đa 500MB |
+
+- **Audit log** (logger `AUDIT`, định dạng `event=... key=value`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ:
+
+  ```
+  event=LOGIN_FAILURE method=FORM user=alice reason=BAD_CREDENTIALS ip=127.0.0.1
+  event=USER_ROLE_CHANGED actor=admin targetId=5 target=dave from=ROLE_USER to=ROLE_ADMIN ip=127.0.0.1
+  ```
 
 ## Monitoring
 

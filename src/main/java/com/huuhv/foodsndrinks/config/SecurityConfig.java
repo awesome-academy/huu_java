@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.security.CustomOAuth2UserService;
 import com.huuhv.foodsndrinks.security.CustomOidcUserService;
 import com.huuhv.foodsndrinks.security.JwtAuthenticationFilter;
+import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -49,6 +50,7 @@ public class SecurityConfig {
     private final CustomOidcUserService  customOidcUserService;
     private final CustomOAuth2UserService customOAuth2UserService;
     private final JwtAuthenticationFilter jwtAuthFilter;
+    private final OAuth2LoginFailureHandler oAuth2LoginFailureHandler;
 
     /** Expose AuthenticationManager so AuthService can authenticate username/password for the JWT login API. */
     @Bean
@@ -200,7 +202,8 @@ public class SecurityConfig {
                 .oauth2Login(oauth2 -> oauth2
                         .loginPage("/login")
                         .successHandler(customAuthenticationSuccessHandler())
-                        .failureUrl("/login?error=true")
+                        // Redirect về /login?error=true như failureUrl, kèm audit log (lỗi OAuth2 không sinh event)
+                        .failureHandler(oAuth2LoginFailureHandler)
                         .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(pkceAuthorizationRequestResolver))
                         .userInfoEndpoint(userInfo -> userInfo
                                 .oidcUserService(customOidcUserService)

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cấu hình log của app (Spring Boot tự nạp file này thay cho cấu hình mặc định).
+  - dev và prod: console + logs/foodsndrinks.log (xoay vòng theo ngày/dung lượng, giữ 30 ngày, tối đa 1GB).
+  - prod: thêm logs/audit.log cho logger AUDIT (giữ 90 ngày).
+  - Không bật dev/prod: chỉ console.
+  Thư mục log đổi được qua logging.file.path / LOGGING_FILE_PATH.
+  - Mức log từng package vẫn đặt trong application-*.yml (logging.level.*).
+  - %X{requestId} do RequestIdFilter đặt, %X{user} do MdcUserFilter đặt (package logging).
+  - %replace(%msg){'[\r\n]+', '_'} thay ký tự xuống dòng trong message → chống log injection (giả mạo dòng log).
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <property name="LOG_DIR" value="${LOG_PATH:-logs}"/>
+
+    <property name="CONSOLE_PATTERN"
+              value="%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX}){faint} %clr(%5p) %clr([%15.15t]){faint} %clr([%X{requestId:-}] [%X{user:-}]){magenta} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %replace(%msg){'[\r\n]+', '_'}%n%wEx"/>
+    <property name="FILE_PATTERN"
+              value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p [%t] [%X{requestId:-}] [%X{user:-}] %-40.40logger{39} : %replace(%msg){'[\r\n]+', '_'}%n%wEx"/>
+    <property name="AUDIT_PATTERN"
+              value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} [%X{requestId:-}] %replace(%msg){'[\r\n]+', '_'}%n"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_PATTERN}</pattern>
+            <charset>${CONSOLE_LOG_CHARSET}</charset>
+        </encoder>
+    </appender>
+
+    <!-- Sự kiện bảo mật (xem service/audit/AuditLogService). Khai báo level ở đây để không bị root WARN của prod chặn. -->
+    <logger name="AUDIT" level="INFO"/>
+
+    <!-- Profile khác dev/prod (vd. test không bật profile nào): chỉ console -->
+    <springProfile name="!dev &amp; !prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="dev | prod">
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/foodsndrinks.log</file>
+            <encoder>
+                <pattern>${FILE_PATTERN}</pattern>
+                <charset>${FILE_LOG_CHARSET}</charset>
+            </encoder>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_DIR}/foodsndrinks.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>1GB</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/audit.log</file>
+            <encoder>
+                <pattern>${AUDIT_PATTERN}</pattern>
+                <charset>${FILE_LOG_CHARSET}</charset>
+            </encoder>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_DIR}/audit.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>90</maxHistory>
+                <totalSizeCap>500MB</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <!-- additivity mặc định = true: sự kiện audit vẫn xuất hiện trong console/foodsndrinks.log -->
+        <logger name="AUDIT" level="INFO">
+            <appender-ref ref="AUDIT_FILE"/>
+        </logger>
+    </springProfile>
+</configuration>

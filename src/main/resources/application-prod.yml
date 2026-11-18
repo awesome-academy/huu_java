@@ -8,13 +8,13 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
-# Customize logging for Prod environment (write to file for storage)
+# Customize logging for Prod environment. Appender (console + logs/foodsndrinks.log + logs/audit.log, xoay vòng)
+# khai báo trong logback-spring.xml — không đặt logging.file.name ở đây để tránh cấu hình trùng.
 logging:
   level:
     root: WARN # Only print warnings and errors, suppress INFO logs
     com.huuhv.foodsndrinks: INFO
-  file:
-    name: logs/foodsndrinks.log # Write logs to a file
+    # Logger AUDIT luôn ở mức INFO (đặt trong logback-spring.xml)
 app:
   security:
     remember-me-key: ${REMEMBER_ME_KEY}

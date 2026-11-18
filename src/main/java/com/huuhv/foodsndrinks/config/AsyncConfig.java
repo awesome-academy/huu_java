@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.logging.MdcTaskDecorator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.context.annotation.Bean;
@@ -26,6 +27,8 @@ public class AsyncConfig implements AsyncConfigurer {
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("notify-");
+        // Mang requestId/user trong MDC của request sang thread async để log còn truy vết được
+        executor.setTaskDecorator(new MdcTaskDecorator());
         executor.initialize();
         return executor;
     }
