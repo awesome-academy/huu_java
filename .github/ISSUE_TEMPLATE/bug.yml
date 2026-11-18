@@ -1,0 +1,119 @@
+name: Bug Report
+description: Báo cáo lỗi (không dùng cho lỗ hổng bảo mật)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > ⚠️ Repo này **public**. **Lỗ hổng bảo mật** (lộ token/secret, bypass đăng nhập/phân quyền, injection, XSS, IDOR...) **không tạo issue**.
+        > Báo kín qua [Security Advisory](https://github.com/awesome-academy/huu_java/security/advisories/new) — xem [SECURITY.md](https://github.com/awesome-academy/huu_java/blob/master/.github/SECURITY.md).
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase
+      description: Theo CLAUDE.md, mục "Lộ trình Advance → Giai đoạn". Lỗi ở chức năng làm trước khóa Advance (giỏ hàng, admin...) chọn dòng cuối.
+      options:
+        - 0. Hạ tầng (Docker)
+        - 1. Logging (Logback, MDC, audit log)
+        - 2. Security hardening (OWASP)
+        - 3. Testing (Mockito, WebMvcTest, Testcontainers)
+        - 4. Scheduler & Multithread
+        - 5. JMS (ActiveMQ Artemis)
+        - 6. WebSocket + STOMP + Chart
+        - 7. Excel import/export (Apache POI)
+        - 8. SOAP (Spring-WS) + Tổng kết
+        - Chức năng có sẵn (trước khóa Advance)
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Thành phần bị lỗi
+      options:
+        - Đăng nhập / đăng ký (form)
+        - Đăng nhập OAuth2 (Google / Facebook / Twitter)
+        - REST API / JWT
+        - "Storefront: menu, chi tiết sản phẩm"
+        - Giỏ hàng / đặt hàng
+        - Đánh giá / góp ý
+        - Hồ sơ người dùng / upload ảnh
+        - Trang quản trị (Admin)
+        - Thông báo Slack / Email
+        - Scheduled job / Async
+        - JMS
+        - WebSocket / Chart
+        - Excel import/export
+        - SOAP WebService
+        - Docker / cấu hình
+        - Khác
+    validations:
+      required: true
+  - type: input
+    id: screen
+    attributes:
+      label: Màn hình / URL / Endpoint
+      description: Để trống nếu lỗi chạy ngầm (scheduled job, JMS listener...)
+      placeholder: /cart hoặc POST /api/v1/auth/login
+  - type: textarea
+    id: description
+    attributes:
+      label: Mô tả lỗi
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Các bước tái tạo
+      placeholder: |
+        1. Đăng nhập bằng tài khoản ROLE_USER
+        2. Vào /menu, thêm 2 sản phẩm vào giỏ hàng
+        3. Vào /cart, bấm "Đặt hàng"
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Kết quả mong đợi
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Kết quả thực tế
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Môi trường
+      options:
+        - Local (mvnw spring-boot:run, profile dev)
+        - Docker compose (docker compose up)
+        - Test (./mvnw test / docker compose run --rm maven test)
+        - Demo (JAR)
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Trình duyệt / thiết bị
+      description: Chỉ cần điền nếu là lỗi UI
+      placeholder: Chrome 140, Windows 11
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Mức độ
+      options:
+        - Chặn (không dùng được tính năng)
+        - Nặng (sai logic/dữ liệu)
+        - Nhẹ (lệch UI, chữ)
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Ảnh chụp / log
+      description: |
+        Dán server log (`docker compose logs app`, kèm `requestId` nếu có), lỗi console trình duyệt, hoặc đính kèm file gây lỗi.
+        ⚠️ Repo public: xoá password, JWT, client secret, cookie/session, CSRF token, webhook URL và dữ liệu thật trước khi dán.

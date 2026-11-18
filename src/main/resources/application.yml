@@ -3,11 +3,16 @@ spring:
     name: foodsndrinks
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev} # Change to 'prod' when deploying to a real server
+  config:
+    # Secret cho môi trường local nằm trong file .env (git-ignore, mẫu ở .env.example) ở thư mục chạy app.
+    # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
+    import: optional:file:.env[.properties]
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
+    # Không đặt secret thật làm giá trị mặc định — khai báo trong .env hoặc biến môi trường
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -69,5 +74,6 @@ app:
     mail:
       enabled: ${MAIL_NOTIFY_ENABLED:true}
     statistics:
-      cron: ${ORDER_STATS_CRON:0 0 23 L * *} # 23h ngày cuối tháng
-      zone: Asia/Ho_Chi_Minh
+      # 23h ngày cuối tháng, theo múi giờ JVM (TZ/APP_TZ). Không khai báo zone riêng: OrderStatisticsScheduler tính
+      # tháng bằng LocalDate.now() (múi giờ JVM), cron phải chạy cùng múi giờ đó thì mới lấy đúng tháng.
+      cron: ${ORDER_STATS_CRON:0 0 23 L * *}

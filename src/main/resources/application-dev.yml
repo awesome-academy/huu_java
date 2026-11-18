@@ -32,11 +32,15 @@ management:
       show-details: when-authorized # Show health details only for authenticated admins
 app:
   security:
-    remember-me-key: ${REMEMBER_ME_KEY:${random.uuid}}
+    remember-me-key: ${REMEMBER_ME_KEY:${random.value}${random.value}}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
 jwt:
-  secret: ${JWT_SECRET}  #  # inject via env; do not hard-code defaults in repo (>= 32 chars)
+  # Không đặt JWT_SECRET thì tự sinh khoá ngẫu nhiên: mỗi ${random.value} là 16 byte từ SecureRandom (Spring Boot 4),
+  # ghép 2 lần = 256 bit, đủ cho HS256 và quy tắc "secret >= 256 bit". Không ai biết trước khoá ký, đổi lại token cũ
+  # hết hiệu lực mỗi khi context khởi động lại — cả restart JVM lẫn hot restart của spring-boot-devtools.
+  # Muốn giữ token qua các lần reload thì đặt JWT_SECRET trong .env. Prod bắt buộc đặt JWT_SECRET.
+  secret: ${JWT_SECRET:${random.value}${random.value}}
   expiration: 3600000 # 1 hour
 
 # Bật tính năng Swagger UI
