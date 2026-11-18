@@ -1,6 +1,5 @@
 package com.huuhv.foodsndrinks.service.audit;
 
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
 import org.springframework.security.authentication.RememberMeAuthenticationToken;
@@ -13,18 +12,20 @@ import org.springframework.security.oauth2.client.authentication.OAuth2LoginAuth
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
-
-import java.util.Locale;
+import org.springframework.web.util.UrlPathHelper;
 
 /**
  * Ghi audit log cho đăng nhập dựa trên event mà {@code ProviderManager} publish (qua
  * {@code DefaultAuthenticationEventPublisher}), nên áp dụng cho form login, {@code POST /api/v1/auth/login},
- * remember-me và đăng nhập OAuth2 thành công mà không phải sửa từng luồng.
+ * remember-me thành công và đăng nhập OAuth2 thành công mà không phải sửa từng luồng.
  * <p>
- * Ngoại lệ: Spring Security không map {@code OAuth2AuthenticationException} sang event nào, và lỗi OAuth2
- * (vd. người dùng từ chối cấp quyền) còn xảy ra trước khi tới {@code ProviderManager} — lỗi OAuth2 được ghi ở
- * {@code security.OAuth2LoginFailureHandler}. Event lỗi có token OAuth2 (nếu có) bị bỏ qua ở đây để không ghi trùng.
- * <p>
+ * Những lỗi không đi tới {@code ProviderManager} nên không sinh event, được ghi ở nơi khác:
+ * <ul>
+ *   <li>lỗi OAuth2 (Spring Security không map {@code OAuth2AuthenticationException} sang event, và lỗi như người dùng
+ *       từ chối cấp quyền xảy ra trước đó) → {@code security.OAuth2LoginFailureHandler}. Event lỗi có token OAuth2
+ *       (nếu có) bị bỏ qua ở đây để không ghi trùng;</li>
+ *   <li>cookie remember-me sai/hết hạn/giả mạo → {@code security.AuditingRememberMeServices}.</li>
+ * </ul>
  * Request mang JWT không đi qua {@code ProviderManager} ({@code JwtAuthenticationFilter} tự đặt SecurityContext),
  * nên không sinh audit log cho mỗi lần gọi API.
  */
@@ -69,19 +70,15 @@ public class AuthenticationAuditListener {
     }
 
     private static boolean isApiRequest() {
-        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
-            HttpServletRequest request = attrs.getRequest();
-            String path = request.getRequestURI().substring(request.getContextPath().length());
-            return path.startsWith("/api/");
-        }
-        return false;
+        return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs
+                && UrlPathHelper.defaultInstance.getPathWithinApplication(attrs.getRequest()).startsWith("/api/");
     }
 
-    /** AuthenticationFailureBadCredentialsEvent → BAD_CREDENTIALS, AuthenticationFailureDisabledEvent → DISABLED, ... */
+    /**
+     * Lấy từ exception (không phải tên class event) để cùng quy tắc với remember-me/OAuth2:
+     * BadCredentialsException → BAD_CREDENTIALS, DisabledException → DISABLED, ...
+     */
     static String reason(AbstractAuthenticationFailureEvent event) {
-        String name = event.getClass().getSimpleName()
-                .replace("AuthenticationFailure", "")
-                .replace("Event", "");
-        return name.replaceAll("([a-z])([A-Z])", "$1_$2").toUpperCase(Locale.ROOT);
+        return AuditLogService.toReasonCode(event.getException());
     }
 }

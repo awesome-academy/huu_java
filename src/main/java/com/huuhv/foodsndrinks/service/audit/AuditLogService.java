@@ -3,32 +3,53 @@ package com.huuhv.foodsndrinks.service.audit;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.logging.LogSanitizer;
+import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.utils.SecurityUtils;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.authentication.AnonymousAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.slf4j.event.Level;
+import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Pattern;
+
 /**
- * Ghi sự kiện bảo mật ra logger riêng {@code AUDIT} (prod: thêm file {@code logs/audit.log}, xem logback-spring.xml).
+ * Ghi sự kiện bảo mật ra logger riêng {@code AUDIT}.
  * <p>
- * Định dạng {@code event=... key=value} để dễ grep/parse. Chỉ ghi định danh (username, id), hành động, IP client —
- * KHÔNG BAO GIỜ ghi password, token, JWT, session id. Mọi giá trị do người dùng kiểm soát đều qua
- * {@link LogSanitizer} (bỏ ký tự điều khiển/khoảng trắng, cắt độ dài) để không giả mạo được trường khác hay dòng log.
+ * Mỗi sự kiện là một message ngắn (vd. "Login failed") kèm các trường gắn bằng SLF4J fluent API
+ * ({@code addKeyValue}), không tự ghép chuỗi: prod ghi {@code logs/audit.log} dạng JSON (ECS) nên các trường được
+ * escape đúng chuẩn; console và {@code foodsndrinks.log} in chúng theo kiểu logfmt qua {@code %safeKvp}.
+ * Tên trường dùng dấu chấm ({@code event.action}, {@code target.id}...) để ECS lồng thành object; không dùng tên trùng
+ * với key MDC ({@code requestId}, {@code clientRequestId}, {@code user.name}) — trùng thì encoder ECS báo lỗi.
  * <p>
- * Sự kiện thay đổi dữ liệu (user, đơn hàng) chỉ được ghi sau khi transaction commit, để audit log không ghi nhận
- * một thay đổi đã bị rollback.
+ * Chỉ ghi định danh (username, id), hành động, IP client — KHÔNG BAO GIỜ ghi password, token, JWT, session id.
+ * Username nhập khi đăng nhập thất bại chỉ được ghi nếu tài khoản tồn tại, để mật khẩu lỡ gõ vào ô username không
+ * nằm lại trong log. Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit.
  */
 @Service
+@RequiredArgsConstructor
 public class AuditLogService {
 
     private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
     private static final String SYSTEM_ACTOR = "system";
+    private static final String UNKNOWN = "-";
+    /**
+     * Giới hạn độ dài một trường audit = độ dài cột {@code users.email} (định danh dài nhất được ghi). Cắt ngắn hơn
+     * (vd. 64 như MDC {@code user}) sẽ làm hai email dài cùng tiền tố không còn phân biệt được trong audit log.
+     */
+    static final int MAX_FIELD_LENGTH = 255;
+    private static final Pattern CAMEL_CASE_BOUNDARY = Pattern.compile("([a-z])([A-Z])");
+    private static final Pattern EXCEPTION_SUFFIX = Pattern.compile("Exception$");
+
+    private final UserRepository userRepository;
 
     // -------------------------------------------------------
     // Authentication
@@ -36,38 +57,60 @@ public class AuditLogService {
 
     /** @param method kênh đăng nhập: FORM, API, REMEMBER_ME, OAUTH2:&lt;provider&gt; */
     public void loginSuccess(String method, String username) {
-        AUDIT.info("event=LOGIN_SUCCESS method={} user={} ip={}",
-                LogSanitizer.sanitize(method), LogSanitizer.sanitize(username), clientIp());
+        write(event(Level.INFO, "Login succeeded", "LOGIN_SUCCESS", "success")
+                .with("auth.method", method)
+                .with("username", username));
     }
 
     /**
-     * @param attemptedUsername username người dùng đã nhập (có thể không tồn tại); null nếu không có (OAuth2)
-     * @param reason            mã lỗi ngắn, vd. BAD_CREDENTIALS, DISABLED, access_denied
+     * @param attemptedUsername username người dùng đã nhập; chỉ được ghi nếu tài khoản tồn tại, ngược lại ghi
+     *                          {@code -}. Null nếu không có (OAuth2)
+     * @param reason            mã lỗi ngắn, vd. BAD_CREDENTIALS, DISABLED, INVALID_COOKIE, access_denied
      */
     public void loginFailure(String method, String attemptedUsername, String reason) {
-        AUDIT.warn("event=LOGIN_FAILURE method={} user={} reason={} ip={}",
-                LogSanitizer.sanitize(method), LogSanitizer.sanitize(attemptedUsername),
-                LogSanitizer.sanitize(reason), clientIp());
+        write(event(Level.WARN, "Login failed", "LOGIN_FAILURE", "failure")
+                .with("event.reason", reason)
+                .with("auth.method", method)
+                .with("username", existingAccountOrUnknown(attemptedUsername)));
     }
 
     // -------------------------------------------------------
-    // Admin: user management
+    // Account changes (admin or the user themself)
     // -------------------------------------------------------
 
     public void userActiveChanged(Long userId, String username, boolean active) {
-        String event = active ? "USER_UNLOCKED" : "USER_LOCKED";
-        logAfterCommit("event={} actor={} targetId={} target={} ip={}",
-                event, currentActor(), userId, LogSanitizer.sanitize(username), clientIp());
+        String action = active ? "USER_UNLOCKED" : "USER_LOCKED";
+        writeAfterCommit(accountEvent(Level.INFO, active ? "User unlocked" : "User locked", action, userId, username));
     }
 
     public void userRoleChanged(Long userId, String username, Role from, Role to) {
-        logAfterCommit("event=USER_ROLE_CHANGED actor={} targetId={} target={} from={} to={} ip={}",
-                currentActor(), userId, LogSanitizer.sanitize(username), from, to, clientIp());
+        writeAfterCommit(accountEvent(Level.INFO, "User role changed", "USER_ROLE_CHANGED", userId, username)
+                .with("target.role.from", from)
+                .with("target.role.to", to));
     }
 
+    /** Admin đặt mật khẩu mới cho user. */
     public void userPasswordReset(Long userId, String username) {
-        logAfterCommit("event=USER_PASSWORD_RESET actor={} targetId={} target={} ip={}",
-                currentActor(), userId, LogSanitizer.sanitize(username), clientIp());
+        writeAfterCommit(accountEvent(Level.INFO, "User password reset", "USER_PASSWORD_RESET", userId, username));
+    }
+
+    /** Email đăng nhập của tài khoản bị đổi (admin sửa hoặc user tự sửa — xem {@code actor}). */
+    public void userEmailChanged(Long userId, String username) {
+        writeAfterCommit(accountEvent(Level.INFO, "User email changed", "USER_EMAIL_CHANGED", userId, username));
+    }
+
+    /** User tự đổi mật khẩu ở trang hồ sơ. */
+    public void passwordChanged(Long userId, String username) {
+        writeAfterCommit(accountEvent(Level.INFO, "Password changed", "PASSWORD_CHANGED", userId, username));
+    }
+
+    /**
+     * User đổi mật khẩu thất bại (vd. sai mật khẩu hiện tại — dấu hiệu dò mật khẩu bằng session bị chiếm).
+     * Ghi ngay, không đợi commit, vì thao tác thất bại làm transaction rollback.
+     */
+    public void passwordChangeFailed(Long userId, String username, String reason) {
+        write(accountEvent(Level.WARN, "Password change failed", "PASSWORD_CHANGE_FAILED", userId, username)
+                .with("event.reason", reason));
     }
 
     // -------------------------------------------------------
@@ -75,44 +118,117 @@ public class AuditLogService {
     // -------------------------------------------------------
 
     public void orderStatusChanged(Long orderId, OrderStatus from, OrderStatus to) {
-        logAfterCommit("event=ORDER_STATUS_CHANGED actor={} orderId={} from={} to={} ip={}",
-                currentActor(), orderId, from, to, clientIp());
+        writeAfterCommit(event(Level.INFO, "Order status changed", "ORDER_STATUS_CHANGED", "success")
+                .with("actor", currentActor())
+                .with("order.id", orderId)
+                .with("order.status.from", from)
+                .with("order.status.to", to));
     }
 
     // -------------------------------------------------------
     // Helpers
     // -------------------------------------------------------
 
-    /** Tham số được tính ngay (actor/IP của thread hiện tại); chỉ việc ghi log được hoãn tới sau commit. */
-    private static void logAfterCommit(String format, Object... args) {
+    /**
+     * Mã lý do lấy từ tên class exception — dùng chung cho mọi kênh đăng nhập để cùng một loại lỗi luôn ra cùng một
+     * mã: {@code BadCredentialsException} → {@code BAD_CREDENTIALS}, {@code DisabledException} → {@code DISABLED},
+     * {@code InvalidCookieException} → {@code INVALID_COOKIE}.
+     */
+    public static String toReasonCode(Throwable exception) {
+        return toReasonCode(EXCEPTION_SUFFIX.matcher(exception.getClass().getSimpleName()).replaceFirst(""));
+    }
+
+    /** {@code BadCredentials} → {@code BAD_CREDENTIALS}, {@code InvalidCookie} → {@code INVALID_COOKIE}. */
+    static String toReasonCode(String camelCase) {
+        return CAMEL_CASE_BOUNDARY.matcher(camelCase).replaceAll("$1_$2").toUpperCase(Locale.ROOT);
+    }
+
+    private static AuditEvent event(Level level, String message, String action, String outcome) {
+        return new AuditEvent(level, message)
+                .with("event.action", action)
+                .with("event.outcome", outcome);
+    }
+
+    private static AuditEvent accountEvent(Level level, String message, String action, Long userId, String username) {
+        String outcome = level == Level.WARN ? "failure" : "success";
+        return event(level, message, action, outcome)
+                .with("actor", currentActor())
+                .with("target.id", userId)
+                .with("target.username", username);
+    }
+
+    private static void write(AuditEvent event) {
+        LoggingEventBuilder builder = AUDIT.atLevel(event.level);
+        for (Map.Entry<String, Object> field : event.fields.entrySet()) {
+            builder = builder.addKeyValue(field.getKey(), field.getValue());
+        }
+        builder.addKeyValue("source.ip", event.sourceIp).log(event.message);
+    }
+
+    /** Các trường được tính ngay (actor/IP của thread hiện tại); chỉ việc ghi log được hoãn tới sau commit. */
+    private static void writeAfterCommit(AuditEvent event) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    AUDIT.info(format, args);
+                    write(event);
                 }
             });
         } else {
-            AUDIT.info(format, args);
+            write(event);
         }
+    }
+
+    private String existingAccountOrUnknown(String attemptedUsername) {
+        if (attemptedUsername == null || attemptedUsername.isBlank()) {
+            return UNKNOWN;
+        }
+        // Một query (cùng điều kiện với CustomUserDetailsService) để không tăng tải DB và không làm lệch thời gian phản
+        // hồi giữa username có / không tồn tại
+        return userRepository.existsByUsernameOrEmail(attemptedUsername, attemptedUsername)
+                ? attemptedUsername : UNKNOWN;
     }
 
     private static String currentActor() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || auth instanceof AnonymousAuthenticationToken) {
-            return SYSTEM_ACTOR;
-        }
-        return LogSanitizer.sanitize(auth.getName());
+        return SecurityUtils.currentUsername().orElse(SYSTEM_ACTOR);
     }
 
     /**
-     * IP kết nối trực tiếp tới app. Nếu sau này đặt app sau reverse proxy thì cấu hình
-     * {@code server.forward-headers-strategy} để giá trị này là IP client thật.
+     * IP client. Profile prod bật {@code server.forward-headers-strategy=native}: khi request đến từ load balancer thuộc
+     * {@code server.tomcat.remoteip.internal-proxies} ({@code TRUSTED_PROXIES}), Tomcat thay {@code getRemoteAddr()}
+     * bằng IP client thật lấy từ {@code X-Forwarded-For}; header này từ nguồn khác bị bỏ qua nên client không tự giả
+     * được IP. Dev không bật, giá trị là IP kết nối trực tiếp.
      */
     private static String clientIp() {
         if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
-            return LogSanitizer.sanitize(attrs.getRequest().getRemoteAddr());
+            return attrs.getRequest().getRemoteAddr();
         }
-        return "-";
+        return UNKNOWN;
+    }
+
+    /** Message + các trường của một sự kiện audit; chuỗi được cắt về {@link #MAX_FIELD_LENGTH}, enum ghi theo tên. */
+    private static final class AuditEvent {
+
+        private final Level level;
+        private final String message;
+        private final Map<String, Object> fields = new LinkedHashMap<>();
+        /** Lấy ngay lúc tạo sự kiện (vẫn đang trong request), luôn được ghi làm trường cuối. */
+        private final String sourceIp = clientIp();
+
+        private AuditEvent(Level level, String message) {
+            this.level = level;
+            this.message = message;
+        }
+
+        private AuditEvent with(String key, Object value) {
+            Object normalized = switch (value) {
+                case null -> UNKNOWN;
+                case String text -> text.isBlank() ? UNKNOWN : LogSanitizer.truncate(text, MAX_FIELD_LENGTH);
+                case Enum<?> constant -> constant.name();
+                default -> value;
+            };
+            fields.put(key, normalized);
+            return this;
+        }
     }
 }

@@ -5,11 +5,15 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
+import java.util.Set;
 
 /**
  * Failure handler của {@code oauth2Login}: ghi audit log rồi xử lý như {@code failureUrl("/login?error=true")}.
@@ -17,18 +21,42 @@ import java.io.IOException;
  * Cần handler riêng vì lỗi OAuth2 không sinh event {@code AbstractAuthenticationFailureEvent} (xem
  * {@code AuthenticationAuditListener}). Chỉ ghi provider + mã lỗi OAuth2 ({@code access_denied},
  * {@code invalid_token_response}...) — không ghi error description, authorization code hay token.
+ * <p>
+ * Cả hai giá trị đều có thể do kẻ tấn công chọn (provider lấy từ path {@code /login/oauth2/code/<id>}, mã lỗi từ query
+ * param {@code error} của callback), nên chỉ ghi nguyên văn khi khớp whitelist: provider phải có trong
+ * {@link ClientRegistrationRepository} (ngược lại ghi {@value #UNKNOWN_PROVIDER}), mã lỗi phải là mã chuẩn OAuth2/OIDC
+ * hoặc mã nội bộ của Spring Security (ngược lại ghi {@value #OTHER_ERROR}).
  */
 @Component
 public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
 
     static final String FAILURE_URL = "/login?error=true";
+    static final String UNKNOWN_PROVIDER = "unknown";
+    static final String OTHER_ERROR = "OTHER";
     private static final String CALLBACK_PREFIX = "/login/oauth2/code/";
 
-    private final AuditLogService auditLogService;
+    private static final Set<String> KNOWN_ERROR_CODES = Set.of(
+            // RFC 6749 / RFC 6750 / OIDC Core
+            OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ErrorCodes.UNAUTHORIZED_CLIENT, OAuth2ErrorCodes.ACCESS_DENIED,
+            OAuth2ErrorCodes.UNSUPPORTED_RESPONSE_TYPE, OAuth2ErrorCodes.INVALID_SCOPE,
+            OAuth2ErrorCodes.INSUFFICIENT_SCOPE, OAuth2ErrorCodes.INVALID_TOKEN, OAuth2ErrorCodes.SERVER_ERROR,
+            OAuth2ErrorCodes.TEMPORARILY_UNAVAILABLE, OAuth2ErrorCodes.INVALID_CLIENT, OAuth2ErrorCodes.INVALID_GRANT,
+            OAuth2ErrorCodes.UNSUPPORTED_GRANT_TYPE, OAuth2ErrorCodes.UNSUPPORTED_TOKEN_TYPE,
+            OAuth2ErrorCodes.INVALID_REDIRECT_URI,
+            "interaction_required", "login_required", "consent_required", "account_selection_required",
+            // Mã nội bộ của Spring Security OAuth2 Client (khai báo private trong các filter/provider)
+            "authorization_request_not_found", "client_registration_not_found", "invalid_state_parameter",
+            "invalid_token_response", "invalid_id_token", "invalid_nonce", "invalid_user_info_response",
+            "missing_user_info_uri", "missing_user_name_attribute");
 
-    public OAuth2LoginFailureHandler(AuditLogService auditLogService) {
-        super(FAILURE_URL);
+    private final AuditLogService auditLogService;
+    private final ClientRegistrationRepository clientRegistrationRepository;
+
+    public OAuth2LoginFailureHandler(AuditLogService auditLogService,
+                                     ClientRegistrationRepository clientRegistrationRepository) {
         this.auditLogService = auditLogService;
+        this.clientRegistrationRepository = clientRegistrationRepository;
+        setDefaultFailureUrl(FAILURE_URL);
     }
 
     @Override
@@ -38,15 +66,21 @@ public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHan
         super.onAuthenticationFailure(request, response, exception);
     }
 
-    private static String registrationId(HttpServletRequest request) {
-        String path = request.getRequestURI().substring(request.getContextPath().length());
-        return path.startsWith(CALLBACK_PREFIX) ? path.substring(CALLBACK_PREFIX.length()) : "unknown";
+    private String registrationId(HttpServletRequest request) {
+        String path = UrlPathHelper.defaultInstance.getPathWithinApplication(request);
+        if (!path.startsWith(CALLBACK_PREFIX)) {
+            return UNKNOWN_PROVIDER;
+        }
+        String id = path.substring(CALLBACK_PREFIX.length());
+        // InMemoryClientRegistrationRepository ném IllegalArgumentException với id rỗng
+        return !id.isBlank() && clientRegistrationRepository.findByRegistrationId(id) != null ? id : UNKNOWN_PROVIDER;
     }
 
     private static String reason(AuthenticationException exception) {
         if (exception instanceof OAuth2AuthenticationException oauth2) {
-            return oauth2.getError().getErrorCode();
+            String code = oauth2.getError().getErrorCode();
+            return KNOWN_ERROR_CODES.contains(code) ? code : OTHER_ERROR;
         }
-        return exception.getClass().getSimpleName();
+        return AuditLogService.toReasonCode(exception);
     }
 }

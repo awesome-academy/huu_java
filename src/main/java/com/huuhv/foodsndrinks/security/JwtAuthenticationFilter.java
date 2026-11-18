@@ -35,8 +35,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                     UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                    // Requires the validateToken method in JwtUtil
-                    if (jwtUtil.validateToken(token)) {
+                    // Tài khoản bị khoá sau khi đã cấp JWT: token cũ không còn dùng được
+                    if (userDetails.isEnabled() && jwtUtil.validateToken(token)) {
                         UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                                 userDetails, null, userDetails.getAuthorities());
                         SecurityContextHolder.getContext().setAuthentication(auth);

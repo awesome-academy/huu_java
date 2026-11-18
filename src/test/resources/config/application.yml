@@ -1,0 +1,6 @@
+# Chỉ nằm trên classpath khi chạy test (Maven, IDE, container maven). Spring Boot nạp file này BỔ SUNG cho
+# classpath:/application.yml (classpath:/config/ có độ ưu tiên cao hơn), không thay thế nó — profile dev vẫn bật như cũ.
+spring:
+  profiles:
+    # Thêm profile "test": logback-spring.xml chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
+    include: test

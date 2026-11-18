@@ -49,9 +49,11 @@ class FormLoginAuditTest {
             mockMvc.perform(formLogin("/login").user(USERNAME).password("wrong-password"))
                     .andExpect(redirectedUrl("/login?error=true"));
 
-            assertThat(audit.messages()).containsExactly(
-                    "event=LOGIN_SUCCESS method=FORM user=" + USERNAME + " ip=127.0.0.1",
-                    "event=LOGIN_FAILURE method=FORM user=" + USERNAME + " reason=BAD_CREDENTIALS ip=127.0.0.1");
+            assertThat(audit.lines()).containsExactly(
+                    "Login succeeded event.action=LOGIN_SUCCESS event.outcome=success auth.method=FORM"
+                            + " username=" + USERNAME + " source.ip=127.0.0.1",
+                    "Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS"
+                            + " auth.method=FORM username=" + USERNAME + " source.ip=127.0.0.1");
         }
     }
 }
