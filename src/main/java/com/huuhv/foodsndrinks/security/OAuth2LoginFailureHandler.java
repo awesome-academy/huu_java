@@ -4,10 +4,12 @@ import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
 
@@ -19,6 +21,7 @@ import java.io.IOException;
  * {@code invalid_token_response}...) — không ghi error description, authorization code hay token.
  */
 @Component
+@RequiredArgsConstructor
 public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
 
     static final String FAILURE_URL = "/login?error=true";
@@ -26,9 +29,8 @@ public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHan
 
     private final AuditLogService auditLogService;
 
-    public OAuth2LoginFailureHandler(AuditLogService auditLogService) {
-        super(FAILURE_URL);
-        this.auditLogService = auditLogService;
+    {
+        setDefaultFailureUrl(FAILURE_URL);
     }
 
     @Override
@@ -39,7 +41,7 @@ public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHan
     }
 
     private static String registrationId(HttpServletRequest request) {
-        String path = request.getRequestURI().substring(request.getContextPath().length());
+        String path = UrlPathHelper.defaultInstance.getPathWithinApplication(request);
         return path.startsWith(CALLBACK_PREFIX) ? path.substring(CALLBACK_PREFIX.length()) : "unknown";
     }
 
@@ -47,6 +49,6 @@ public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHan
         if (exception instanceof OAuth2AuthenticationException oauth2) {
             return oauth2.getError().getErrorCode();
         }
-        return exception.getClass().getSimpleName();
+        return AuditLogService.toReasonCode(exception.getClass().getSimpleName().replace("Exception", ""));
     }
 }

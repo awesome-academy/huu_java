@@ -1,5 +1,17 @@
 server:
   port: ${SERVER_PORT:8080} # Allow override; avoid privileged port binding by default
+  # Chạy sau load balancer/reverse proxy: lấy IP client thật (request.getRemoteAddr(), dùng cho source.ip của audit log)
+  # và scheme https từ X-Forwarded-For / X-Forwarded-Proto qua RemoteIpValve của Tomcat.
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      # Chỉ tin header X-Forwarded-* khi kết nối tới từ các dải IP này (load balancer). Valve đọc X-Forwarded-For từ
+      # phải sang trái, bỏ qua IP thuộc dải tin cậy và dừng ở IP đầu tiên không thuộc dải → IP client tự chèn thêm vào
+      # bên trái header bị bỏ qua. Mặc định = mặc định của Spring Boot (mọi dải IP nội bộ); prod nên đặt TRUSTED_PROXIES
+      # đúng dải IP của load balancer.
+      internal-proxies: ${TRUSTED_PROXIES:192.168.0.0/16, 172.16.0.0/12, 169.254.0.0/16, fc00::/7, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, fe80::/10, ::1/128}
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
 
 spring:
   datasource:
@@ -8,13 +20,19 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
-# Customize logging for Prod environment. Appender (console + logs/foodsndrinks.log + logs/audit.log, xoay vòng)
-# khai báo trong logback-spring.xml — không đặt logging.file.name ở đây để tránh cấu hình trùng.
+# Customize logging for Prod environment. Appender (console + logs/<app.instance-id>/foodsndrinks.log + audit.log,
+# xoay vòng; mỗi instance một thư mục) khai báo trong logback-spring.xml — không đặt logging.file.name ở đây.
 logging:
   level:
     root: WARN # Only print warnings and errors, suppress INFO logs
     com.huuhv.foodsndrinks: INFO
     # Logger AUDIT luôn ở mức INFO (đặt trong logback-spring.xml)
+  structured:
+    ecs:
+      service:
+        # Field service.node.name / service.environment trong logs/audit.log (JSON ECS) — phân biệt instance khi gom log
+        node-name: ${app.instance-id}
+        environment: prod
 app:
   security:
     remember-me-key: ${REMEMBER_ME_KEY}

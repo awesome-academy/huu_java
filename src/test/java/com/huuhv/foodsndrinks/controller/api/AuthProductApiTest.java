@@ -116,13 +116,14 @@ class AuthProductApiTest {
     }
 
     @Test
-    void anyRequest_echoesValidRequestId_andReplacesInvalidOne() throws Exception {
-        mockMvc.perform(get("/api/v1/products").header(RequestIdFilter.HEADER, "trace-abc-123"))
-                .andExpect(header().string(RequestIdFilter.HEADER, "trace-abc-123"));
+    void anyRequest_returnsServerGeneratedRequestId_evenWhenClientSendsOne() throws Exception {
+        var uuid = org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}");
 
-        mockMvc.perform(get("/api/v1/products").header(RequestIdFilter.HEADER, "bad id;injected"))
-                .andExpect(header().string(RequestIdFilter.HEADER,
-                        org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}")));
+        mockMvc.perform(get("/api/v1/products"))
+                .andExpect(header().string(RequestIdFilter.HEADER, uuid));
+        // id của client chỉ được ghi vào log (cid=...), không được dùng làm requestId
+        mockMvc.perform(get("/api/v1/products").header(RequestIdFilter.HEADER, "trace-abc-123"))
+                .andExpect(header().string(RequestIdFilter.HEADER, uuid));
     }
 
     @Test
@@ -134,9 +135,11 @@ class AuthProductApiTest {
                             .content(loginBody(USERNAME, "wrong-password")))
                     .andExpect(status().isUnauthorized());
 
-            assertThat(audit.messages()).containsExactly(
-                    "event=LOGIN_SUCCESS method=API user=" + USERNAME + " ip=127.0.0.1",
-                    "event=LOGIN_FAILURE method=API user=" + USERNAME + " reason=BAD_CREDENTIALS ip=127.0.0.1");
+            assertThat(audit.lines()).containsExactly(
+                    "Login succeeded event.action=LOGIN_SUCCESS event.outcome=success auth.method=API"
+                            + " username=" + USERNAME + " source.ip=127.0.0.1",
+                    "Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS"
+                            + " auth.method=API username=" + USERNAME + " source.ip=127.0.0.1");
         }
     }
 }

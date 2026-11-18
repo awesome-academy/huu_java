@@ -21,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.Locale;
+import java.util.Objects;
 
 @Service
 @Slf4j
@@ -144,11 +145,15 @@ public class UserService {
             throw new DuplicateResourceException("Số điện thoại đã được sử dụng bởi tài khoản khác!");
         }
 
-        if (!blank(dto.getNewPassword())) {
+        boolean emailChanged = !Objects.equals(user.getEmail(), dto.getEmail());
+        boolean passwordChanged = !blank(dto.getNewPassword());
+        if (passwordChanged) {
             if (dto.getNewPassword().length() < 6 || dto.getNewPassword().length() > 32) {
                 throw new IllegalArgumentException("Mật khẩu mới phải từ 6 đến 32 ký tự.");
             }
             if (blank(dto.getCurrentPassword()) || !passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
+                // Sai mật khẩu hiện tại lặp lại = dấu hiệu dò mật khẩu bằng session bị chiếm → ghi audit ngay
+                auditLogService.passwordChangeFailed(id, user.getUsername(), "WRONG_CURRENT_PASSWORD");
                 throw new IllegalArgumentException("Mật khẩu hiện tại không đúng!");
             }
             if (!dto.getNewPassword().equals(dto.getConfirmNewPassword())) {
@@ -162,6 +167,13 @@ public class UserService {
         user.setPhone(dto.getPhone());
         userRepository.save(user);
         log.info("User #{} updated own profile", id);
+
+        if (passwordChanged) {
+            auditLogService.passwordChanged(id, user.getUsername());
+        }
+        if (emailChanged) {
+            auditLogService.userEmailChanged(id, user.getUsername());
+        }
     }
 
     // -------------------------------------------------------
@@ -217,6 +229,7 @@ public class UserService {
         }
 
         Role oldRole = user.getRole();
+        boolean emailChanged = !Objects.equals(user.getEmail(), dto.getEmail());
         boolean wasActive = Boolean.TRUE.equals(user.getIsActive());
         boolean active = Boolean.TRUE.equals(dto.getIsActive());
         boolean passwordReset = dto.getNewPassword() != null && !dto.getNewPassword().isBlank();
@@ -242,6 +255,9 @@ public class UserService {
         }
         if (passwordReset) {
             auditLogService.userPasswordReset(id, user.getUsername());
+        }
+        if (emailChanged) {
+            auditLogService.userEmailChanged(id, user.getUsername());
         }
     }
 
