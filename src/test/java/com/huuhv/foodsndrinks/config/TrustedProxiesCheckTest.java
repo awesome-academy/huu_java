@@ -18,8 +18,8 @@ class TrustedProxiesCheckTest {
             .withPropertyValues(INTERNAL_PROXIES + "=${TRUSTED_PROXIES}");
 
     @Test
-    void binderKeepsUnresolvedPlaceholder_soTomcatAloneWouldNotFail() {
-        // Lý do cần TrustedProxiesCheck: binder của Boot không báo lỗi khi thiếu biến
+    void binderKeepsUnresolvedPlaceholder() {
+        // Binder của Boot không báo lỗi khi thiếu biến — Tomcat sẽ nhận nguyên chuỗi này (PatternSyntaxException khó hiểu)
         MockEnvironment environment = new MockEnvironment().withProperty(INTERNAL_PROXIES, "${TRUSTED_PROXIES}");
         assertThat(Binder.get(environment).bind(INTERNAL_PROXIES, String.class).get())
                 .isEqualTo("${TRUSTED_PROXIES}");
