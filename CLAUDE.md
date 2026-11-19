@@ -16,6 +16,7 @@ Dùng Maven Wrapper (`mvnw.cmd` trên Windows, `./mvnw` trên Mac/Linux). Bắt 
 ./mvnw test                                  # chạy toàn bộ test
 ./mvnw test -Dtest=AuthProductApiTest        # chạy 1 class test
 ./mvnw test -Dtest=AuthProductApiTest#login_withValidCredentials_returnsToken   # chạy 1 method test
+./mvnw dependency-check:check                # quét CVE dependency (cần NVD_API_KEY trong môi trường; chạy trước PR đổi dependency)
 ```
 
 Docker (không cần JDK/MySQL local; cần file `.env` copy từ `.env.example`):
@@ -25,6 +26,7 @@ docker compose up -d --build                                 # MySQL 8.4 + Activ
 docker compose up -d mysql artemis                           # chỉ hạ tầng, app chạy bằng JDK local
 docker compose run --rm maven test                           # chạy Maven trong container JDK 25
 docker compose run --rm maven test -Dtest=AuthProductApiTest
+docker compose run --rm --no-deps maven dependency-check:check   # quét CVE (NVD_API_KEY lấy từ .env)
 docker compose up -d --build app                             # build lại app sau khi sửa code
 docker compose down                                          # thêm -v để xoá dữ liệu MySQL/Artemis
 ```
@@ -181,7 +183,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - Lỗi nghiệp vụ map sang SOAP Fault qua `SoapFaultMappingExceptionResolver`/`@SoapFault`, không lộ stack trace.
 - **Client** (issue 8.3): `WebServiceTemplate` trong `service/soap/`, URL + tài khoản lấy từ cấu hình (env), có connect/read timeout; lỗi hoặc timeout thì trả kết quả rỗng và ghi log, không làm hỏng trang gọi nó. Demo bằng cách gọi chính endpoint SOAP của app (hoặc endpoint mock), hiển thị kết quả trên dashboard admin.
 
-**OWASP Dependency-Check** (issue 2.5). Plugin `org.owasp:dependency-check-maven` chạy riêng bằng `./mvnw dependency-check:check` (hoặc `docker compose run --rm maven dependency-check:check`), không gắn vào build mặc định để test vẫn nhanh. NVD API key đọc từ biến môi trường `NVD_API_KEY` (khai báo trong `.env`, không ghi vào `pom.xml`). Fail khi có lỗ hổng CVSS ≥ 7; lỗ hổng không áp dụng thì ghi vào file suppression kèm lý do; ưu tiên sửa bằng cách nâng version qua Spring Boot BOM. Chạy trước khi tạo PR có thêm/đổi dependency.
+**OWASP Dependency-Check** (issue 2.5, đã cấu hình). Plugin `org.owasp:dependency-check-maven` (version ở property `dependency-check.version`, không có `<executions>`) chạy riêng bằng `./mvnw dependency-check:check` (hoặc `docker compose run --rm --no-deps maven dependency-check:check`), không gắn vào build mặc định để test vẫn nhanh. NVD API key (bắt buộc từ bản 12+) đọc từ biến môi trường `NVD_API_KEY` (khai báo trong `.env`, không ghi vào `pom.xml`; `./mvnw` không tự đọc `.env`). Fail khi có lỗ hổng CVSS ≥ 7; lỗ hổng không áp dụng thì ghi vào `dependency-check-suppressions.xml` kèm `<notes>` lý do + `until`; ưu tiên sửa bằng cách nâng version qua Spring Boot BOM. OSS Index tắt (cần tài khoản), RetireJS bật (quét JS trong WebJars). Chạy trước khi tạo PR có thêm/đổi dependency.
 
 **Chart.** Giữ Chart.js (không cần thêm ECharts). Thêm chart (top sản phẩm bán chạy, số đơn theo ngày), dữ liệu tính trong `DashboardService`. Chart.js đã tự host qua WebJar và dashboard đã lấy dữ liệu qua endpoint JSON `GET /admin/dashboard/charts` (CSP chặt) — chart mới mở rộng `DashboardChartResDto` + `dashboard.js`. Cập nhật realtime qua STOMP `/topic/admin/orders` (gọi lại endpoint JSON hoặc nhận số liệu trong message).
 
@@ -250,7 +252,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **System configuration & dependencies**
 - Actuator: prod chỉ expose `health` (đã làm). Swagger tắt ở prod (đã làm).
-- Thêm plugin `org.owasp:dependency-check-maven` để quét thư viện có CVE; ưu tiên version do Spring Boot BOM quản lý.
+- OWASP Dependency-Check đã cấu hình (xem mục Lộ trình) — chạy trước PR có thêm/đổi dependency; ưu tiên version do Spring Boot BOM quản lý. Thư viện front-end thêm qua WebJars (Maven) để được quét cùng.
 
 ### Lỗ hổng đã biết cần xử lý
 - [x] Chưa chống brute-force đăng nhập (form + API).
