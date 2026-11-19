@@ -87,6 +87,17 @@ public class AuditLogService {
                 .with("auth.lock.seconds", lockDuration.toSeconds()));
     }
 
+    /**
+     * Session web đang đăng nhập bị huỷ vì tài khoản đã đổi trạng thái kể từ lúc đăng nhập.
+     *
+     * @param reason {@code DISABLED}, {@code ROLE_CHANGED}, {@code ACCOUNT_NOT_FOUND} (xem {@code AccountStatusService})
+     */
+    public void sessionRevoked(String username, String reason) {
+        write(event(Level.WARN, "Session revoked", "SESSION_REVOKED", "success")
+                .with("event.reason", reason)
+                .with("username", username));
+    }
+
     // -------------------------------------------------------
     // Account changes (admin or the user themself)
     // -------------------------------------------------------

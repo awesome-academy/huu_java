@@ -3,6 +3,7 @@ package com.huuhv.foodsndrinks.repository;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.repository.projection.UserAccountStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -25,6 +26,10 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByUsernameOrEmail(String username, String email);
     Optional<User> findByEmail(String email);
+
+    /** Chạy ở mỗi request của người dùng đã đăng nhập (xem {@code AccountStatusService}) — chỉ lấy 2 cột, theo index UNIQUE. */
+    @Query("SELECT u.isActive AS active, u.role AS role FROM User u WHERE u.username = :username")
+    Optional<UserAccountStatus> findAccountStatusByUsername(@Param("username") String username);
     Optional<User> findByAuthProviderAndProviderId(AuthProvider authProvider, String providerId);
 
     long countByIsActiveTrue();

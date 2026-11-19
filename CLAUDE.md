@@ -189,13 +189,13 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Testing.** JUnit 5 + Mockito + MockMvc (đã có `spring-boot-starter-test`, `spring-boot-webmvc-test`, `spring-security-test`, `spring-boot-security-test` — module cuối bắt buộc ở Boot 4 để `@WithMockUser` có tác dụng với MockMvc tự cấu hình).
 - Unit test service: `@ExtendWith(MockitoExtension.class)`, `@Mock` repository, `@InjectMocks` service — không khởi động Spring.
-- Test controller: `@WebMvcTest(XxxController.class)` + `@MockitoBean` cho service (Boot 4 đã bỏ `@MockBean`), `@WithMockUser(roles = "ADMIN")`, request POST phải có `.with(csrf())`. Luôn có case 401/403 cho endpoint được bảo vệ.
+- Test controller: `@WebMvcTest(XxxController.class)` + `@MockitoBean` cho service (Boot 4 đã bỏ `@MockBean`), `@WithMockUser(roles = "ADMIN")`, request POST phải có `.with(csrf())`. Luôn có case 401/403 cho endpoint được bảo vệ. Chain web có `AccountStatusFilter` tra DB mỗi request: trong `@SpringBootTest`, user của `@WithMockUser` phải tồn tại trong DB với đúng role (xem `DashboardChartsTest`), nếu không session bị huỷ → 302 `/login`; trong `@WebMvcTest` thì `@MockitoBean AccountStatusService` (mặc định trả `Optional.empty()` = session hợp lệ).
 - Integration test: chuyển sang Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:mysql`, `@ServiceConnection`) để không đụng DB dev (cần Docker trên máy). JMS test dùng Artemis embedded, không cần container.
 - JaCoCo sinh báo cáo coverage khi `./mvnw test` (issue 3.2); chưa đặt ngưỡng chặn build.
 
 **Logging (SLF4J + Logback)** — đã làm ở issue 1.1 (xem "Logging/audit" trong Ghi chú nghiệp vụ).
 - `logback-spring.xml` với `<springProfile>`: `dev`/`prod` ghi console + file `SizeAndTimeBasedRollingPolicy` (qua `AsyncAppender`), `prod` thêm `audit.log` dạng JSON (`StructuredLogEncoder`, format `ecs`). Pattern text dùng converter riêng trong package `logging` thay cho `%msg`/`%wEx`: `%safeMsg` (thay mọi ký tự ngắt dòng, kể cả Unicode, bằng `_`), `%safeEx` (làm sạch message của exception), `%safeKvp` (in key-value audit kiểu logfmt, có quote/escape). `LogbackConfigTest` nạp file thật để kiểm tra — sửa pattern/appender thì chạy lại test này.
-- Logger `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại (kể cả cookie remember-me bị từ chối), khóa/mở khóa user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu, đổi trạng thái đơn; import Excel (giai đoạn 7) thêm vào `AuditLogService`.
+- Logger `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại (kể cả cookie remember-me bị từ chối), khóa/mở khóa user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu, session bị huỷ vì tài khoản bị khoá/đổi role, đổi trạng thái đơn; import Excel (giai đoạn 7) thêm vào `AuditLogService`.
 - Luôn dùng placeholder `log.info("... {}", x)`, không nối chuỗi.
 
 ## OWASP Secure Coding — quy tắc bắt buộc
@@ -218,7 +218,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - JWT: secret ≥ 256 bit từ env, HS256 cố định, kiểm tra hạn + `iss`/`aud` (`jwt.issuer`/`jwt.audience`, đã làm trong `JwtUtil`); không đặt dữ liệu nhạy cảm vào claims. Filter kiểm tra token trước khi tra DB.
 
 **Session management**
-- Cookie session (đã làm): `HttpOnly`, `SameSite=Lax`, `Secure` (`SESSION_COOKIE_SECURE`, prod mặc định `true`) qua `server.servlet.session.cookie.*`; timeout 30 phút. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm).
+- Cookie session (đã làm): `HttpOnly`, `SameSite=Lax`, `Secure` (`SESSION_COOKIE_SECURE`, prod mặc định `true`) qua `server.servlet.session.cookie.*`; timeout 30 phút. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm). Tài khoản bị khoá, bị xoá/đổi username hoặc đổi role sau khi đăng nhập thì session bị huỷ ở request kế tiếp (đã làm: `security/AccountStatusFilter` ở chain web, trước `AnonymousAuthenticationFilter`, gọi `service/security/AccountStatusService` — 1 query/request đã đăng nhập, bỏ qua file tĩnh; audit `SESSION_REVOKED`). Chưa huỷ session khi đổi/đặt lại mật khẩu (issue #37).
 
 **Access control**
 - Phân quyền theo URL trong `SecurityConfig` và thêm `@PreAuthorize` ở service/controller cho thao tác nhạy cảm. Mặc định deny (`anyRequest().authenticated()`).
@@ -263,3 +263,4 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - [x] Chưa có audit log và `logback-spring.xml`.
 - [ ] Chưa quét dependency (OWASP Dependency-Check) — issue 2.5.
 - [x] Tài khoản bị admin khoá vẫn đăng nhập được bằng Google/Facebook/X (review PR #35).
+- [x] Session đang đăng nhập vẫn dùng được (với quyền cũ) sau khi tài khoản bị khoá hoặc bị đổi role.

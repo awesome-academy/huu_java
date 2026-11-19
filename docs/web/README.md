@@ -38,6 +38,7 @@ Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong 
 - Google map tài khoản theo provider id, sau đó theo email đã verify; xử lý ở `CustomOidcUserService`.
 - Mọi provider đều dùng username nội bộ làm principal key (claim/attribute tổng hợp `local_username`), nên `Authentication#getName()` (audit log, MDC `user.name`) giống nhau dù đăng nhập bằng form, API, Google, Facebook hay X.
 - Tài khoản local đã bị admin khoá không đăng nhập được bằng bất kỳ provider nào (giống form/API): cả hai service ném `DisabledOAuth2AccountException` → `/login?error=true` với thông báo chung, audit ghi `LOGIN_FAILURE reason=DISABLED auth.method=OAUTH2:<provider>` kèm username.
+- Người dùng đang đăng nhập (mọi cách: form, remember-me, OAuth2) mà bị admin khoá hoặc đổi role thì session bị huỷ ở request kế tiếp (`AccountStatusFilter`): cookie remember-me bị xoá, trang public hiển thị như khách, trang cần đăng nhập chuyển về `/login`; audit ghi `SESSION_REVOKED`. Đổi role (kể cả nâng quyền) cũng phải đăng nhập lại để nhận quyền mới.
 - Facebook/Twitter xử lý ở `CustomOAuth2UserService`; Twitter là provider cấu hình thủ công (không nằm trong `CommonOAuth2Provider`).
 - Provider của tài khoản lưu ở enum `AuthProvider`.
 

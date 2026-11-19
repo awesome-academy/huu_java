@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.logging.RequestIdFilter;
+import com.huuhv.foodsndrinks.security.AccountStatusFilter;
 import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
 import com.huuhv.foodsndrinks.security.CustomOAuth2UserService;
 import com.huuhv.foodsndrinks.security.CustomOidcUserService;
@@ -11,6 +12,7 @@ import com.huuhv.foodsndrinks.security.LoginAttemptAwareAuthenticationProvider;
 import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -47,6 +49,7 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequest
 import org.springframework.security.web.DefaultRedirectStrategy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.ExceptionMappingAuthenticationFailureHandler;
@@ -300,7 +303,9 @@ public class SecurityConfig {
     @Order(3)
     public SecurityFilterChain webSecurityFilterChain(HttpSecurity http,
                                                        OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver,
-                                                       AuditingRememberMeServices rememberMeServices) throws Exception {
+                                                       AuditingRememberMeServices rememberMeServices,
+                                                       AccountStatusService accountStatusService,
+                                                       AuditLogService auditLogService) throws Exception {
         http
                 .headers(headers -> {
                     securityHeaders(headers);
@@ -361,7 +366,11 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex
                         // Redirect to a friendly 403 page instead of the default whitelabel
                         .accessDeniedPage("/error")
-                );
+                )
+                // Huỷ session của tài khoản bị khoá/đổi role sau khi đăng nhập. Sau remember-me, trước anonymous: request
+                // bị huỷ session đi tiếp như khách
+                .addFilterBefore(new AccountStatusFilter(accountStatusService, auditLogService, rememberMeServices),
+                        AnonymousAuthenticationFilter.class);
 
         return http.build();
     }
