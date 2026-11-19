@@ -4,3 +4,9 @@ spring:
   profiles:
     # Thêm profile "test": logback-spring.xml chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
     include: test
+
+app:
+  security:
+    password:
+      # Không gọi dịch vụ Pwned Passwords bên ngoài khi chạy test (chậm, phụ thuộc mạng)
+      breach-check-enabled: false

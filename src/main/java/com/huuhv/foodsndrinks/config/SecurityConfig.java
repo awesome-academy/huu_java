@@ -6,19 +6,27 @@ import com.huuhv.foodsndrinks.security.CustomOAuth2UserService;
 import com.huuhv.foodsndrinks.security.CustomOidcUserService;
 import com.huuhv.foodsndrinks.security.CustomUserDetailsService;
 import com.huuhv.foodsndrinks.security.JwtAuthenticationFilter;
+import com.huuhv.foodsndrinks.security.LoginAttemptAwareAuthenticationProvider;
+import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.DefaultAuthenticationEventPublisher;
+import org.springframework.security.authentication.event.AuthenticationFailureLockedEvent;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -34,16 +42,21 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.web.DefaultRedirectStrategy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
+import org.springframework.security.web.authentication.ExceptionMappingAuthenticationFailureHandler;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 
 import java.util.Collection;
+import java.util.Map;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity   // enable @PreAuthorize / @Secured on individual methods
+@EnableConfigurationProperties(LoginAttemptProperties.class)
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -59,6 +72,37 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
+    }
+
+    /**
+     * Provider username/mật khẩu có chống brute-force. Là bean {@code AuthenticationProvider} duy nhất nên
+     * {@code AuthenticationManager} toàn cục (form login + API login) dùng nó thay cho provider Spring tự tạo.
+     */
+    @Bean
+    public LoginAttemptAwareAuthenticationProvider loginAttemptAwareAuthenticationProvider(
+            CustomUserDetailsService userDetailsService, PasswordEncoder passwordEncoder,
+            LoginAttemptService loginAttemptService) {
+        return new LoginAttemptAwareAuthenticationProvider(userDetailsService, passwordEncoder, loginAttemptService);
+    }
+
+    /**
+     * Thay bean mặc định của Boot chỉ để map thêm {@link LoginThrottledException} → event lỗi (publisher map theo đúng
+     * tên class, subclass của LockedException không được publish) — audit log ghi được cả lần đăng nhập bị chặn.
+     */
+    @Bean
+    public AuthenticationEventPublisher authenticationEventPublisher(ApplicationEventPublisher publisher) {
+        DefaultAuthenticationEventPublisher eventPublisher = new DefaultAuthenticationEventPublisher(publisher);
+        eventPublisher.setAdditionalExceptionMappings(
+                Map.of(LoginThrottledException.class, AuthenticationFailureLockedEvent.class));
+        return eventPublisher;
+    }
+
+    /** Form login: bị chặn do sai quá nhiều lần → /login?locked=true, lỗi khác → thông báo chung /login?error=true. */
+    private static AuthenticationFailureHandler formLoginFailureHandler() {
+        ExceptionMappingAuthenticationFailureHandler handler = new ExceptionMappingAuthenticationFailureHandler();
+        handler.setDefaultFailureUrl("/login?error=true");
+        handler.setExceptionMappings(Map.of(LoginThrottledException.class.getName(), "/login?locked=true"));
+        return handler;
     }
 
     /** jwtAuthFilter is a @Component, so Boot would also auto-register it as a servlet filter for EVERY
@@ -211,7 +255,7 @@ public class SecurityConfig {
                         // THAY THẾ .defaultSuccessUrl bằng .successHandler vừa tạo ở trên
                         .successHandler(customAuthenticationSuccessHandler())
 
-                        .failureUrl("/login?error=true")
+                        .failureHandler(formLoginFailureHandler())
                         .permitAll()
                 )
                 .oauth2Login(oauth2 -> oauth2

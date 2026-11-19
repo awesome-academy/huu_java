@@ -75,7 +75,7 @@
                                 <div class="input-group">
                                     <span class="input-group-text bg-light"><i class="fa-solid fa-lock"></i></span>
                                     <input type="password" class="form-control" th:classappend="${#fields.hasErrors('password')} ? 'is-invalid' : ''"
-                                           id="password" th:field="*{password}" placeholder="Tối thiểu 6 ký tự" required>
+                                           id="password" th:field="*{password}" placeholder="8–64 ký tự" required>
                                     <div class="invalid-feedback" th:if="${#fields.hasErrors('password')}" th:errors="*{password}"></div>
                                 </div>
                             </div>

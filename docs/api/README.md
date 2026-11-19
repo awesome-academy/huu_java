@@ -43,7 +43,17 @@ Response (`AuthResDto`) chứa JWT. Các request sau gửi kèm header:
 Authorization: Bearer <token>
 ```
 
-Token sai/thiếu/hết hạn → **401 Unauthorized**. Tài khoản bị khóa → 401 (bắt `DisabledException`).
+Token sai/thiếu/hết hạn → **401 Unauthorized**. Sai username/email hoặc mật khẩu → 401 với message chung (không phân biệt sai username hay sai mật khẩu). Tài khoản bị vô hiệu hoá → 401 `Tài khoản đã bị vô hiệu hoá.` — chỉ trả khi đã nhập **đúng** mật khẩu, nên không dò được tài khoản nào bị khoá.
+
+### Giới hạn đăng nhập sai
+
+Sai mật khẩu **5 lần trong 15 phút** (tính từ lần sai đầu tiên) với cùng một username/email → tên đăng nhập đó bị tạm khoá **15 phút**, kể cả khi sau đó nhập đúng mật khẩu:
+
+- Response **429 Too Many Requests**, message chung, header `Retry-After: <số giây còn lại>`.
+- Áp dụng y hệt cho username không tồn tại (không lộ tài khoản nào có thật). Đăng nhập thành công thì xoá bộ đếm.
+- Bộ đếm dùng chung với form login `/login`; username và email của cùng một tài khoản được đếm riêng.
+- Cấu hình: `app.security.login-attempts.{max-failures,window,lock-duration}`. Bộ đếm nằm trong bộ nhớ → chỉ đúng khi chạy 1 instance.
+- Audit log: `LOGIN_LOCKOUT` khi khoá, các lần bị chặn sau đó ghi `LOGIN_FAILURE` với `event.reason=LOGIN_THROTTLED`.
 
 ### Truy vết request (`X-Request-Id`)
 
@@ -89,7 +99,8 @@ curl http://localhost:8080/api/v1/products?page=0&size=10 \
 | `IllegalArgumentException` | 400 |
 | `MethodArgumentNotValidException` (validation) | 400 — kèm map `field → message` |
 | `DuplicateResourceException` | 409 |
-| `BadCredentialsException` / `DisabledException` | 401 |
+| `BadCredentialsException` / `DisabledException` / `AuthenticationException` khác | 401 — message cố định, không trả message của Spring Security |
+| `LoginThrottledException` (sai mật khẩu quá nhiều lần) | 429 — kèm header `Retry-After` |
 | `Exception` khác | 500 |
 
 Lỗi dispatch cấp servlet (ví dụ 404 URL không tồn tại) do `GlobalErrorController` xử lý — URI prefix `/api/*` vẫn nhận JSON `ErrorResponse`, không bao giờ nhận HTML.

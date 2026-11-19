@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.dto.request;
 
+import com.huuhv.foodsndrinks.validation.ValidPassword;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -30,8 +31,9 @@ public class ProfileUpdateReqDto {
     /** Bắt buộc nếu muốn đổi mật khẩu */
     private String currentPassword;
 
-    /** Để trống = không đổi mật khẩu. Độ dài (6-32 ký tự) được kiểm tra ở service — @Size
-     *  không dùng được ở đây vì nó coi chuỗi rỗng "" là không hợp lệ, chặn luôn trường hợp bỏ trống. */
+    /** Để trống = không đổi mật khẩu. @ValidPassword coi chuỗi rỗng "" là hợp lệ (khác @Size, vốn chặn luôn trường
+     *  hợp bỏ trống); kiểm tra mật khẩu hiện tại/xác nhận vẫn nằm ở UserService.updateProfile. */
+    @ValidPassword
     private String newPassword;
 
     private String confirmNewPassword;

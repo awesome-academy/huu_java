@@ -209,8 +209,8 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Authentication & password**
 - Mật khẩu lưu bằng `PasswordEncoder` (BCrypt), không bao giờ log hay trả về.
-- Chính sách mật khẩu theo OWASP/NIST: tối thiểu 8 ký tự (khuyến nghị 12), cho phép ít nhất 64 ký tự, không giới hạn ký tự đặc biệt. Có thể kiểm tra mật khẩu bị lộ bằng `CompromisedPasswordChecker` của Spring Security.
-- Chống brute-force cho cả form login và `/api/v1/auth/login`: đếm lần thất bại (lắng nghe `AuthenticationFailureBadCredentialsEvent`, lưu đếm bằng Caffeine) và khóa tạm hoặc rate limit. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu".
+- Chính sách mật khẩu (đã làm): mật khẩu mới luôn khai báo `@ValidPassword` trên DTO (nguồn duy nhất là `service/security/PasswordPolicy`: 8–64 ký tự, ≤ 72 byte UTF-8 vì BCrypt, không nằm trong danh sách bị lộ qua `CompromisedPasswordChecker` = `security/PwnedPasswordsChecker`); không tự viết `@Size` cho mật khẩu.
+- Chống brute-force (đã làm): `security/LoginAttemptAwareAuthenticationProvider` (bean `AuthenticationProvider` duy nhất, dùng chung form + API) kiểm tra khoá trước khi tra user và đếm qua `service/security/LoginAttemptService` (Caffeine, key = tên người dùng nhập, chỉ đúng khi 1 instance); trạng thái tài khoản kiểm tra SAU mật khẩu. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu".
 - JWT: secret ≥ 256 bit từ env, kiểm tra hạn, nên thêm và kiểm tra `iss`/`aud`; không đặt dữ liệu nhạy cảm vào claims.
 
 **Session management**
@@ -251,8 +251,8 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - Thêm plugin `org.owasp:dependency-check-maven` để quét thư viện có CVE; ưu tiên version do Spring Boot BOM quản lý.
 
 ### Lỗ hổng đã biết cần xử lý
-- [ ] Chưa chống brute-force đăng nhập (form + API).
-- [ ] `RegisterReqDto` giới hạn mật khẩu 6–32 ký tự → nâng lên tối thiểu 8, tối đa ≥ 64.
+- [x] Chưa chống brute-force đăng nhập (form + API).
+- [x] `RegisterReqDto` giới hạn mật khẩu 6–32 ký tự → nâng lên tối thiểu 8, tối đa ≥ 64.
 - [ ] `FileStorageService` chưa kiểm tra magic bytes.
 - [ ] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI.
 - [ ] Chưa cấu hình cờ cookie session và timeout tường minh.

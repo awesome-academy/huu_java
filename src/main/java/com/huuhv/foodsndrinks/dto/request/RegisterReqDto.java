@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.dto.request;
 
+import com.huuhv.foodsndrinks.validation.ValidPassword;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -32,7 +33,7 @@ public class RegisterReqDto {
     private String phone;
 
     @NotBlank(message = "Mật khẩu không được để trống.")
-    @Size(min = 6, max = 32, message = "Mật khẩu phải từ 6 đến 32 ký tự.")
+    @ValidPassword
     private String password;
 
     @NotBlank(message = "Vui lòng xác nhận lại mật khẩu.")

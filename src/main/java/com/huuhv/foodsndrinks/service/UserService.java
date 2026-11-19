@@ -148,9 +148,7 @@ public class UserService {
         boolean emailChanged = !Objects.equals(user.getEmail(), dto.getEmail());
         boolean passwordChanged = !blank(dto.getNewPassword());
         if (passwordChanged) {
-            if (dto.getNewPassword().length() < 6 || dto.getNewPassword().length() > 32) {
-                throw new IllegalArgumentException("Mật khẩu mới phải từ 6 đến 32 ký tự.");
-            }
+            // Độ dài/mật khẩu bị lộ: @ValidPassword trên ProfileUpdateReqDto (PasswordPolicy), đã chạy ở controller
             if (blank(dto.getCurrentPassword()) || !passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
                 // Sai mật khẩu hiện tại lặp lại = dấu hiệu dò mật khẩu bằng session bị chiếm → ghi audit ngay
                 auditLogService.passwordChangeFailed(id, user.getUsername(), "WRONG_CURRENT_PASSWORD");

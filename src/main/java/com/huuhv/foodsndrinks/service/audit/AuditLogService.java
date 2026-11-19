@@ -16,6 +16,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -72,6 +73,18 @@ public class AuditLogService {
                 .with("event.reason", reason)
                 .with("auth.method", method)
                 .with("username", existingAccountOrUnknown(attemptedUsername)));
+    }
+
+    /**
+     * Tên đăng nhập bị tạm khoá vì sai quá nhiều lần (form hoặc API). Username chỉ được ghi nếu tài khoản tồn tại,
+     * giống {@link #loginFailure}. Các lần đăng nhập tiếp theo trong thời gian khoá được ghi bằng
+     * {@code loginFailure(..., "LOGIN_THROTTLED")}.
+     */
+    public void loginLockedOut(String attemptedUsername, int failures, Duration lockDuration) {
+        write(event(Level.WARN, "Login locked out", "LOGIN_LOCKOUT", "failure")
+                .with("username", existingAccountOrUnknown(attemptedUsername))
+                .with("auth.failures", failures)
+                .with("auth.lock.seconds", lockDuration.toSeconds()));
     }
 
     // -------------------------------------------------------

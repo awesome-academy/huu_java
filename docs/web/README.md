@@ -26,6 +26,10 @@ Trang bán hàng cho người dùng cuối, render phía server bằng Thymeleaf
 
 Sau khi login: `ADMIN` → `/admin`, `USER` → `/` (hoặc quay lại trang yêu cầu trước đó).
 
+- **Đăng nhập sai:** mọi lỗi → `/login?error=true` với một thông báo chung (không phân biệt sai username/email hay sai mật khẩu).
+- **Giới hạn đăng nhập sai:** sai 5 lần trong 15 phút với cùng username/email → khoá tên đó 15 phút → `/login?locked=true` (thông báo chung, áp dụng cả với tên không tồn tại). Bộ đếm dùng chung với API login — xem [docs/api](../api/README.md#giới-hạn-đăng-nhập-sai). OAuth2 login không bị ảnh hưởng.
+- **Chính sách mật khẩu** (đăng ký, đổi mật khẩu ở hồ sơ, admin đặt lại mật khẩu — `@ValidPassword` / `PasswordPolicy`): 8–64 ký tự, không giới hạn loại ký tự, tối đa 72 byte UTF-8 (giới hạn của BCrypt — chỉ ảnh hưởng mật khẩu dài nhiều ký tự có dấu), và không nằm trong danh sách mật khẩu bị lộ (Pwned Passwords, chỉ gửi 5 ký tự đầu SHA-1; dịch vụ lỗi/timeout thì cho qua và ghi WARN; tắt bằng `PASSWORD_BREACH_CHECK_ENABLED=false`).
+
 ### Social login (OAuth2)
 
 Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong `application.yml`, cần set env `*_CLIENT_ID` / `*_CLIENT_SECRET` tương ứng:

@@ -65,11 +65,29 @@ spring:
 server:
   port: 8080 # Default port
 
+logging:
+  level:
+    # Cảnh báo "Global AuthenticationManager configured with an AuthenticationProvider bean" là chủ ý: bean
+    # LoginAttemptAwareAuthenticationProvider (SecurityConfig) thay provider Spring tự tạo để chống brute-force
+    # Ngoặc vuông: tên logger có '$', không bọc thì Spring Boot bỏ ký tự này khi bind key của map
+    "[org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer$InitializeUserDetailsManagerConfigurer]": ERROR
+
 app:
   # Định danh instance khi chạy nhiều instance sau load balancer: in trong mỗi dòng log, là field service.node.name
   # của audit.log, và (profile prod) là tên thư mục log riêng logs/<instance-id>/ để các instance không ghi chung file.
   # Mặc định lấy hostname (container Docker/pod K8s có hostname riêng); đặt INSTANCE_ID để dùng tên cố định, dễ đọc.
   instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
+  security:
+    # Chống brute-force (form + API, bộ đếm trong bộ nhớ — chỉ đúng khi chạy 1 instance): sai max-failures lần trong
+    # window (tính từ lần sai đầu tiên) với cùng tên đăng nhập → khoá tên đó lock-duration
+    login-attempts:
+      max-failures: 5
+      window: 15m
+      lock-duration: 15m
+    password:
+      # Từ chối mật khẩu mới nằm trong danh sách bị lộ (Pwned Passwords, chỉ gửi 5 ký tự đầu SHA-1);
+      # dịch vụ lỗi/timeout thì cho qua và ghi WARN
+      breach-check-enabled: ${PASSWORD_BREACH_CHECK_ENABLED:true}
   notification:
     admin-email: ${ADMIN_NOTIFY_EMAIL:admin@example.com}
     slack:

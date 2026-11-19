@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.dto.request;
 
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.validation.ValidPassword;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -36,8 +37,8 @@ public class UserEditReqDto {
 
     private Boolean isActive = true;
 
-    /** Để trống = không đổi mật khẩu */
-    @Size(min = 6, max = 32, message = "Mật khẩu phải từ 6 đến 32 ký tự.")
+    /** Để trống = không đổi mật khẩu (@ValidPassword coi chuỗi rỗng là hợp lệ, khác @Size) */
+    @ValidPassword
     private String newPassword;
 }
 
