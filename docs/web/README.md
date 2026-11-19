@@ -101,4 +101,5 @@ Dưới mỗi sản phẩm có nút chia sẻ mạng xã hội (client-side, tro
 
 - Layout chung `web/layout/base.html` (Thymeleaf Layout Dialect) — trang con chỉ định nghĩa fragment content.
 - **Không hardcode domain** hay đường dẫn tuyệt đối — dùng cú pháp context-path của Thymeleaf `@{/duong-dan}`.
-- Static assets: `/css`, `/js`, `/images` (trong `src/main/resources/static`), ảnh sản phẩm upload serve qua `/uploads/**`.
+- Static assets: `/css`, `/js`, `/images` (trong `src/main/resources/static`), ảnh sản phẩm upload serve qua `/uploads/**`. Bootstrap/Font Awesome/Chart.js tự host qua WebJars: `@{/webjars/bootstrap/css/bootstrap.min.css}` (không ghi version, không dùng CDN).
+- **Content-Security-Policy** (`SecurityConfig.CONTENT_SECURITY_POLICY`): `script-src 'self'` — không `<script>` inline, không thuộc tính `onclick`/`onsubmit`/`th:on*`, không `javascript:`. JS đặt trong `static/js/**`, gắn sự kiện bằng `addEventListener` (thường là delegate trên `document` + `data-action="..."`), dữ liệu từ server qua `data-*` hoặc endpoint JSON. Thuộc tính `style="..."` vẫn được phép, thẻ `<style>` thì không. Ảnh ngoài chỉ từ host avatar OAuth2 (Google/Facebook/Twitter). Test `TemplateCspComplianceTest` quét toàn bộ template.

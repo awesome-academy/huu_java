@@ -73,6 +73,28 @@ public class SecurityConfig {
     /** App không dùng camera, micro, vị trí — tắt cho cả trang và mọi iframe. */
     static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()";
 
+    /**
+     * Content-Security-Policy của chain web (storefront + admin + trang lỗi). Script chỉ từ file của chính app
+     * ({@code static/js/**}, {@code /webjars/**}) — KHÔNG script inline, KHÔNG handler {@code on*} (test
+     * {@code TemplateCspComplianceTest} chặn). Style: file CSS của app; riêng thuộc tính {@code style="..."} được phép
+     * ({@code style-src-attr}) vì template còn dùng nhiều, còn thẻ {@code <style>} inline (dạng tiêm CSS nguy hiểm hơn)
+     * vẫn bị chặn. {@code img-src}: {@code data:} cho icon SVG nhúng trong CSS của Bootstrap, cùng các host avatar
+     * OAuth2 (Google, Facebook, Twitter/X). Chain API không đặt CSP vì Swagger UI ({@code /api-docs/**}) nằm chung chain.
+     */
+    static final String CONTENT_SECURITY_POLICY = String.join("; ",
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "style-src-attr 'unsafe-inline'",
+            "img-src 'self' data: https://*.googleusercontent.com https://platform-lookaside.fbsbx.com"
+                    + " https://*.fbcdn.net https://pbs.twimg.com",
+            "font-src 'self'",
+            "connect-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "frame-ancestors 'none'");
+
     @Value("${app.security.remember-me-key}")
     private String rememberMeKey;
 
@@ -280,7 +302,10 @@ public class SecurityConfig {
                                                        OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver,
                                                        AuditingRememberMeServices rememberMeServices) throws Exception {
         http
-                .headers(SecurityConfig::securityHeaders)
+                .headers(headers -> {
+                    securityHeaders(headers);
+                    headers.contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY));
+                })
                 .authorizeHttpRequests(auth -> auth
                         // Static assets (thư viện front-end tự host qua WebJars ở /webjars/**)
                         .requestMatchers("/css/**", "/js/**", "/images/**", "/webjars/**", "/uploads/**", "/favicon.ico").permitAll()

@@ -151,9 +151,7 @@
                                     class="btn btn-sm ms-1"
                                     th:classappend="${u.isActive} ? 'btn-outline-warning' : 'btn-outline-success'"
                                     th:title="${u.isActive} ? 'Khóa tài khoản' : 'Mở khóa tài khoản'"
-                                    th:data-username="${u.username}"
-                                    th:data-active="${u.isActive}"
-                                    onclick="return confirmToggle(this)">
+                                    th:data-confirm="${(u.isActive ? 'Khóa' : 'Mở khóa') + ' tài khoản @' + u.username + '?'}">
                                 <i class="fa-solid"
                                    th:classappend="${u.isActive} ? 'fa-lock' : 'fa-lock-open'"></i>
                             </button>
@@ -193,17 +191,6 @@
 
 </div>
 </body>
-
-<th:block layout:fragment="scripts">
-<script>
-function confirmToggle(btn) {
-    const username = btn.dataset.username;
-    const isActive = btn.dataset.active === 'true';
-    const action   = isActive ? 'Khóa' : 'Mở khóa';
-    return confirm(action + ' tài khoản @' + username + '?');
-}
-</script>
-</th:block>
 
 </html>
 

@@ -59,7 +59,7 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 - **Thông báo:** `checkout` publish `OrderPlacedEvent`; `service/notification/OrderNotificationListener` bắt event bằng `@TransactionalEventListener(AFTER_COMMIT)` và gọi `SlackNotificationService` (webhook qua `RestClient`) + `EmailNotificationService`, cả hai đều `@Async("taskExecutor")` chạy trên thread pool `notify-*` (`config/AsyncConfig`). `OrderStatisticsScheduler` gửi email báo cáo tháng theo `app.notification.statistics.cron`, chạy theo múi giờ JVM (cố ý không khai báo `zone` để cron cùng múi giờ với `LocalDate.now()` dùng tính tháng). Bật/tắt bằng `SLACK_NOTIFY_ENABLED` / `MAIL_NOTIFY_ENABLED`.
 - **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), chỉ nhận PNG/JPEG/GIF/WEBP khi đuôi file khớp magic bytes (`service/ImageFormat`, không tin `Content-Type`), đặt tên file bằng UUID + đuôi chuẩn hoá, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`. Giới hạn 5MB/file, 25MB/request (`spring.servlet.multipart.*` trong `application.yml`, mọi profile).
 - **Thư viện front-end** (Bootstrap, Font Awesome, Chart.js) tự host qua **WebJars** (dependency Maven, version trong `<properties>` của `pom.xml`), link bằng URL không chứa version: `@{/webjars/bootstrap/css/bootstrap.min.css}` (`webjars-locator-lite`). Không thêm thẻ CDN mới.
-- **Dashboard admin** đã dùng Chart.js 4.4.0 (WebJar) với dữ liệu inline qua `th:inline="javascript"` trong `admin/dashboard.html`.
+- **Dashboard admin** đã dùng Chart.js 4.4.0 (WebJar); `static/js/admin/dashboard.js` lấy dữ liệu từ `GET /admin/dashboard/charts` (`DashboardService.getChartData`, URL trong `data-charts-url`).
 - Slug được sinh bằng `utils/SlugUtils`; trang chi tiết sản phẩm ở storefront tìm sản phẩm theo slug.
 - **Logging/audit:** sẵn sàng cho nhiều instance sau load balancer: `app.instance-id` (`INSTANCE_ID`, mặc định hostname) được in trong mỗi dòng log, là `service.node.name` của `audit.log`, và ở prod mỗi instance ghi file vào thư mục riêng `logs/<instance-id>/` (không bao giờ để nhiều JVM ghi/xoay vòng chung một file); prod bật `server.forward-headers-strategy=native` + `server.tomcat.remoteip.internal-proxies` (`TRUSTED_PROXIES`) để `getRemoteAddr()`/`source.ip` là IP client thật. `logging/RequestIdFilter` (servlet filter chạy đầu tiên, cả dispatch ERROR/ASYNC) đặt MDC `requestId` — luôn là UUID do server sinh, trả lại trong response header `X-Request-Id`; header `X-Request-Id` hợp lệ của client chỉ vào MDC `clientRequestId` (in thành `cid=`), không bao giờ dùng làm requestId. `logging/MdcUserFilter` (ngay sau `springSecurityFilterChain`) đặt MDC `user.name` (tên theo ECS: trong `audit.log` thành object `"user":{"name":...}`; key phẳng `user` xung đột với mapping ECS); bean `TaskDecorator` (`MdcTaskDecorator`, khai báo trong `AsyncConfig`) mang MDC sang thread `@Async`. Sự kiện bảo mật đi qua `service/audit/AuditLogService`: logger `AUDIT`, message ngắn + trường gắn bằng SLF4J fluent API `addKeyValue` (không tự ghép chuỗi `key=value`); tên trường dùng dấu chấm (`event.action`, `target.id`...) và **không được trùng key MDC** (`requestId`, `clientRequestId`, `user.name`) — trùng thì encoder ECS của `audit.log` báo lỗi. Username nhập khi đăng nhập sai chỉ ghi nếu tài khoản tồn tại. Thay đổi dữ liệu chỉ ghi sau commit nên test `@Transactional` không thấy được — test bằng unit test như `AuthenticationAuditTest`. Đăng nhập được audit tự động qua event của `ProviderManager` (`AuthenticationAuditListener`: form, API, remember-me, OAuth2 thành công); các lỗi không sinh event được ghi riêng: lỗi OAuth2 trong `security/OAuth2LoginFailureHandler`, cookie remember-me bị từ chối trong `security/AuditingRememberMeServices` (bean `rememberMeServices` trong `SecurityConfig`). User hiện tại lấy qua `utils/SecurityUtils.currentUsername()`. Thao tác nhạy cảm mới (vd. import Excel) thì thêm method vào `AuditLogService`, không tự tạo logger `AUDIT` ở chỗ khác.
 
@@ -91,7 +91,7 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | `ThreadPoolTaskExecutor` | 🟡 | Đã có `TaskDecorator` truyền MDC; thiếu rejection policy, graceful shutdown. |
 | Apache POI (Excel import/export) | ❌ | Export đơn hàng/sản phẩm, import sản phẩm. |
 | SOAP (Spring-WS) | ❌ | Expose web service contract-first. |
-| Chart (Chart.js) | 🟡 | Đã có 2 chart; cần SRI/self-host, thêm chart, cập nhật realtime. |
+| Chart (Chart.js) | 🟡 | Đã có 2 chart (WebJar, dữ liệu qua JSON); cần thêm chart, cập nhật realtime. |
 | JUnit 5 + Mockito + MockMvc | 🟡 | Chỉ có 2 integration test; thiếu unit test Mockito và test slice `@WebMvcTest`. |
 | Swagger / OpenAPI | ✅ | Bổ sung `@Operation`/`@ApiResponse` cho endpoint mới. |
 | SLF4J + Logback | ✅ | `logback-spring.xml`, MDC `requestId`/`user.name`, logger `AUDIT` (`audit.log` JSON ECS ở prod). |
@@ -183,9 +183,9 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **OWASP Dependency-Check** (issue 2.5). Plugin `org.owasp:dependency-check-maven` chạy riêng bằng `./mvnw dependency-check:check` (hoặc `docker compose run --rm maven dependency-check:check`), không gắn vào build mặc định để test vẫn nhanh. NVD API key đọc từ biến môi trường `NVD_API_KEY` (khai báo trong `.env`, không ghi vào `pom.xml`). Fail khi có lỗ hổng CVSS ≥ 7; lỗ hổng không áp dụng thì ghi vào file suppression kèm lý do; ưu tiên sửa bằng cách nâng version qua Spring Boot BOM. Chạy trước khi tạo PR có thêm/đổi dependency.
 
-**Chart.** Giữ Chart.js (không cần thêm ECharts). Thêm chart (top sản phẩm bán chạy, số đơn theo ngày), dữ liệu tính trong `DashboardService`. Self-host file Chart.js trong `static/` (hoặc thêm `integrity` + `crossorigin` cho thẻ CDN). Muốn bật CSP chặt thì chuyển script inline sang file JS + lấy dữ liệu qua endpoint JSON admin. Cập nhật realtime qua STOMP `/topic/admin/orders`.
+**Chart.** Giữ Chart.js (không cần thêm ECharts). Thêm chart (top sản phẩm bán chạy, số đơn theo ngày), dữ liệu tính trong `DashboardService`. Chart.js đã tự host qua WebJar và dashboard đã lấy dữ liệu qua endpoint JSON `GET /admin/dashboard/charts` (CSP chặt) — chart mới mở rộng `DashboardChartResDto` + `dashboard.js`. Cập nhật realtime qua STOMP `/topic/admin/orders` (gọi lại endpoint JSON hoặc nhận số liệu trong message).
 
-**Testing.** JUnit 5 + Mockito + MockMvc (đã có `spring-boot-starter-test`, `spring-boot-webmvc-test`, `spring-security-test`).
+**Testing.** JUnit 5 + Mockito + MockMvc (đã có `spring-boot-starter-test`, `spring-boot-webmvc-test`, `spring-security-test`, `spring-boot-security-test` — module cuối bắt buộc ở Boot 4 để `@WithMockUser` có tác dụng với MockMvc tự cấu hình).
 - Unit test service: `@ExtendWith(MockitoExtension.class)`, `@Mock` repository, `@InjectMocks` service — không khởi động Spring.
 - Test controller: `@WebMvcTest(XxxController.class)` + `@MockitoBean` cho service (Boot 4 đã bỏ `@MockBean`), `@WithMockUser(roles = "ADMIN")`, request POST phải có `.with(csrf())`. Luôn có case 401/403 cho endpoint được bảo vệ.
 - Integration test: chuyển sang Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:mysql`, `@ServiceConnection`) để không đụng DB dev (cần Docker trên máy). JMS test dùng Artemis embedded, không cần container.
@@ -206,7 +206,8 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Output encoding (XSS)**
 - Thymeleaf dùng `th:text` (tự escape). Không dùng `th:utext` với dữ liệu người dùng (hiện không có chỗ nào dùng — giữ vậy).
-- JS: đặt dữ liệu bằng `textContent`; nếu phải build HTML thì escape qua helper như `escapeHtml` trong `cart.js`. Dữ liệu từ server vào script dùng `th:inline="javascript"` (tự escape), không nối chuỗi.
+- JS: đặt dữ liệu bằng `textContent`; nếu phải build HTML thì escape qua helper như `escapeHtml` trong `cart.js`. Dữ liệu từ server cho JS truyền qua thuộc tính `data-*` (Thymeleaf tự escape) hoặc endpoint JSON — không dùng `th:inline="javascript"` (CSP cấm script inline).
+- **CSP** (đã bật ở chain web, `SecurityConfig.CONTENT_SECURITY_POLICY`): `script-src 'self'` — mọi JS nằm trong `static/js/**` hoặc WebJars, gắn sự kiện bằng `addEventListener`; không `<script>` inline, không `on*`/`th:on*`, không `javascript:`, không thêm host ngoài (`TemplateCspComplianceTest` fail nếu vi phạm). Hộp xác nhận ở admin dùng `data-confirm="..."` (`static/js/admin/main.js`). JS mới ở giai đoạn 6 (STOMP, chart realtime) theo cùng quy tắc; WebSocket same-origin đã nằm trong `connect-src 'self'`.
 
 **Authentication & password**
 - Mật khẩu lưu bằng `PasswordEncoder` (BCrypt), không bao giờ log hay trả về.
@@ -255,7 +256,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - [x] Chưa chống brute-force đăng nhập (form + API).
 - [x] `RegisterReqDto` giới hạn mật khẩu 6–32 ký tự → nâng lên tối thiểu 8, tối đa ≥ 64.
 - [x] `FileStorageService` chưa kiểm tra magic bytes.
-- [ ] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI.
+- [x] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI. (Đã bật CSP + Referrer-Policy; thư viện chuyển sang WebJars tự host.)
 - [x] Chưa cấu hình cờ cookie session và timeout tường minh.
 - [x] Chưa có audit log và `logback-spring.xml`.
 - [ ] Chưa quét dependency (OWASP Dependency-Check) — issue 2.5.

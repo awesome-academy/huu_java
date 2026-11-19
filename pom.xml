@@ -200,6 +200,13 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Boot 4 tách phần gắn Spring Security vào MockMvc tự cấu hình (springSecurity() configurer) ra module riêng:
+             thiếu module này thì @WithMockUser / user(...) không có tác dụng với @AutoConfigureMockMvc -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 	<build>

@@ -9,6 +9,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultMatcher;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -33,6 +34,31 @@ class SecurityHeadersTest {
     @ValueSource(strings = {"/login", "/api/v1/products", "/actuator/health"})
     void everyChain_sendsSecurityHeaders(String path) throws Exception {
         mockMvc.perform(get(path)).andExpectAll(commonSecurityHeaders());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/", "/login", "/admin", "/no-such-page"})
+    void webChain_sendsStrictContentSecurityPolicy(String path) throws Exception {
+        mockMvc.perform(get(path))
+                .andExpect(header().string("Content-Security-Policy", SecurityConfig.CONTENT_SECURITY_POLICY))
+                .andExpect(header().string("Content-Security-Policy", containsString("script-src 'self';")))
+                .andExpect(header().string("Content-Security-Policy", containsString("frame-ancestors 'none'")));
+    }
+
+    @Test
+    void contentSecurityPolicy_neverAllowsInlineOrEvalScripts() {
+        String scriptSrc = SecurityConfig.CONTENT_SECURITY_POLICY.split("script-src")[1].split(";")[0];
+
+        assertThat(scriptSrc)
+                .doesNotContain("unsafe-inline")
+                .doesNotContain("unsafe-eval")
+                .doesNotContain("http");
+    }
+
+    @Test
+    void apiChain_hasNoCsp_soSwaggerUiKeepsWorking() throws Exception {
+        mockMvc.perform(get("/api/v1/products"))
+                .andExpect(header().doesNotExist("Content-Security-Policy"));
     }
 
     @Test
