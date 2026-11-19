@@ -35,7 +35,8 @@ Sau khi login: `ADMIN` → `/admin`, `USER` → `/` (hoặc quay lại trang yê
 Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong `application.yml`, cần set env `*_CLIENT_ID` / `*_CLIENT_SECRET` tương ứng:
 
 - PKCE được bật cho mọi provider (`pkceAuthorizationRequestResolver`).
-- Google dùng `email` làm principal key (map tài khoản theo email đã verify); xử lý ở `CustomOidcUserService`.
+- Google map tài khoản theo provider id, sau đó theo email đã verify; xử lý ở `CustomOidcUserService`.
+- Mọi provider đều dùng username nội bộ làm principal key (claim/attribute tổng hợp `local_username`), nên `Authentication#getName()` (audit log, MDC `user.name`) giống nhau dù đăng nhập bằng form, API, Google, Facebook hay X.
 - Facebook/Twitter xử lý ở `CustomOAuth2UserService`; Twitter là provider cấu hình thủ công (không nằm trong `CommonOAuth2Provider`).
 - Provider của tài khoản lưu ở enum `AuthProvider`.
 

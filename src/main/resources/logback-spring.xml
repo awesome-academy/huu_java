@@ -6,7 +6,8 @@
   - prod: thêm audit.log cho logger AUDIT — JSON (ECS), ghi đồng bộ để không mất sự kiện (giữ 90 ngày).
   - Thư mục file: dev là logs/; prod là logs/<app.instance-id>/ — khi chạy nhiều instance sau load balancer dùng chung
     thư mục log (vd. cùng bind mount ./logs), mỗi instance ghi và xoay vòng file của riêng nó, không ghi đè/xoá file
-    của instance khác. Định danh instance (app.instance-id, mặc định hostname) cũng được in trong mỗi dòng log.
+    của instance khác. Định danh instance (app.instance-id: bắt buộc ở prod, xem config/InstanceIdCheck;
+    nơi khác mặc định hostname) cũng được in trong mỗi dòng log.
   - Profile test (luôn bật khi chạy test, xem src/test/resources/config/application.yml) hoặc không bật dev/prod:
     chỉ console, để log của test không lẫn vào logs/foodsndrinks.log.
   Thư mục log đổi được qua logging.file.path / LOGGING_FILE_PATH. Mức log từng package đặt trong application-*.yml.

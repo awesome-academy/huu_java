@@ -42,6 +42,10 @@ logging:
         node-name: ${app.instance-id}
         environment: prod
 app:
+  # Tên thư mục log logs/<instance-id>/ — bắt buộc, cố định cho từng instance (app không khởi động nếu thiếu/rỗng/sai
+  # định dạng — xem config/InstanceIdCheck). Không lấy hostname: container tạo lại nhận hostname mới, log ghi sang thư
+  # mục mới và thư mục cũ không bao giờ được dọn.
+  instance-id: ${INSTANCE_ID:}
   security:
     remember-me-key: ${REMEMBER_ME_KEY}
 jwt:
