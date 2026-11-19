@@ -37,6 +37,7 @@ Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong 
 - PKCE được bật cho mọi provider (`pkceAuthorizationRequestResolver`).
 - Google map tài khoản theo provider id, sau đó theo email đã verify; xử lý ở `CustomOidcUserService`.
 - Mọi provider đều dùng username nội bộ làm principal key (claim/attribute tổng hợp `local_username`), nên `Authentication#getName()` (audit log, MDC `user.name`) giống nhau dù đăng nhập bằng form, API, Google, Facebook hay X.
+- Tài khoản local đã bị admin khoá không đăng nhập được bằng bất kỳ provider nào (giống form/API): cả hai service ném `DisabledOAuth2AccountException` → `/login?error=true` với thông báo chung, audit ghi `LOGIN_FAILURE reason=DISABLED auth.method=OAUTH2:<provider>` kèm username.
 - Facebook/Twitter xử lý ở `CustomOAuth2UserService`; Twitter là provider cấu hình thủ công (không nằm trong `CommonOAuth2Provider`).
 - Provider của tài khoản lưu ở enum `AuthProvider`.
 

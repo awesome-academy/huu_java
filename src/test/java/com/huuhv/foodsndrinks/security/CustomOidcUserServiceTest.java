@@ -15,12 +15,14 @@ import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
  * Principal của đăng nhập Google có {@code getName()} là username nội bộ (không phải email), giống form login và
- * Facebook/X — audit log và MDC {@code user.name} ghi cùng một tên cho một tài khoản.
+ * Facebook/X — audit log và MDC {@code user.name} ghi cùng một tên cho một tài khoản. Tài khoản đã bị admin khoá bị
+ * từ chối như form/API.
  */
 class CustomOidcUserServiceTest {
 
@@ -56,8 +58,23 @@ class CustomOidcUserServiceTest {
         assertThat(result.getEmail()).isEqualTo(EMAIL);
     }
 
+    @Test
+    void lockedAccount_isRejected() {
+        givenLocalUser("admin01", Role.ROLE_ADMIN, false);
+
+        assertThatThrownBy(() -> service.toLocalUser(googleUser(null)))
+                .isInstanceOfSatisfying(DisabledOAuth2AccountException.class, ex -> {
+                    assertThat(ex.getUsername()).isEqualTo("admin01");
+                    assertThat(ex.getError().getErrorCode()).isEqualTo("access_denied");
+                });
+    }
+
     private void givenLocalUser(String username, Role role) {
-        User local = User.builder().username(username).email(EMAIL).role(role).build();
+        givenLocalUser(username, role, true);
+    }
+
+    private void givenLocalUser(String username, Role role, boolean active) {
+        User local = User.builder().username(username).email(EMAIL).role(role).isActive(active).build();
         when(userService.provisionOAuthUser(AuthProvider.GOOGLE, SUBJECT, EMAIL,
                 "Admin 01", "https://example.com/a.png")).thenReturn(local);
         when(userService.provisionOAuthUser(AuthProvider.GOOGLE, SUBJECT, EMAIL, null, null)).thenReturn(local);

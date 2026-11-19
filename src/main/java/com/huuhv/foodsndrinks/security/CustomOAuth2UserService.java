@@ -34,9 +34,15 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
 
     @Override
     public OAuth2User loadUser(OAuth2UserRequest userRequest) throws OAuth2AuthenticationException {
-        OAuth2User oauth2User = super.loadUser(userRequest);
-        String registrationId = userRequest.getClientRegistration().getRegistrationId();
+        return toLocalUser(userRequest.getClientRegistration().getRegistrationId(), super.loadUser(userRequest));
+    }
 
+    /**
+     * Resolves (or creates) the local account behind a Facebook/Twitter identity and builds the principal for it.
+     *
+     * @throws DisabledOAuth2AccountException if the local account has been locked by an admin
+     */
+    OAuth2User toLocalUser(String registrationId, OAuth2User oauth2User) {
         ProviderProfile profile = switch (registrationId) {
             case "facebook" -> readFacebookProfile(oauth2User.getAttributes());
             case "twitter" -> readTwitterProfile(oauth2User.getAttributes());
@@ -45,6 +51,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
 
         User localUser = userService.provisionOAuthUser(
                 profile.provider(), profile.providerId(), profile.email(), profile.name(), profile.avatarUrl());
+        DisabledOAuth2AccountException.rejectIfDisabled(localUser);
 
         Map<String, Object> attributes = new HashMap<>(profile.attributes());
         attributes.put(NAME_ATTRIBUTE_KEY, localUser.getUsername());

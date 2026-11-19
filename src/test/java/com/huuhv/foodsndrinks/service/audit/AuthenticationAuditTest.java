@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
+import com.huuhv.foodsndrinks.security.DisabledOAuth2AccountException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
@@ -191,6 +192,19 @@ class AuthenticationAuditTest {
 
         assertThat(audit.lines()).containsExactly("Login failed event.action=LOGIN_FAILURE event.outcome=failure"
                 + " event.reason=access_denied auth.method=OAUTH2:google username=- source.ip=10.0.0.7");
+        assertThat(response.getRedirectedUrl()).isEqualTo("/login?error=true");
+    }
+
+    @Test
+    void oauth2Login_ofDisabledAccount_isAuditedLikeFormLogin_andRedirectsToLoginError() throws Exception {
+        MockHttpServletRequest request = currentRequest("/login/oauth2/code/google");
+        var response = new MockHttpServletResponse();
+
+        oauth2FailureHandler().onAuthenticationFailure(request, response,
+                new DisabledOAuth2AccountException(EXISTING_USER));
+
+        assertThat(audit.lines()).containsExactly("Login failed event.action=LOGIN_FAILURE event.outcome=failure"
+                + " event.reason=DISABLED auth.method=OAUTH2:google username=alice source.ip=10.0.0.7");
         assertThat(response.getRedirectedUrl()).isEqualTo("/login?error=true");
     }
 

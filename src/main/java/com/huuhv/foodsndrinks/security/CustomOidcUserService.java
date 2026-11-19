@@ -40,7 +40,11 @@ public class CustomOidcUserService extends OidcUserService {
         return toLocalUser(super.loadUser(userRequest));
     }
 
-    /** Resolves (or creates) the local account behind a Google identity and builds the principal for it. */
+    /**
+     * Resolves (or creates) the local account behind a Google identity and builds the principal for it.
+     *
+     * @throws DisabledOAuth2AccountException if the local account has been locked by an admin
+     */
     OidcUser toLocalUser(OidcUser oidcUser) {
         User localUser = userService.provisionOAuthUser(
                 AuthProvider.GOOGLE,
@@ -49,6 +53,7 @@ public class CustomOidcUserService extends OidcUserService {
                 oidcUser.getFullName(),
                 oidcUser.getPicture()
         );
+        DisabledOAuth2AccountException.rejectIfDisabled(localUser);
 
         // DefaultOidcUser merges userinfo claims with ID token claims (ID token wins), so the synthetic claim goes into
         // userinfo; Google's ID token does not carry it.
