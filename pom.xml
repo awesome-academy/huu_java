@@ -28,6 +28,10 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<!-- WebJars front-end (không có trong Spring Boot BOM) -->
+		<bootstrap.version>5.3.2</bootstrap.version>
+		<font-awesome.version>6.4.2</font-awesome.version>
+		<chartjs.version>4.4.0</chartjs.version>
 	</properties>
     <dependencies>
         <dependency>
@@ -142,6 +146,43 @@
         <dependency>
             <groupId>nz.net.ultraq.thymeleaf</groupId>
             <artifactId>thymeleaf-layout-dialect</artifactId>
+        </dependency>
+
+        <!-- Thư viện front-end tự host qua WebJars (phục vụ tại /webjars/**, thay CDN): CSP chỉ cần 'self', không phụ
+             thuộc CDN bên ngoài, và OWASP Dependency-Check quét được các thư viện này. webjars-locator-lite (Boot quản lý
+             version) cho phép URL không chứa version: /webjars/bootstrap/css/bootstrap.min.css -->
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>webjars-locator-lite</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>bootstrap</artifactId>
+            <version>${bootstrap.version}</version>
+            <exclusions>
+                <!-- Dùng bootstrap.bundle.min.js (đã gồm Popper) -->
+                <exclusion>
+                    <groupId>org.webjars</groupId>
+                    <artifactId>popper.js</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>font-awesome</artifactId>
+            <version>${font-awesome.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars.npm</groupId>
+            <artifactId>chart.js</artifactId>
+            <version>${chartjs.version}</version>
+            <exclusions>
+                <!-- dist/chart.umd.js đã đóng gói sẵn @kurkle/color (WebJar này khai báo bằng version range) -->
+                <exclusion>
+                    <groupId>org.webjars.npm</groupId>
+                    <artifactId>kurkle__color</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

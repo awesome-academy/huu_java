@@ -6,11 +6,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Locale;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -30,26 +29,26 @@ public class FileStorageService {
 
     /**
      * Saves a file under the given sub-folder and returns the URL path (e.g. /uploads/products/uuid.jpg).
+     * <p>
+     * Chỉ nhận PNG/JPEG/GIF/WEBP: đuôi file phải thuộc danh sách VÀ nội dung (magic bytes) phải đúng định dạng của đuôi
+     * đó. {@code Content-Type} do client gửi lên không được dùng (giả mạo được). Tên file lưu là UUID + đuôi chuẩn hoá.
      */
     public String store(MultipartFile file, String subFolder) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("File không được để trống!");
         }
 
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("image/")) {
-            throw new IllegalArgumentException("Chỉ cho phép upload file ảnh!");
-        }
-
         String originalName = file.getOriginalFilename();
         String extension    = (originalName != null && originalName.contains("."))
-                ? originalName.substring(originalName.lastIndexOf('.')).toLowerCase(Locale.ROOT)
+                ? originalName.substring(originalName.lastIndexOf('.'))
                 : "";
-        Set<String> allowed = Set.of(".png", ".jpg", ".jpeg", ".gif", ".webp");
-        if (!allowed.contains(extension)) {
-            throw new IllegalArgumentException("Định dạng ảnh không hợp lệ!");
+        ImageFormat format = ImageFormat.fromExtension(extension)
+                .orElseThrow(() -> new IllegalArgumentException("Định dạng ảnh không hợp lệ!"));
+        if (!format.matches(readHeader(file))) {
+            log.warn("Rejected upload: content does not match extension {}", format);
+            throw new IllegalArgumentException("Nội dung file không phải ảnh " + format.name() + " hợp lệ!");
         }
-        String fileName = UUID.randomUUID() + extension;
+        String fileName = UUID.randomUUID() + format.storedExtension();
 
         try {
             Path destination = rootLocation.resolve(subFolder).normalize();
@@ -63,6 +62,14 @@ public class FileStorageService {
         }
 
         return "/uploads/" + subFolder + "/" + fileName;
+    }
+
+    private static byte[] readHeader(MultipartFile file) {
+        try (InputStream in = file.getInputStream()) {
+            return in.readNBytes(ImageFormat.HEADER_LENGTH);
+        } catch (IOException e) {
+            throw new IllegalStateException("Không thể đọc file upload", e);
+        }
     }
 
     /**

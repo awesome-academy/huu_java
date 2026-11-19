@@ -27,12 +27,12 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 |---|---|---|
 | GET | `/admin/products` | Danh sách phân trang, filter theo tên / danh mục / loại / trạng thái bán |
 | GET | `/admin/products/add` | Form thêm sản phẩm |
-| POST | `/admin/products/add` | Tạo sản phẩm, upload nhiều ảnh (`newImages`, tối đa 10MB/file) |
+| POST | `/admin/products/add` | Tạo sản phẩm, upload nhiều ảnh (`newImages`, tối đa 5MB/file, 25MB/lần gửi) |
 | GET | `/admin/products/edit/{id}` | Form sửa sản phẩm |
 | POST | `/admin/products/edit/{id}` | Cập nhật (thêm/xóa ảnh, chọn ảnh đại diện) |
 | POST | `/admin/products/{id}/delete` | Xóa sản phẩm |
 
-Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`).
+Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`). Chỉ nhận PNG, JPEG, GIF, WEBP — nội dung file (magic bytes) phải khớp đuôi file, `Content-Type` do trình duyệt gửi không được dùng; tên file lưu là UUID.
 
 ### Quản lý danh mục — `CategoryAdminController` (`/admin/categories`)
 

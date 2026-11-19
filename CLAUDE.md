@@ -57,8 +57,9 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 ### Ghi chú nghiệp vụ
 - **Giỏ hàng là một `Order` có status `CART`** (xem `OrderStatus`). Thêm/sửa/xóa thao tác trên các `OrderDetail` của order đó (service luôn kiểm tra quyền sở hữu qua `requireOwnedCartItem`); `OrderService.checkout` chuyển nó sang `PENDING`. Các query admin/thống kê đều loại trừ order `CART`. Các endpoint thay đổi giỏ hàng trong `CartController` được gọi qua `fetch()` từ `static/js/web/cart.js` và trả JSON (`CartPayloadResDto`), không redirect.
 - **Thông báo:** `checkout` publish `OrderPlacedEvent`; `service/notification/OrderNotificationListener` bắt event bằng `@TransactionalEventListener(AFTER_COMMIT)` và gọi `SlackNotificationService` (webhook qua `RestClient`) + `EmailNotificationService`, cả hai đều `@Async("taskExecutor")` chạy trên thread pool `notify-*` (`config/AsyncConfig`). `OrderStatisticsScheduler` gửi email báo cáo tháng theo `app.notification.statistics.cron`, chạy theo múi giờ JVM (cố ý không khai báo `zone` để cron cùng múi giờ với `LocalDate.now()` dùng tính tháng). Bật/tắt bằng `SLACK_NOTIFY_ENABLED` / `MAIL_NOTIFY_ENABLED`.
-- **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), đặt tên file bằng UUID, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`.
-- **Dashboard admin** đã dùng Chart.js 4.4.0 (CDN jsDelivr) với dữ liệu inline qua `th:inline="javascript"` trong `admin/dashboard.html`.
+- **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), chỉ nhận PNG/JPEG/GIF/WEBP khi đuôi file khớp magic bytes (`service/ImageFormat`, không tin `Content-Type`), đặt tên file bằng UUID + đuôi chuẩn hoá, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`. Giới hạn 5MB/file, 25MB/request (`spring.servlet.multipart.*` trong `application.yml`, mọi profile).
+- **Thư viện front-end** (Bootstrap, Font Awesome, Chart.js) tự host qua **WebJars** (dependency Maven, version trong `<properties>` của `pom.xml`), link bằng URL không chứa version: `@{/webjars/bootstrap/css/bootstrap.min.css}` (`webjars-locator-lite`). Không thêm thẻ CDN mới.
+- **Dashboard admin** đã dùng Chart.js 4.4.0 (WebJar) với dữ liệu inline qua `th:inline="javascript"` trong `admin/dashboard.html`.
 - Slug được sinh bằng `utils/SlugUtils`; trang chi tiết sản phẩm ở storefront tìm sản phẩm theo slug.
 - **Logging/audit:** sẵn sàng cho nhiều instance sau load balancer: `app.instance-id` (`INSTANCE_ID`, mặc định hostname) được in trong mỗi dòng log, là `service.node.name` của `audit.log`, và ở prod mỗi instance ghi file vào thư mục riêng `logs/<instance-id>/` (không bao giờ để nhiều JVM ghi/xoay vòng chung một file); prod bật `server.forward-headers-strategy=native` + `server.tomcat.remoteip.internal-proxies` (`TRUSTED_PROXIES`) để `getRemoteAddr()`/`source.ip` là IP client thật. `logging/RequestIdFilter` (servlet filter chạy đầu tiên, cả dispatch ERROR/ASYNC) đặt MDC `requestId` — luôn là UUID do server sinh, trả lại trong response header `X-Request-Id`; header `X-Request-Id` hợp lệ của client chỉ vào MDC `clientRequestId` (in thành `cid=`), không bao giờ dùng làm requestId. `logging/MdcUserFilter` (ngay sau `springSecurityFilterChain`) đặt MDC `user.name` (tên theo ECS: trong `audit.log` thành object `"user":{"name":...}`; key phẳng `user` xung đột với mapping ECS); bean `TaskDecorator` (`MdcTaskDecorator`, khai báo trong `AsyncConfig`) mang MDC sang thread `@Async`. Sự kiện bảo mật đi qua `service/audit/AuditLogService`: logger `AUDIT`, message ngắn + trường gắn bằng SLF4J fluent API `addKeyValue` (không tự ghép chuỗi `key=value`); tên trường dùng dấu chấm (`event.action`, `target.id`...) và **không được trùng key MDC** (`requestId`, `clientRequestId`, `user.name`) — trùng thì encoder ECS của `audit.log` báo lỗi. Username nhập khi đăng nhập sai chỉ ghi nếu tài khoản tồn tại. Thay đổi dữ liệu chỉ ghi sau commit nên test `@Transactional` không thấy được — test bằng unit test như `AuthenticationAuditTest`. Đăng nhập được audit tự động qua event của `ProviderManager` (`AuthenticationAuditListener`: form, API, remember-me, OAuth2 thành công); các lỗi không sinh event được ghi riêng: lỗi OAuth2 trong `security/OAuth2LoginFailureHandler`, cookie remember-me bị từ chối trong `security/AuditingRememberMeServices` (bean `rememberMeServices` trong `SecurityConfig`). User hiện tại lấy qua `utils/SecurityUtils.currentUsername()`. Thao tác nhạy cảm mới (vd. import Excel) thì thêm method vào `AuditLogService`, không tự tạo logger `AUDIT` ở chỗ khác.
 
@@ -214,7 +215,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - JWT: secret ≥ 256 bit từ env, HS256 cố định, kiểm tra hạn + `iss`/`aud` (`jwt.issuer`/`jwt.audience`, đã làm trong `JwtUtil`); không đặt dữ liệu nhạy cảm vào claims. Filter kiểm tra token trước khi tra DB.
 
 **Session management**
-- Cookie session: `HttpOnly`, `Secure` (prod), `SameSite=Lax` qua `server.servlet.session.cookie.*`; đặt `server.servlet.session.timeout`. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm).
+- Cookie session (đã làm): `HttpOnly`, `SameSite=Lax`, `Secure` (`SESSION_COOKIE_SECURE`, prod mặc định `true`) qua `server.servlet.session.cookie.*`; timeout 30 phút. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm).
 
 **Access control**
 - Phân quyền theo URL trong `SecurityConfig` và thêm `@PreAuthorize` ở service/controller cho thao tác nhạy cảm. Mặc định deny (`anyRequest().authenticated()`).
@@ -235,13 +236,13 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Data protection & communication**
 - Response API/SOAP chỉ chứa field cần thiết (DTO), không lộ password hash, provider id, dữ liệu nội bộ.
-- Prod chạy HTTPS (HSTS). Thêm security headers trong `SecurityConfig`: Content-Security-Policy, Referrer-Policy, Permissions-Policy (Spring Security đã có sẵn X-Content-Type-Options, X-Frame-Options, Cache-Control). Thư viện từ CDN phải có SRI hoặc self-host.
+- Prod chạy HTTPS (HSTS — Spring Security chỉ gửi trên request HTTPS). Security headers khai báo ở `SecurityConfig.securityHeaders` (dùng cho cả 3 chain): Referrer-Policy, Permissions-Policy, cùng các header mặc định X-Content-Type-Options, X-Frame-Options, Cache-Control. Chain mới cũng phải gọi `.headers(SecurityConfig::securityHeaders)`. Thư viện front-end tự host qua WebJars, không dùng CDN.
 
 **Database**
 - Chỉ dùng JPQL/native query có tham số (`:param`), không nối chuỗi SQL (code hiện tại đều đúng). Tài khoản DB của app không cần quyền DDL ngoài Flyway.
 
 **File management (upload ảnh, import Excel)**
-- Giới hạn kích thước (`spring.servlet.multipart.*` — hiện chỉ cấu hình ở dev; cần khai báo cả prod). Kiểm tra cả extension lẫn magic bytes, vì `Content-Type` do client gửi lên không đáng tin (hiện `FileStorageService` mới kiểm tra content-type + extension).
+- Giới hạn kích thước (`spring.servlet.multipart.*` trong `application.yml`, mọi profile). Kiểm tra cả extension lẫn magic bytes, vì `Content-Type` do client gửi lên không đáng tin (`FileStorageService` + `ImageFormat` đã làm). Lưu ý: request vượt giới hạn khiến Tomcat không parse được multipart nên `CsrfFilter` không đọc được `_csrf` → 403; form upload nên kiểm tra kích thước phía client để báo lỗi dễ hiểu.
 - Tên file lưu luôn là UUID, đường dẫn phải nằm trong thư mục gốc (đã làm).
 - Excel: giới hạn số dòng/sheet; giữ cấu hình chống zip bomb mặc định của POI (`ZipSecureFile`). Khi export, ô bắt đầu bằng `=`, `+`, `-`, `@` phải thêm tiền tố `'` để chống formula injection.
 - XML/SOAP: không tự tạo `DocumentBuilderFactory`/`TransformerFactory` với cấu hình mặc định; nếu bắt buộc thì tắt DTD và external entity (chống XXE).
@@ -253,8 +254,8 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 ### Lỗ hổng đã biết cần xử lý
 - [x] Chưa chống brute-force đăng nhập (form + API).
 - [x] `RegisterReqDto` giới hạn mật khẩu 6–32 ký tự → nâng lên tối thiểu 8, tối đa ≥ 64.
-- [ ] `FileStorageService` chưa kiểm tra magic bytes.
+- [x] `FileStorageService` chưa kiểm tra magic bytes.
 - [ ] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI.
-- [ ] Chưa cấu hình cờ cookie session và timeout tường minh.
+- [x] Chưa cấu hình cờ cookie session và timeout tường minh.
 - [x] Chưa có audit log và `logback-spring.xml`.
 - [ ] Chưa quét dependency (OWASP Dependency-Check) — issue 2.5.

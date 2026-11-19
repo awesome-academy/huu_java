@@ -35,6 +35,7 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -51,6 +52,7 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.security.web.authentication.ExceptionMappingAuthenticationFailureHandler;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -67,6 +69,9 @@ import java.util.Map;
 @EnableConfigurationProperties({LoginAttemptProperties.class, CorsProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
+
+    /** App không dùng camera, micro, vị trí — tắt cho cả trang và mọi iframe. */
+    static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()";
 
     @Value("${app.security.remember-me-key}")
     private String rememberMeKey;
@@ -126,6 +131,18 @@ public class SecurityConfig {
         return source;
     }
 
+    /**
+     * Header bảo mật dùng chung cho cả 3 chain. Giữ nguyên các header mặc định của Spring Security:
+     * {@code X-Content-Type-Options: nosniff}, {@code X-Frame-Options: DENY}, {@code Cache-Control: no-cache...} và HSTS
+     * ({@code max-age=31536000; includeSubDomains}) — HSTS chỉ được gửi trên request HTTPS, tức prod sau load balancer
+     * (forward-headers-strategy=native nhận X-Forwarded-Proto từ TRUSTED_PROXIES).
+     */
+    static void securityHeaders(HeadersConfigurer<HttpSecurity> headers) {
+        headers
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .permissionsPolicyHeader(permissions -> permissions.policy(PERMISSIONS_POLICY));
+    }
+
     /** Form login: bị chặn do sai quá nhiều lần → /login?locked=true, lỗi khác → thông báo chung /login?error=true. */
     private static AuthenticationFailureHandler formLoginFailureHandler() {
         ExceptionMappingAuthenticationFailureHandler handler = new ExceptionMappingAuthenticationFailureHandler();
@@ -153,6 +170,7 @@ public class SecurityConfig {
     public SecurityFilterChain actuatorSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/actuator/**")
+                .headers(SecurityConfig::securityHeaders)
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -173,6 +191,7 @@ public class SecurityConfig {
     public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/api/**", "/api-docs/**")
+                .headers(SecurityConfig::securityHeaders)
                 .csrf(AbstractHttpConfigurer::disable)   // stateless → CSRF not needed
                 // Bean corsConfigurationSource: chỉ origin trong app.cors.allowed-origins, preflight trả lời trước khi xác thực
                 .cors(Customizer.withDefaults())
@@ -261,9 +280,10 @@ public class SecurityConfig {
                                                        OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver,
                                                        AuditingRememberMeServices rememberMeServices) throws Exception {
         http
+                .headers(SecurityConfig::securityHeaders)
                 .authorizeHttpRequests(auth -> auth
-                        // Static assets
-                        .requestMatchers("/css/**", "/js/**", "/images/**", "/uploads/**", "/favicon.ico").permitAll()
+                        // Static assets (thư viện front-end tự host qua WebJars ở /webjars/**)
+                        .requestMatchers("/css/**", "/js/**", "/images/**", "/webjars/**", "/uploads/**", "/favicon.ico").permitAll()
                         // Rating submission requires login — must be matched before the public /products/** rule below
                         .requestMatchers("/products/*/rate").hasAnyRole("USER", "ADMIN")
                         // Public pages

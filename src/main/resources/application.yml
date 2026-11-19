@@ -7,6 +7,11 @@ spring:
     # Secret cho môi trường local nằm trong file .env (git-ignore, mẫu ở .env.example) ở thư mục chạy app.
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
+  servlet:
+    multipart:
+      # Áp dụng mọi profile (prod trước đây dùng mặc định của Spring). Ảnh sản phẩm/avatar: tối đa 5MB/file, 25MB/request
+      max-file-size: 5MB
+      max-request-size: 25MB
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
@@ -64,6 +69,14 @@ spring:
 
 server:
   port: 8080 # Default port
+  servlet:
+    session:
+      timeout: 30m # Session không hoạt động quá 30 phút thì hết hạn (remember-me vẫn đăng nhập lại được)
+      cookie:
+        http-only: true   # JS không đọc được JSESSIONID
+        same-site: lax    # Không gửi kèm request POST/iframe từ site khác (thêm một lớp ngoài CSRF token)
+        # Chỉ gửi qua HTTPS. Dev (http://localhost) để false; prod mặc định true (application-prod.yml)
+        secure: ${SESSION_COOKIE_SECURE:false}
 
 # Secret/thời hạn đặt theo profile (application-dev.yml / application-prod.yml). iss/aud không phải secret: token chỉ
 # hợp lệ khi khớp cả hai — đổi giá trị làm mọi token đã cấp hết hiệu lực.
