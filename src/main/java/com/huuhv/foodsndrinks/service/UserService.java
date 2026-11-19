@@ -10,6 +10,7 @@ import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.Locale;
+import java.util.Objects;
 
 @Service
 @Slf4j
@@ -28,6 +30,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
     // -------------------------------------------------------
     // Existence checks (used by registration)
@@ -142,11 +145,15 @@ public class UserService {
             throw new DuplicateResourceException("Số điện thoại đã được sử dụng bởi tài khoản khác!");
         }
 
-        if (!blank(dto.getNewPassword())) {
+        boolean emailChanged = !Objects.equals(user.getEmail(), dto.getEmail());
+        boolean passwordChanged = !blank(dto.getNewPassword());
+        if (passwordChanged) {
             if (dto.getNewPassword().length() < 6 || dto.getNewPassword().length() > 32) {
                 throw new IllegalArgumentException("Mật khẩu mới phải từ 6 đến 32 ký tự.");
             }
             if (blank(dto.getCurrentPassword()) || !passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
+                // Sai mật khẩu hiện tại lặp lại = dấu hiệu dò mật khẩu bằng session bị chiếm → ghi audit ngay
+                auditLogService.passwordChangeFailed(id, user.getUsername(), "WRONG_CURRENT_PASSWORD");
                 throw new IllegalArgumentException("Mật khẩu hiện tại không đúng!");
             }
             if (!dto.getNewPassword().equals(dto.getConfirmNewPassword())) {
@@ -160,6 +167,13 @@ public class UserService {
         user.setPhone(dto.getPhone());
         userRepository.save(user);
         log.info("User #{} updated own profile", id);
+
+        if (passwordChanged) {
+            auditLogService.passwordChanged(id, user.getUsername());
+        }
+        if (emailChanged) {
+            auditLogService.userEmailChanged(id, user.getUsername());
+        }
     }
 
     // -------------------------------------------------------
@@ -214,18 +228,37 @@ public class UserService {
             throw new DuplicateResourceException("Số điện thoại đã được sử dụng bởi tài khoản khác!");
         }
 
+        Role oldRole = user.getRole();
+        boolean emailChanged = !Objects.equals(user.getEmail(), dto.getEmail());
+        boolean wasActive = Boolean.TRUE.equals(user.getIsActive());
+        boolean active = Boolean.TRUE.equals(dto.getIsActive());
+        boolean passwordReset = dto.getNewPassword() != null && !dto.getNewPassword().isBlank();
+
         user.setFullName(dto.getFullName());
         user.setEmail(dto.getEmail());
         user.setPhone(dto.getPhone());
         user.setRole(dto.getRole());
-        user.setIsActive(dto.getIsActive() != null && dto.getIsActive());
+        user.setIsActive(active);
 
-        if (dto.getNewPassword() != null && !dto.getNewPassword().isBlank()) {
+        if (passwordReset) {
             user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         }
 
         userRepository.save(user);
         log.info("Admin updated user #{}: {}", id, user.getUsername());
+
+        if (oldRole != dto.getRole()) {
+            auditLogService.userRoleChanged(id, user.getUsername(), oldRole, dto.getRole());
+        }
+        if (wasActive != active) {
+            auditLogService.userActiveChanged(id, user.getUsername(), active);
+        }
+        if (passwordReset) {
+            auditLogService.userPasswordReset(id, user.getUsername());
+        }
+        if (emailChanged) {
+            auditLogService.userEmailChanged(id, user.getUsername());
+        }
     }
 
     // -------------------------------------------------------
@@ -235,8 +268,10 @@ public class UserService {
     @Transactional
     public void toggleActive(Long id) {
         User user = findById(id);
-        user.setIsActive(!Boolean.TRUE.equals(user.getIsActive()));
+        boolean active = !Boolean.TRUE.equals(user.getIsActive());
+        user.setIsActive(active);
         userRepository.save(user);
+        auditLogService.userActiveChanged(id, user.getUsername(), active);
     }
 
     // -------------------------------------------------------

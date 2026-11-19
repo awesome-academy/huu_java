@@ -1,5 +1,20 @@
 server:
   port: ${SERVER_PORT:8080} # Allow override; avoid privileged port binding by default
+  # Chạy sau load balancer/reverse proxy: lấy IP client thật (request.getRemoteAddr(), dùng cho source.ip của audit log)
+  # và scheme https từ X-Forwarded-For / X-Forwarded-Proto qua RemoteIpValve của Tomcat.
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      # Chỉ tin header X-Forwarded-* khi kết nối tới từ các dải IP này (load balancer). Valve đọc X-Forwarded-For từ
+      # phải sang trái, bỏ qua IP thuộc dải tin cậy và dừng ở IP đầu tiên không thuộc dải → IP client tự chèn thêm vào
+      # bên trái header bị bỏ qua.
+      # Bắt buộc đặt TRUSTED_PROXIES đúng dải IP của load balancer (app không khởi động nếu thiếu/rỗng — xem
+      # config/TrustedProxiesCheck). Không có default: default của Spring Boot là mọi dải IP nội bộ, mà app chạy trong
+      # Docker thì mọi kết nối từ ngoài vào port publish đều tới từ gateway của bridge (172.17.0.1) → ai cũng giả được
+      # X-Forwarded-For/X-Forwarded-Proto. Không để rỗng: rỗng không có nghĩa là "không tin proxy nào".
+      internal-proxies: ${TRUSTED_PROXIES}
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
 
 spring:
   datasource:
@@ -8,14 +23,24 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
-# Customize logging for Prod environment (write to file for storage)
+# Customize logging for Prod environment. Appender (console + logs/<app.instance-id>/foodsndrinks.log + audit.log,
+# xoay vòng; mỗi instance một thư mục) khai báo trong logback-spring.xml — không đặt logging.file.name ở đây.
 logging:
   level:
     root: WARN # Only print warnings and errors, suppress INFO logs
     com.huuhv.foodsndrinks: INFO
-  file:
-    name: logs/foodsndrinks.log # Write logs to a file
+    # Logger AUDIT luôn ở mức INFO (đặt trong logback-spring.xml)
+  structured:
+    ecs:
+      service:
+        # Field service.node.name / service.environment trong logs/audit.log (JSON ECS) — phân biệt instance khi gom log
+        node-name: ${app.instance-id}
+        environment: prod
 app:
+  # Tên thư mục log logs/<instance-id>/ — bắt buộc, cố định cho từng instance (app không khởi động nếu thiếu/rỗng/sai
+  # định dạng — xem config/InstanceIdCheck). Không lấy hostname: container tạo lại nhận hostname mới, log ghi sang thư
+  # mục mới và thư mục cũ không bao giờ được dọn.
+  instance-id: ${INSTANCE_ID:}
   security:
     remember-me-key: ${REMEMBER_ME_KEY}
 jwt:

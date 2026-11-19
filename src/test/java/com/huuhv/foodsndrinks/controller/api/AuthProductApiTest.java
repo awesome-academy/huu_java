@@ -1,7 +1,9 @@
 package com.huuhv.foodsndrinks.controller.api;
 
 import com.huuhv.foodsndrinks.entity.User;
+import com.huuhv.foodsndrinks.logging.RequestIdFilter;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,8 +14,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -109,5 +113,33 @@ class AuthProductApiTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void anyRequest_returnsServerGeneratedRequestId_evenWhenClientSendsOne() throws Exception {
+        var uuid = org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}");
+
+        mockMvc.perform(get("/api/v1/products"))
+                .andExpect(header().string(RequestIdFilter.HEADER, uuid));
+        // id của client chỉ được ghi vào log (cid=...), không được dùng làm requestId
+        mockMvc.perform(get("/api/v1/products").header(RequestIdFilter.HEADER, "trace-abc-123"))
+                .andExpect(header().string(RequestIdFilter.HEADER, uuid));
+    }
+
+    @Test
+    void login_successAndFailure_areWrittenToAuditLog() throws Exception {
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            obtainToken();
+            mockMvc.perform(post("/api/v1/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(loginBody(USERNAME, "wrong-password")))
+                    .andExpect(status().isUnauthorized());
+
+            assertThat(audit.lines()).containsExactly(
+                    "Login succeeded event.action=LOGIN_SUCCESS event.outcome=success auth.method=API"
+                            + " username=" + USERNAME + " source.ip=127.0.0.1",
+                    "Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS"
+                            + " auth.method=API username=" + USERNAME + " source.ip=127.0.0.1");
+        }
     }
 }

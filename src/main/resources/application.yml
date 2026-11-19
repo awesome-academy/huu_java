@@ -66,6 +66,11 @@ server:
   port: 8080 # Default port
 
 app:
+  # Định danh instance khi chạy nhiều instance sau load balancer: in trong mỗi dòng log, là field service.node.name
+  # của audit.log, và (profile prod) là tên thư mục log riêng logs/<instance-id>/ để các instance không ghi chung file.
+  # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
+  # (application-prod.yml + config/InstanceIdCheck), vì hostname của container đổi mỗi lần tạo lại.
+  instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
   notification:
     admin-email: ${ADMIN_NOTIFY_EMAIL:admin@example.com}
     slack:

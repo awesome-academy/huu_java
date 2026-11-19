@@ -45,6 +45,10 @@ Authorization: Bearer <token>
 
 Token sai/thiếu/hết hạn → **401 Unauthorized**. Tài khoản bị khóa → 401 (bắt `DisabledException`).
 
+### Truy vết request (`X-Request-Id`)
+
+Mọi response đều có header `X-Request-Id` chứa id do server sinh (UUID) cho request đó. Khi báo lỗi, gửi kèm giá trị này. Client có thể tự gửi header `X-Request-Id` (chữ, số, `-`, tối đa 64 ký tự) để nối log phía client với log server: giá trị đó được ghi vào log server dạng `cid=<giá trị>` bên cạnh requestId, nhưng response vẫn trả id của server. Giá trị sai định dạng bị bỏ qua.
+
 ## Endpoints
 
 ### Auth — `AuthApiController` (`/api/v1/auth`)

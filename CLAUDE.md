@@ -32,7 +32,7 @@ docker compose down                                          # thêm -v để xo
 - Secret local nằm trong `.env` (git-ignore). Compose dùng nó để thay biến và truyền vào container (`env_file`); app chạy bằng JDK local đọc nó qua `spring.config.import: optional:file:.env[.properties]`, biến môi trường hệ điều hành vẫn được ưu tiên. Thêm biến cấu hình mới thì cập nhật cả `.env.example` và bảng biến môi trường trong README. Trong `.env`, dòng `KEY=` rỗng ghi đè default trong yml thành rỗng — biến không dùng phải để comment.
 - Trong compose, app nối DB qua `jdbc:mysql://mysql:3306/...` (ghi đè `DB_FOODSNDRINKS_URL`), đặt `TZ` từ `APP_TZ` trong `.env` (mặc định `Asia/Ho_Chi_Minh`, cũng là `ENV` mặc định trong `Dockerfile`; mọi instance phải chung một giá trị, để `@CreationTimestamp`/`LocalDateTime.now()` giống khi chạy local), `./uploads` và `./logs` được mount vào `/app`. Service `app` chạy bằng `HOST_UID`/`HOST_GID` (mặc định 1000) để ghi được bind mount trên Linux/WSL2 mà file vẫn thuộc user máy host. Service `maven` dùng `docker/maven-entrypoint.sh`: khởi động bằng root, Docker Desktop (project hiện là root) thì chạy Maven bằng root — chạy bằng UID khác sẽ lỗi `utime` trên `target/`; Linux/WSL2 thì chown volume `maven-repo` (`/m2`, chứa `HOME`/`MAVEN_USER_HOME`/`maven.repo.local`) rồi `setpriv` về chủ sở hữu thư mục project — giữ nguyên cơ chế này khi sửa compose. MySQL mở ra host ở `127.0.0.1:33070` và được cố định `--default-time-zone=+00:00` cho khớp `serverTimezone=UTC` (DB lưu thời gian theo UTC; không đặt `TZ` cho service `mysql`). Artemis đã có trong compose (`ARTEMIS_HOST`/`ARTEMIS_PORT` đã được truyền vào app) nhưng app chưa kết nối.
 - Migration không có dữ liệu mẫu: tạo admin bằng cách đăng ký tại `/register` rồi `UPDATE users SET role = 'ROLE_ADMIN'` (lệnh cụ thể trong README).
-- Cả **chạy app lẫn chạy test** đều cần MySQL (của compose hoặc của máy). Không có `src/test/resources` và không có DB riêng cho test: test là `@SpringBootTest` chạy thẳng vào DB `foodsndrinks` và dựa vào `@Transactional` để rollback — test mới có đụng tới DB phải giữ `@Transactional` (cho tới khi chuyển sang Testcontainers, xem mục Testing bên dưới).
+- Cả **chạy app lẫn chạy test** đều cần MySQL (của compose hoặc của máy). `src/test/resources` chỉ có `config/application.yml` (thêm profile `test` để log của test chỉ ra console, không lẫn vào `logs/foodsndrinks.log`), không có DB riêng cho test: test là `@SpringBootTest` chạy thẳng vào DB `foodsndrinks` và dựa vào `@Transactional` để rollback — test mới có đụng tới DB phải giữ `@Transactional` (cho tới khi chuyển sang Testcontainers, xem mục Testing bên dưới).
 - Flyway tự chạy migration khi khởi động. Hibernate `ddl-auto` không được cấu hình, nên schema chỉ đến từ Flyway.
 - URL ở dev: storefront `http://localhost:8080`, admin `/admin` (cần `ROLE_ADMIN`), Swagger UI `/api-docs/swagger`, OpenAPI JSON `/api/v1/api-docs`. Swagger bị tắt ở prod.
 - Chưa cấu hình linter/formatter nào.
@@ -60,9 +60,10 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 - **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), đặt tên file bằng UUID, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`.
 - **Dashboard admin** đã dùng Chart.js 4.4.0 (CDN jsDelivr) với dữ liệu inline qua `th:inline="javascript"` trong `admin/dashboard.html`.
 - Slug được sinh bằng `utils/SlugUtils`; trang chi tiết sản phẩm ở storefront tìm sản phẩm theo slug.
+- **Logging/audit:** sẵn sàng cho nhiều instance sau load balancer: `app.instance-id` (`INSTANCE_ID`; bắt buộc và cố định ở prod — `config/InstanceIdCheck`, vì hostname container đổi mỗi lần tạo lại; dev mặc định hostname) được in trong mỗi dòng log, là `service.node.name` của `audit.log`, và ở prod mỗi instance ghi file vào thư mục riêng `logs/<instance-id>/` (không bao giờ để nhiều JVM ghi/xoay vòng chung một file); prod bật `server.forward-headers-strategy=native` + `server.tomcat.remoteip.internal-proxies` (`TRUSTED_PROXIES`) để `getRemoteAddr()`/`source.ip` là IP client thật. `logging/RequestIdFilter` (servlet filter chạy đầu tiên, cả dispatch ERROR/ASYNC) đặt MDC `requestId` — luôn là UUID do server sinh, trả lại trong response header `X-Request-Id`; header `X-Request-Id` hợp lệ của client chỉ vào MDC `clientRequestId` (in thành `cid=`), không bao giờ dùng làm requestId. `logging/MdcUserFilter` (ngay sau `springSecurityFilterChain`) đặt MDC `user.name` (tên theo ECS: trong `audit.log` thành object `"user":{"name":...}`; key phẳng `user` xung đột với mapping ECS); bean `TaskDecorator` (`MdcTaskDecorator`, khai báo trong `AsyncConfig`) mang MDC sang thread `@Async`. Sự kiện bảo mật đi qua `service/audit/AuditLogService`: logger `AUDIT`, message ngắn + trường gắn bằng SLF4J fluent API `addKeyValue` (không tự ghép chuỗi `key=value`); tên trường dùng dấu chấm (`event.action`, `target.id`...) và **không được trùng key MDC** (`requestId`, `clientRequestId`, `user.name`) — trùng thì encoder ECS của `audit.log` báo lỗi. Username nhập khi đăng nhập sai chỉ ghi nếu tài khoản tồn tại. Thay đổi dữ liệu chỉ ghi sau commit nên test `@Transactional` không thấy được — test bằng unit test như `AuthenticationAuditTest`. Đăng nhập được audit tự động qua event của `ProviderManager` (`AuthenticationAuditListener`: form, API, remember-me, OAuth2 thành công); các lỗi không sinh event được ghi riêng: lỗi OAuth2 trong `security/OAuth2LoginFailureHandler`, cookie remember-me bị từ chối trong `security/AuditingRememberMeServices` (bean `rememberMeServices` trong `SecurityConfig`). User hiện tại lấy qua `utils/SecurityUtils.currentUsername()`. Thao tác nhạy cảm mới (vd. import Excel) thì thêm method vào `AuditLogService`, không tự tạo logger `AUDIT` ở chỗ khác.
 
 ### Cấu hình
-`application.yml` (dùng chung: mail, OAuth2 client, Slack, cron) + `application-dev.yml` (datasource local, log DEBUG, bật Swagger, giá trị fallback cho JWT/remember-me) / `application-prod.yml` (mọi thứ lấy từ biến môi trường, ghi log ra file, tắt Swagger, actuator chỉ expose `health`). Chọn profile qua `SPRING_PROFILES_ACTIVE` (mặc định `dev`). Bảng đầy đủ các biến môi trường nằm trong [README.md](README.md).
+`application.yml` (dùng chung: mail, OAuth2 client, Slack, cron) + `application-dev.yml` (datasource local, log DEBUG, bật Swagger, giá trị fallback cho JWT/remember-me) / `application-prod.yml` (mọi thứ lấy từ biến môi trường, log level WARN/INFO, tắt Swagger, actuator chỉ expose `health`). Appender/pattern log nằm ở `logback-spring.xml` (`dev`/`prod`: console + `foodsndrinks.log` text qua `AsyncAppender`, 30 ngày; `prod` thêm `audit.log` JSON ECS ghi đồng bộ, 90 ngày; thư mục `logs/` ở dev, `logs/<app.instance-id>/` ở prod; có profile `test` hoặc không bật dev/prod: chỉ console) — không đặt `logging.file.name` trong yml. Chọn profile qua `SPRING_PROFILES_ACTIVE` (mặc định `dev`). Bảng đầy đủ các biến môi trường nằm trong [README.md](README.md).
 
 ## Quy ước
 
@@ -86,13 +87,13 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | Messaging: JMS (ActiveMQ Artemis) | ❌ | Chuyển thông báo đơn hàng sang JMS (xem bên dưới). |
 | WebSocket + STOMP | ❌ | Realtime đơn mới cho admin, trạng thái đơn cho user. |
 | `@Scheduled` + `@Async` | ✅ | Cấu hình scheduler pool, tách executor theo loại việc. |
-| `ThreadPoolTaskExecutor` | 🟡 | Thiếu rejection policy, graceful shutdown, `TaskDecorator` truyền MDC. |
+| `ThreadPoolTaskExecutor` | 🟡 | Đã có `TaskDecorator` truyền MDC; thiếu rejection policy, graceful shutdown. |
 | Apache POI (Excel import/export) | ❌ | Export đơn hàng/sản phẩm, import sản phẩm. |
 | SOAP (Spring-WS) | ❌ | Expose web service contract-first. |
 | Chart (Chart.js) | 🟡 | Đã có 2 chart; cần SRI/self-host, thêm chart, cập nhật realtime. |
 | JUnit 5 + Mockito + MockMvc | 🟡 | Chỉ có 2 integration test; thiếu unit test Mockito và test slice `@WebMvcTest`. |
 | Swagger / OpenAPI | ✅ | Bổ sung `@Operation`/`@ApiResponse` cho endpoint mới. |
-| SLF4J + Logback | 🟡 | Có `@Slf4j` nhưng chưa có `logback-spring.xml`, chưa có MDC/audit log. |
+| SLF4J + Logback | ✅ | `logback-spring.xml`, MDC `requestId`/`user.name`, logger `AUDIT` (`audit.log` JSON ECS ở prod). |
 | Thymeleaf | ✅ | — |
 
 ### Giai đoạn
@@ -100,7 +101,7 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 Thứ tự thực hiện. Tên giai đoạn trùng với dropdown "Roadmap phase" trong `.github/ISSUE_TEMPLATE/*.yml` — đổi ở đây thì đổi cả ở template. Tick khi hoàn thành cả giai đoạn.
 
 - [x] 0. Hạ tầng (Docker)
-- [ ] 1. Logging (Logback, MDC, audit log)
+- [x] 1. Logging (Logback, MDC, audit log)
 - [ ] 2. Security hardening (OWASP)
 - [ ] 3. Testing (Mockito, WebMvcTest, Testcontainers)
 - [ ] 4. Scheduler & Multithread
@@ -164,7 +165,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Scheduler, `@Async`, `ThreadPoolTaskExecutor`.** Giữ `config/AsyncConfig`, bổ sung:
 - `setRejectedExecutionHandler(new CallerRunsPolicy())`, `setWaitForTasksToCompleteOnShutdown(true)`, `setAwaitTerminationSeconds(...)`.
-- `TaskDecorator` sao chép MDC (requestId) sang thread async. Không tự truyền `SecurityContext` sang thread khác trừ khi thật sự cần.
+- `TaskDecorator` sao chép MDC sang thread async: đã có bean `MdcTaskDecorator` trong `AsyncConfig`. Executor mới phải tạo từ `ThreadPoolTaskExecutorBuilder` được inject (Boot tự gắn mọi bean `TaskDecorator`), không tự `new ThreadPoolTaskExecutor()`. Spring MVC async (`StreamingResponseBody` khi export Excel) chưa được cấu hình executor — khi cần thì đặt bằng `configureAsyncSupport` với executor tạo từ builder. Không tự truyền `SecurityContext` sang thread khác trừ khi thật sự cần.
 - Executor riêng cho việc nặng (vd. `excelExecutor` cho import/export) để không chiếm pool `notify-*`; luôn ghi tên executor tường minh, vd. `@Async("excelExecutor")`.
 - Pool cho `@Scheduled` qua `spring.task.scheduling.pool.size`; job dùng `CompletableFuture` khi cần chạy song song (vd. tổng hợp nhiều thống kê dashboard cùng lúc).
 
@@ -189,9 +190,9 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - Integration test: chuyển sang Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:mysql`, `@ServiceConnection`) để không đụng DB dev (cần Docker trên máy). JMS test dùng Artemis embedded, không cần container.
 - JaCoCo sinh báo cáo coverage khi `./mvnw test` (issue 3.2); chưa đặt ngưỡng chặn build.
 
-**Logging (SLF4J + Logback).** Tạo `src/main/resources/logback-spring.xml` với `<springProfile>`: dev ghi console; prod ghi file `SizeAndTimeBasedRollingPolicy` (khi đó bỏ `logging.file.name` trong `application-prod.yml` để tránh cấu hình trùng).
-- `OncePerRequestFilter` đặt `requestId` (và username nếu đã đăng nhập) vào MDC, in trong pattern log.
-- Logger riêng `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại, khóa tài khoản, đổi role/khóa user, đổi trạng thái đơn, import Excel.
+**Logging (SLF4J + Logback)** — đã làm ở issue 1.1 (xem "Logging/audit" trong Ghi chú nghiệp vụ).
+- `logback-spring.xml` với `<springProfile>`: `dev`/`prod` ghi console + file `SizeAndTimeBasedRollingPolicy` (qua `AsyncAppender`), `prod` thêm `audit.log` dạng JSON (`StructuredLogEncoder`, format `ecs`). Pattern text dùng converter riêng trong package `logging` thay cho `%msg`/`%wEx`: `%safeMsg` (thay mọi ký tự ngắt dòng, kể cả Unicode, bằng `_`), `%safeEx` (làm sạch message của exception), `%safeKvp` (in key-value audit kiểu logfmt, có quote/escape). `LogbackConfigTest` nạp file thật để kiểm tra — sửa pattern/appender thì chạy lại test này.
+- Logger `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại (kể cả cookie remember-me bị từ chối), khóa/mở khóa user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu, đổi trạng thái đơn; import Excel (giai đoạn 7) thêm vào `AuditLogService`.
 - Luôn dùng placeholder `log.info("... {}", x)`, không nối chuỗi.
 
 ## OWASP Secure Coding — quy tắc bắt buộc
@@ -229,7 +230,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Error handling & logging**
 - Người dùng chỉ thấy thông báo chung; stack trace chỉ nằm trong log (`ApiExceptionHandler` đã làm cho 500). Không trả `ex.getMessage()` của exception hệ thống/thư viện ra ngoài.
-- Không log password, token, JWT, session id, số thẻ, toàn bộ request body. Chống log injection: loại bỏ `\r\n` trong dữ liệu người dùng trước khi log (hoặc dùng `%replace(%msg){'[\r\n]', '_'}` trong pattern Logback).
+- Không log password, token, JWT, session id, số thẻ, toàn bộ request body. Chống log injection: pattern Logback đã dùng `%safeMsg`/`%safeEx`/`%safeKvp` (thay ký tự ngắt dòng, kể cả U+0085/U+2028/U+2029, bằng `_`) — giữ các converter này khi sửa pattern; giá trị đơn đưa vào MDC thì qua `LogSanitizer.sanitize`.
 - Ghi audit log cho sự kiện bảo mật (xem mục Logging).
 
 **Data protection & communication**
@@ -255,5 +256,5 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - [ ] `FileStorageService` chưa kiểm tra magic bytes.
 - [ ] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI.
 - [ ] Chưa cấu hình cờ cookie session và timeout tường minh.
-- [ ] Chưa có audit log và `logback-spring.xml`.
+- [x] Chưa có audit log và `logback-spring.xml`.
 - [ ] Chưa quét dependency (OWASP Dependency-Check) — issue 2.5.

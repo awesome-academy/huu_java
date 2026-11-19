@@ -104,17 +104,20 @@ src/main/java/com/huuhv/foodsndrinks/
 ├── entity/          # User, Product, ProductImage, Category, Order, OrderDetail, Rating, Suggestion
 ├── enums/           # Role, AuthProvider, CategoryType, ProductType, OrderStatus, SuggestionStatus
 ├── exception/       # AdminExceptionHandler, WebExceptionHandler, ApiExceptionHandler + custom exceptions
+├── logging/         # RequestIdFilter, MdcUserFilter (MDC), MdcTaskDecorator (MDC sang @Async), LogSanitizer + converter Logback chống log injection
 ├── repository/      # Spring Data JPA repositories
-├── security/        # JwtUtil, JwtAuthenticationFilter, CustomUserDetailsService, OAuth2 user services
+├── security/        # JwtUtil, JwtAuthenticationFilter, CustomUserDetailsService, OAuth2 user services, AuditingRememberMeServices, OAuth2LoginFailureHandler
 ├── service/         # Toàn bộ business logic (Controller chỉ gọi Service)
+│   ├── audit/         # AuditLogService (logger AUDIT), AuthenticationAuditListener
 │   └── notification/  # Slack/Email notification, order event listener, statistics scheduler
-└── utils/           # SlugUtils...
+└── utils/           # SlugUtils, SecurityUtils...
 
 src/main/resources/
 ├── db/migration/    # Flyway migrations
 ├── templates/       # Thymeleaf (admin/, web/, error/)
 ├── static/          # CSS, JS, images
-└── application*.yml # Cấu hình theo profile
+├── application*.yml # Cấu hình theo profile
+└── logback-spring.xml # Appender/pattern log theo profile (dev: console + file, prod: thêm audit.log)
 ```
 
 **Quy ước quan trọng:** Constructor Injection qua `@RequiredArgsConstructor` + `private final` (không dùng field injection); Controller mỏng, logic nằm ở Service; query quan hệ dùng `LEFT JOIN FETCH` chống N+1. Xem thêm `CLAUDE.md`.
@@ -127,7 +130,8 @@ Profile mặc định là `dev` (đổi qua env `SPRING_PROFILES_ACTIVE=prod` kh
 |---|---|
 | `application.yml` | Cấu hình chung: mail (SMTP), OAuth2 client (Google/Facebook/Twitter), Slack webhook, cron thống kê |
 | `application-dev.yml` | Datasource local, logging DEBUG, Swagger UI bật, JWT secret/remember-me key tự sinh ngẫu nhiên nếu không đặt, upload dir |
-| `application-prod.yml` | Datasource từ env (bắt buộc), logging ra file `logs/foodsndrinks.log`, **Swagger tắt hoàn toàn** |
+| `application-prod.yml` | Datasource từ env (bắt buộc), log level WARN/INFO, **Swagger tắt hoàn toàn** |
+| `logback-spring.xml` | Appender + pattern log: `dev` và `prod` ghi console + file xoay vòng, `prod` thêm `audit.log`; không bật profile nào thì chỉ console (xem [Logging](#logging)) |
 
 ### Biến môi trường
 
@@ -154,6 +158,8 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `ORDER_STATS_CRON` | — | Cron gửi báo cáo tháng (mặc định `0 0 23 L * *`, 23h ngày cuối tháng, theo múi giờ JVM — `APP_TZ` khi chạy bằng compose) |
 | `UPLOAD_DIR` | — | Thư mục lưu ảnh upload (mặc định `./uploads`) |
 | `SERVER_PORT` | — | Port (mặc định 8080) |
+| `INSTANCE_ID` | Prod | Định danh instance: in trong mỗi dòng log, `service.node.name` của `audit.log`, tên thư mục log `logs/<INSTANCE_ID>/` ở prod. **Bắt buộc ở prod** (thiếu, rỗng hoặc sai định dạng — chỉ chữ, số, `.`, `_`, `-`, tối đa 64 ký tự — thì app không khởi động): tên cố định, khác nhau cho từng instance và giữ nguyên qua các lần deploy. Không dùng hostname vì container tạo lại có hostname mới → log ghi sang thư mục mới, thư mục cũ không bao giờ được dọn. Dev mặc định lấy hostname |
+| `TRUSTED_PROXIES` | Prod | Dải IP (CIDR, cách nhau bởi dấu phẩy) của load balancer/reverse proxy. Prod chỉ tin `X-Forwarded-For`/`X-Forwarded-Proto` từ các IP này để lấy IP client thật (audit log `source.ip`) và scheme https. **Bắt buộc ở prod** (không có default; thiếu hoặc rỗng thì app không khởi động). Chỉ khai báo đúng dải IP của load balancer — không dùng cả dải nội bộ như `172.16.0.0/12`, vì khi app chạy trong Docker mọi kết nối từ ngoài vào port publish đều tới từ gateway của bridge, ai cũng giả được IP. Prod không có load balancer thì đặt `127.0.0.1/32` (chỉ tin chính máy chủ) |
 
 ## Database Migrations
 
@@ -183,6 +189,30 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 - Mỗi luồng có `@ControllerAdvice` riêng cùng package: `AdminExceptionHandler` (view lỗi admin), `WebExceptionHandler` (view lỗi web), `ApiExceptionHandler` (JSON `ErrorResponse`).
 - `GlobalErrorController` (`/error`) chỉ xử lý lỗi dispatch cấp servlet (404/403/405/409 và exception thoát khỏi mọi advice) — tự chọn trả JSON hay view theo prefix URI.
+
+## Logging
+
+- Mỗi dòng log có `[instance] [requestId] [user]` (`instance` = `INSTANCE_ID`, bắt buộc ở prod, dev mặc định hostname — phân biệt instance khi chạy nhiều instance sau load balancer). `requestId` luôn do server sinh (UUID), được trả lại trong response header `X-Request-Id` và được mang sang thread `@Async`. Khi người dùng báo lỗi, lấy `X-Request-Id` của response để `grep` toàn bộ log của request đó. Nếu client gửi header `X-Request-Id` hợp lệ (chữ/số/`-`, ≤ 64 ký tự), giá trị đó chỉ được ghi kèm thành `[<requestId> cid=<id của client>]`, không dùng làm requestId (tránh giả mạo id của request khác).
+- Chống log injection: ký tự ngắt dòng (CR, LF, U+0085, U+2028, U+2029) và ký tự điều khiển/vô hình trong message, message của exception và giá trị audit bị thay bằng `_`. Hệ quả: message nhiều dòng hợp lệ (vd. báo cáo của devtools) cũng bị gộp thành 1 dòng.
+- Profile `dev` và `prod` ghi thêm file trong `logs/` (đổi thư mục bằng `LOGGING_FILE_PATH`); riêng `prod` ghi vào thư mục con `logs/<INSTANCE_ID>/` để nhiều instance dùng chung thư mục log (vd. cùng bind mount `./logs`) không ghi đè/xoay vòng/xoá file của nhau. File xoay vòng theo ngày hoặc khi vượt 10MB, nén `.gz`. `foodsndrinks.log` được ghi bất đồng bộ (`AsyncAppender`, không bỏ log nào); `audit.log` chỉ có ở `prod` và ghi đồng bộ. Khi chạy test luôn có thêm profile `test` (`src/test/resources/config/application.yml`) nên log của test chỉ ra console.
+
+  | File | Nội dung | Định dạng | Giữ lại |
+  |---|---|---|---|
+  | `logs/foodsndrinks.log` (prod: `logs/<INSTANCE_ID>/foodsndrinks.log`) | Toàn bộ log của app (kể cả audit) | Text | 30 ngày, tối đa 1GB / instance |
+  | `logs/<INSTANCE_ID>/audit.log` (chỉ prod) | Chỉ logger `AUDIT` (sự kiện bảo mật); có `service.node.name` = `INSTANCE_ID` | JSON 1 dòng/sự kiện ([ECS](https://www.elastic.co/guide/en/ecs/current/index.html)) | 90 ngày, tối đa 500MB |
+
+- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
+
+  ```
+  Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS auth.method=FORM username=alice source.ip=127.0.0.1
+  User role changed event.action=USER_ROLE_CHANGED event.outcome=success actor=admin target.id=5 target.username=dave target.role.from=ROLE_USER target.role.to=ROLE_ADMIN source.ip=127.0.0.1
+  ```
+
+  Cùng sự kiện trong `audit.log` (rút gọn):
+
+  ```json
+  {"@timestamp":"…","log":{"level":"WARN","logger":"AUDIT"},"message":"Login failed","requestId":"…","event":{"action":"LOGIN_FAILURE","outcome":"failure","reason":"BAD_CREDENTIALS"},"auth":{"method":"FORM"},"username":"alice","source":{"ip":"127.0.0.1"},"ecs":{"version":"8.11"}}
+  ```
 
 ## Monitoring
 

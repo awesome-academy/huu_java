@@ -11,6 +11,7 @@ import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.notification.OrderPlacedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -36,6 +37,7 @@ public class OrderService {
     private final ProductRepository      productRepository;
     private final ProductImageRepository productImageRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final AuditLogService        auditLogService;
 
     @Transactional(readOnly = true)
     public Page<OrderResDto> searchOrders(String statusStr, String keyword,
@@ -181,6 +183,7 @@ public class OrderService {
 
         order.setStatus(newStatus);
         orderRepository.save(order);
+        auditLogService.orderStatusChanged(id, current, newStatus);
     }
 
     private OrderResDto buildOrderResDto(Order order, List<OrderDetail> details) {
