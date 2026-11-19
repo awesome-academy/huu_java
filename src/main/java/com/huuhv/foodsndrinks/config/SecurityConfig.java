@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.logging.RequestIdFilter;
 import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
 import com.huuhv.foodsndrinks.security.CustomOAuth2UserService;
 import com.huuhv.foodsndrinks.security.CustomOidcUserService;
@@ -21,6 +22,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationEventPublisher;
@@ -28,6 +30,7 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.DefaultAuthenticationEventPublisher;
 import org.springframework.security.authentication.event.AuthenticationFailureLockedEvent;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -49,14 +52,19 @@ import org.springframework.security.web.authentication.ExceptionMappingAuthentic
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.time.Duration;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity   // enable @PreAuthorize / @Secured on individual methods
-@EnableConfigurationProperties(LoginAttemptProperties.class)
+@EnableConfigurationProperties({LoginAttemptProperties.class, CorsProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -95,6 +103,27 @@ public class SecurityConfig {
         eventPublisher.setAdditionalExceptionMappings(
                 Map.of(LoginThrottledException.class, AuthenticationFailureLockedEvent.class));
         return eventPublisher;
+    }
+
+    /**
+     * CORS chỉ cho REST API {@code /api/**} (chain web dùng session cookie, không mở CORS). Allowlist rỗng → không đăng
+     * ký cấu hình nào → trình duyệt chỉ cho gọi same-origin. API xác thực bằng Bearer token nên
+     * {@code allowCredentials=false} (trình duyệt không gửi cookie).
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource(CorsProperties corsProperties) {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        if (!corsProperties.allowedOrigins().isEmpty()) {
+            CorsConfiguration config = new CorsConfiguration();
+            config.setAllowedOrigins(corsProperties.allowedOrigins());
+            config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE"));
+            config.setAllowedHeaders(List.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE, RequestIdFilter.HEADER));
+            config.setExposedHeaders(List.of(RequestIdFilter.HEADER, HttpHeaders.RETRY_AFTER));
+            config.setAllowCredentials(false);
+            config.setMaxAge(Duration.ofHours(1));
+            source.registerCorsConfiguration("/api/**", config);
+        }
+        return source;
     }
 
     /** Form login: bị chặn do sai quá nhiều lần → /login?locked=true, lỗi khác → thông báo chung /login?error=true. */
@@ -145,6 +174,8 @@ public class SecurityConfig {
         http
                 .securityMatcher("/api/**", "/api-docs/**")
                 .csrf(AbstractHttpConfigurer::disable)   // stateless → CSRF not needed
+                // Bean corsConfigurationSource: chỉ origin trong app.cors.allowed-origins, preflight trả lời trước khi xác thực
+                .cors(Customizer.withDefaults())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // Swagger UI & OpenAPI spec (tighten or remove in prod via springdoc.swagger-ui.enabled=false)

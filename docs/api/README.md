@@ -45,6 +45,12 @@ Authorization: Bearer <token>
 
 Token sai/thiếu/hết hạn → **401 Unauthorized**. Sai username/email hoặc mật khẩu → 401 với message chung (không phân biệt sai username hay sai mật khẩu). Tài khoản bị vô hiệu hoá → 401 `Tài khoản đã bị vô hiệu hoá.` — chỉ trả khi đã nhập **đúng** mật khẩu, nên không dò được tài khoản nào bị khoá.
 
+JWT ký HS256, sống 1 giờ, có claim `iss` = `jwt.issuer` (`JWT_ISSUER`, mặc định `foodsndrinks`) và `aud` = `jwt.audience` (`JWT_AUDIENCE`, mặc định `foodsndrinks-api`). Token chỉ hợp lệ khi đúng chữ ký, còn hạn và khớp cả `iss` lẫn `aud`; đổi một trong hai giá trị làm mọi token đã cấp hết hiệu lực. Claims không chứa dữ liệu nhạy cảm (`sub` = username, `role`).
+
+### CORS
+
+Mặc định API chỉ gọi được same-origin từ trình duyệt. Muốn SPA ở origin khác gọi `/api/**` thì khai báo `CORS_ALLOWED_ORIGINS` (origin đầy đủ, cách nhau bởi dấu phẩy, vd. `https://app.example.com,http://localhost:5173`; `*` bị từ chối khi khởi động). Cho phép method `GET/POST/PUT/DELETE`, header `Authorization`, `Content-Type`, `X-Request-Id`; expose `X-Request-Id`, `Retry-After`; không gửi cookie (`allowCredentials=false` — xác thực bằng Bearer token). Preflight từ origin ngoài danh sách → 403. Trang web (session cookie) không mở CORS.
+
 ### Giới hạn đăng nhập sai
 
 Sai mật khẩu **5 lần trong 15 phút** (tính từ lần sai đầu tiên) với cùng một username/email → tên đăng nhập đó bị tạm khoá **15 phút**, kể cả khi sau đó nhập đúng mật khẩu:

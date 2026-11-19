@@ -211,7 +211,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - Mật khẩu lưu bằng `PasswordEncoder` (BCrypt), không bao giờ log hay trả về.
 - Chính sách mật khẩu (đã làm): mật khẩu mới luôn khai báo `@ValidPassword` trên DTO (nguồn duy nhất là `service/security/PasswordPolicy`: 8–64 ký tự, ≤ 72 byte UTF-8 vì BCrypt, không nằm trong danh sách bị lộ qua `CompromisedPasswordChecker` = `security/PwnedPasswordsChecker`); không tự viết `@Size` cho mật khẩu.
 - Chống brute-force (đã làm): `security/LoginAttemptAwareAuthenticationProvider` (bean `AuthenticationProvider` duy nhất, dùng chung form + API) kiểm tra khoá trước khi tra user và đếm qua `service/security/LoginAttemptService` (Caffeine, key = tên người dùng nhập, chỉ đúng khi 1 instance); trạng thái tài khoản kiểm tra SAU mật khẩu. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu".
-- JWT: secret ≥ 256 bit từ env, kiểm tra hạn, nên thêm và kiểm tra `iss`/`aud`; không đặt dữ liệu nhạy cảm vào claims.
+- JWT: secret ≥ 256 bit từ env, HS256 cố định, kiểm tra hạn + `iss`/`aud` (`jwt.issuer`/`jwt.audience`, đã làm trong `JwtUtil`); không đặt dữ liệu nhạy cảm vào claims. Filter kiểm tra token trước khi tra DB.
 
 **Session management**
 - Cookie session: `HttpOnly`, `Secure` (prod), `SameSite=Lax` qua `server.servlet.session.cookie.*`; đặt `server.servlet.session.timeout`. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm).
@@ -222,7 +222,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **CSRF & CORS**
 - Không tắt CSRF ở chain web. Chỉ tắt cho chain stateless dùng Bearer token/HTTP Basic (`/api/**`, `/ws/**`). STOMP CONNECT phải mang CSRF token.
-- Hiện chưa cấu hình CORS (API chỉ same-origin). Khi cần thì khai báo allowlist origin tường minh cho `/api/**`; không dùng `*` kèm credentials.
+- CORS chỉ mở cho `/api/**` qua bean `corsConfigurationSource` (`SecurityConfig`) với allowlist `app.cors.allowed-origins` (`CORS_ALLOWED_ORIGINS`, rỗng = same-origin; `*` làm app không khởi động — `CorsProperties`), `allowCredentials=false`. Không mở CORS cho chain web.
 
 **Cryptography & secrets**
 - Không commit secret thật vào repo, kể cả làm giá trị mặc định `${VAR:default}` trong `application*.yml`. Default không được là khoá/secret mà app vẫn dùng được (kể cả chuỗi `changeme-*` — repo public nên ai cũng biết): khoá ký/mã hoá ở dev dùng `${VAR:${random.value}${random.value}}` — mỗi `random.value` là 16 byte từ `SecureRandom`, ghép lại đủ 256 bit (như `jwt.secret`, `app.security.remember-me-key`; không dùng `random.uuid`, chỉ có 122 bit ngẫu nhiên), còn lại để trống để app báo lỗi khi thiếu. Secret thật đặt ở biến môi trường hoặc file local đã nằm trong `.gitignore`. Secret nào lỡ bị push thì phải rotate.

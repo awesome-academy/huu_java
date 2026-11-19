@@ -65,6 +65,12 @@ spring:
 server:
   port: 8080 # Default port
 
+# Secret/thời hạn đặt theo profile (application-dev.yml / application-prod.yml). iss/aud không phải secret: token chỉ
+# hợp lệ khi khớp cả hai — đổi giá trị làm mọi token đã cấp hết hiệu lực.
+jwt:
+  issuer: ${JWT_ISSUER:foodsndrinks}
+  audience: ${JWT_AUDIENCE:foodsndrinks-api}
+
 logging:
   level:
     # Cảnh báo "Global AuthenticationManager configured with an AuthenticationProvider bean" là chủ ý: bean
@@ -73,6 +79,10 @@ logging:
     "[org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer$InitializeUserDetailsManagerConfigurer]": ERROR
 
 app:
+  cors:
+    # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
+    # Không chấp nhận '*' (app không khởi động).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   # Định danh instance khi chạy nhiều instance sau load balancer: in trong mỗi dòng log, là field service.node.name
   # của audit.log, và (profile prod) là tên thư mục log riêng logs/<instance-id>/ để các instance không ghi chung file.
   # Mặc định lấy hostname (container Docker/pod K8s có hostname riêng); đặt INSTANCE_ID để dùng tên cố định, dễ đọc.

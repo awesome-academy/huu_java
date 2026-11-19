@@ -147,6 +147,8 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `HOST_UID` / `HOST_GID` | Linux/WSL2 nếu khác 1000 | UID/GID user máy host (`id -u` / `id -g`): container app chạy bằng user này để ghi được `uploads/`, `logs/` mà file vẫn thuộc user máy host (mặc định 1000). Container maven tự chạy bằng chủ sở hữu thư mục project (`docker/maven-entrypoint.sh`), không dùng biến này |
 | `DB_FOODSNDRINKS_URL` | Prod | JDBC URL (dev mặc định `jdbc:mysql://localhost:3306/foodsndrinks`) |
 | `JWT_SECRET` | Prod | Secret ký JWT, ≥ 32 byte / 256 bit (dev không đặt thì tự sinh khoá random 256 bit mỗi khi context khởi động — token cũ hết hiệu lực sau restart, kể cả hot restart của devtools) |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | — | Claim `iss` / `aud` của JWT, bắt buộc khớp khi kiểm tra token (mặc định `foodsndrinks` / `foodsndrinks-api`; đổi thì token cũ hết hiệu lực) |
+| `CORS_ALLOWED_ORIGINS` | Khi SPA khác origin gọi API | Origin được gọi `/api/**` từ trình duyệt, cách nhau bởi dấu phẩy (vd. `https://app.example.com`). Rỗng = chỉ same-origin; `*` bị từ chối |
 | `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random 256 bit) |
 | `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Khi dùng login Google | OAuth2 credentials từ Google Console |
