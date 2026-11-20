@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.audit;
 
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Prod không có default cho {@code internal-proxies} (bắt buộc đặt {@code TRUSTED_PROXIES}), nên test khai báo
  * {@value #LOAD_BALANCER} — request từ 127.0.0.1 đóng vai load balancer.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@IntegrationTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ForwardedClientIpAuditTest {
 
     private static final String LOAD_BALANCER = "127.0.0.0/8, ::1/128";

@@ -71,12 +71,13 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 **Build & test:**
 
 ```bash
-# Trong Docker (container JDK 25, dùng MySQL của compose — không cần JDK local)
-docker compose run --rm maven test                          # Toàn bộ test
-docker compose run --rm maven test -Dtest=AuthProductApiTest # Chạy 1 class test
-docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
+# Trong Docker (container JDK 25 — không cần JDK local)
+docker compose run --rm maven-docker test                           # Toàn bộ test (mount Docker socket, xem cảnh báo bên dưới)
+docker compose run --rm maven-docker test -Dtest=AuthProductApiTest # Chạy 1 class test
+docker compose run --rm maven test -DexcludedGroups=integration # Chỉ test không cần Docker (không mount socket)
+docker compose run --rm maven clean package -DskipTests             # Build file JAR vào target/
 
-# Hoặc bằng JDK local (cần MySQL: compose ở Cách B hoặc MySQL trên máy)
+# Hoặc bằng JDK local (cần Docker đang chạy, không cần MySQL)
 ./mvnw test
 ./mvnw clean package -DskipTests
 
@@ -84,7 +85,19 @@ docker compose up -d --build app     # Build lại image và chạy app sau khi 
 docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
 
-Test hiện tại là `@SpringBootTest` chạy trên database `foodsndrinks` (của compose hoặc của máy) và rollback sau mỗi test.
+**Các loại test:**
+
+| Loại | Ví dụ | Cần |
+|---|---|---|
+| Unit test Mockito (`@ExtendWith(MockitoExtension.class)`) | `OrderServiceTest`, `UserServiceTest` | — |
+| Test slice `@WebMvcTest` + 3 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Integration test `@IntegrationTest` (= `@SpringBootTest` + Testcontainers + profile `test`, tag `integration`) | `AuthProductApiTest`, `FoodsndrinksApplicationTests` | Docker |
+
+Integration test chạy trên **MySQL 8.4 do Testcontainers tạo** (`TestcontainersConfiguration`, `@ServiceConnection`) — không đụng database dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Test chỉ chạy với profile `test` (không bật `dev`), nên không dùng datasource, `JWT_SECRET` hay `REMEMBER_ME_KEY` trong `.env`. Không dùng `@SpringBootTest` trần (`IntegrationTestConventionTest` fail). Một container dùng chung cho cả lần chạy, bị xoá khi test kết thúc; mỗi test vẫn rollback bằng `@Transactional`. Lần chạy đầu tải image `mysql:8.4`.
+
+> ⚠ **`maven-docker` mount Docker socket của máy host** để Testcontainers tạo container: mọi code chạy trong build (dependency, plugin, test) đều có quyền tương đương root trên máy. Chỉ dùng trên máy dev với code đã review; service `maven` (không có socket) vẫn dùng cho build/quét dependency.
+
+**Coverage (JaCoCo):** `./mvnw test` (hoặc `maven-docker test`) sinh báo cáo `target/site/jacoco/index.html` (kèm `jacoco.xml`, `jacoco.csv`). Chưa đặt ngưỡng chặn build.
 
 ## Project Structure
 
@@ -199,7 +212,7 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 - Mỗi dòng log có `[instance] [requestId] [user]` (`instance` = `INSTANCE_ID`, bắt buộc ở prod, dev mặc định hostname — phân biệt instance khi chạy nhiều instance sau load balancer). `requestId` luôn do server sinh (UUID), được trả lại trong response header `X-Request-Id` và được mang sang thread `@Async`. Khi người dùng báo lỗi, lấy `X-Request-Id` của response để `grep` toàn bộ log của request đó. Nếu client gửi header `X-Request-Id` hợp lệ (chữ/số/`-`, ≤ 64 ký tự), giá trị đó chỉ được ghi kèm thành `[<requestId> cid=<id của client>]`, không dùng làm requestId (tránh giả mạo id của request khác).
 - Chống log injection: ký tự ngắt dòng (CR, LF, U+0085, U+2028, U+2029) và ký tự điều khiển/vô hình trong message, message của exception và giá trị audit bị thay bằng `_`. Hệ quả: message nhiều dòng hợp lệ (vd. báo cáo của devtools) cũng bị gộp thành 1 dòng.
-- Profile `dev` và `prod` ghi thêm file trong `logs/` (đổi thư mục bằng `LOGGING_FILE_PATH`); riêng `prod` ghi vào thư mục con `logs/<INSTANCE_ID>/` để nhiều instance dùng chung thư mục log (vd. cùng bind mount `./logs`) không ghi đè/xoay vòng/xoá file của nhau. File xoay vòng theo ngày hoặc khi vượt 10MB, nén `.gz`. `foodsndrinks.log` được ghi bất đồng bộ (`AsyncAppender`, không bỏ log nào); `audit.log` chỉ có ở `prod` và ghi đồng bộ. Khi chạy test luôn có thêm profile `test` (`src/test/resources/config/application.yml`) nên log của test chỉ ra console.
+- Profile `dev` và `prod` ghi thêm file trong `logs/` (đổi thư mục bằng `LOGGING_FILE_PATH`); riêng `prod` ghi vào thư mục con `logs/<INSTANCE_ID>/` để nhiều instance dùng chung thư mục log (vd. cùng bind mount `./logs`) không ghi đè/xoay vòng/xoá file của nhau. File xoay vòng theo ngày hoặc khi vượt 10MB, nén `.gz`. `foodsndrinks.log` được ghi bất đồng bộ (`AsyncAppender`, không bỏ log nào); `audit.log` chỉ có ở `prod` và ghi đồng bộ. Khi chạy test chỉ bật profile `test` (không bật `dev`; `src/test/resources/config/application.yml`) nên log của test chỉ ra console.
 
   | File | Nội dung | Định dạng | Giữ lại |
   |---|---|---|---|

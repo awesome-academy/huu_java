@@ -24,17 +24,18 @@ Docker (không cần JDK/MySQL local; cần file `.env` copy từ `.env.example`
 ```bash
 docker compose up -d --build                                 # MySQL 8.4 + ActiveMQ Artemis + app (profile dev)
 docker compose up -d mysql artemis                           # chỉ hạ tầng, app chạy bằng JDK local
-docker compose run --rm maven test                           # chạy Maven trong container JDK 25
-docker compose run --rm maven test -Dtest=AuthProductApiTest
+docker compose run --rm maven-docker test                    # chạy toàn bộ test trong container JDK 25 (mount Docker socket cho Testcontainers)
+docker compose run --rm maven-docker test -Dtest=AuthProductApiTest
+docker compose run --rm maven test -DexcludedGroups=integration   # service maven: không có Docker socket, bỏ qua @IntegrationTest
 docker compose run --rm --no-deps maven dependency-check:check   # quét CVE (NVD_API_KEY lấy từ .env)
 docker compose up -d --build app                             # build lại app sau khi sửa code
 docker compose down                                          # thêm -v để xoá dữ liệu MySQL/Artemis
 ```
 
 - Secret local nằm trong `.env` (git-ignore). Compose dùng nó để thay biến và truyền vào container (`env_file`); app chạy bằng JDK local đọc nó qua `spring.config.import: optional:file:.env[.properties]`, biến môi trường hệ điều hành vẫn được ưu tiên. Thêm biến cấu hình mới thì cập nhật cả `.env.example` và bảng biến môi trường trong README. Trong `.env`, dòng `KEY=` rỗng ghi đè default trong yml thành rỗng — biến không dùng phải để comment.
-- Trong compose, app nối DB qua `jdbc:mysql://mysql:3306/...` (ghi đè `DB_FOODSNDRINKS_URL`), đặt `TZ` từ `APP_TZ` trong `.env` (mặc định `Asia/Ho_Chi_Minh`, cũng là `ENV` mặc định trong `Dockerfile`; mọi instance phải chung một giá trị, để `@CreationTimestamp`/`LocalDateTime.now()` giống khi chạy local), `./uploads` và `./logs` được mount vào `/app`. Service `app` chạy bằng `HOST_UID`/`HOST_GID` (mặc định 1000) để ghi được bind mount trên Linux/WSL2 mà file vẫn thuộc user máy host. Service `maven` dùng `docker/maven-entrypoint.sh`: khởi động bằng root, Docker Desktop (project hiện là root) thì chạy Maven bằng root — chạy bằng UID khác sẽ lỗi `utime` trên `target/`; Linux/WSL2 thì chown volume `maven-repo` (`/m2`, chứa `HOME`/`MAVEN_USER_HOME`/`maven.repo.local`) rồi `setpriv` về chủ sở hữu thư mục project — giữ nguyên cơ chế này khi sửa compose. MySQL mở ra host ở `127.0.0.1:33070` và được cố định `--default-time-zone=+00:00` cho khớp `serverTimezone=UTC` (DB lưu thời gian theo UTC; không đặt `TZ` cho service `mysql`). Artemis đã có trong compose (`ARTEMIS_HOST`/`ARTEMIS_PORT` đã được truyền vào app) nhưng app chưa kết nối.
+- Trong compose, app nối DB qua `jdbc:mysql://mysql:3306/...` (ghi đè `DB_FOODSNDRINKS_URL`), đặt `TZ` từ `APP_TZ` trong `.env` (mặc định `Asia/Ho_Chi_Minh`, cũng là `ENV` mặc định trong `Dockerfile`; mọi instance phải chung một giá trị, để `@CreationTimestamp`/`LocalDateTime.now()` giống khi chạy local), `./uploads` và `./logs` được mount vào `/app`. Service `app` chạy bằng `HOST_UID`/`HOST_GID` (mặc định 1000) để ghi được bind mount trên Linux/WSL2 mà file vẫn thuộc user máy host. Service `maven` dùng `docker/maven-entrypoint.sh`: khởi động bằng root, Docker Desktop (project hiện là root) thì chạy Maven bằng root — chạy bằng UID khác sẽ lỗi `utime` trên `target/`; Linux/WSL2 thì chown volume `maven-repo` (`/m2`, chứa `HOME`/`MAVEN_USER_HOME`/`maven.repo.local`) rồi `setpriv` về chủ sở hữu thư mục project (nếu có Docker socket — service `maven-docker` — thì giữ GID của socket làm group phụ) — giữ nguyên cơ chế này khi sửa compose. `maven-docker` = `maven` + mount `/var/run/docker.sock` (chỉ để chạy test bằng Testcontainers; ai dùng được socket là root trên host, nên `maven` thường không mount). MySQL mở ra host ở `127.0.0.1:33070` và được cố định `--default-time-zone=+00:00` cho khớp `serverTimezone=UTC` (DB lưu thời gian theo UTC; không đặt `TZ` cho service `mysql`). Artemis đã có trong compose (`ARTEMIS_HOST`/`ARTEMIS_PORT` đã được truyền vào app) nhưng app chưa kết nối.
 - Migration không có dữ liệu mẫu: tạo admin bằng cách đăng ký tại `/register` rồi `UPDATE users SET role = 'ROLE_ADMIN'` (lệnh cụ thể trong README).
-- Cả **chạy app lẫn chạy test** đều cần MySQL (của compose hoặc của máy). `src/test/resources` chỉ có `config/application.yml` (thêm profile `test` để log của test chỉ ra console, không lẫn vào `logs/foodsndrinks.log`), không có DB riêng cho test: test là `@SpringBootTest` chạy thẳng vào DB `foodsndrinks` và dựa vào `@Transactional` để rollback — test mới có đụng tới DB phải giữ `@Transactional` (cho tới khi chuyển sang Testcontainers, xem mục Testing bên dưới).
+- Chạy app cần MySQL (của compose hoặc của máy); chạy test cần **Docker** thay vì MySQL: `@SpringBootTest` dùng MySQL do Testcontainers tạo (`TestcontainersConfiguration`, xem mục Testing bên dưới), không đụng DB dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Unit test Mockito và `@WebMvcTest` không cần gì. `src/test/resources` chỉ có `config/application.yml` (thêm profile `test` để log của test chỉ ra console; datasource giả, JWT/remember-me key ngẫu nhiên, OAuth client giả, tắt mail/Slack/Pwned Passwords). File này chỉ thắng `application.yml`, **không** thắng `application-dev.yml` (file theo profile luôn thắng file không theo profile trong cùng nhóm `classpath:/;classpath:/config/`), nên test không bao giờ bật profile `dev`: `@IntegrationTest` có `@ActiveProfiles("test")`, surefire đặt system property `spring.profiles.active=test`. Biến môi trường còn thắng mọi file yml (`JWT_SECRET` của `env_file` được map thẳng sang `jwt.secret`), nên `@IntegrationTest` khai báo lại datasource giả và khoá ký bằng `@TestPropertySource` (`TestEnvironmentIsolationTest` kiểm tra). Test có đụng tới DB vẫn giữ `@Transactional` để rollback.
 - Flyway tự chạy migration khi khởi động. Hibernate `ddl-auto` không được cấu hình, nên schema chỉ đến từ Flyway.
 - URL ở dev: storefront `http://localhost:8080`, admin `/admin` (cần `ROLE_ADMIN`), Swagger UI `/api-docs/swagger`, OpenAPI JSON `/api/v1/api-docs`. Swagger bị tắt ở prod.
 - Chưa cấu hình linter/formatter nào.
@@ -86,7 +87,7 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | Công nghệ | Hiện trạng | Việc cần làm |
 |---|---|---|
 | Spring Security + OAuth2 Login + CSRF | ✅ | Bổ sung hardening theo mục OWASP (lockout, password policy, security headers, session cookie). |
-| MySQL | ✅ | Thêm DB cho test (Testcontainers). |
+| MySQL | ✅ | Test chạy trên MySQL của Testcontainers. |
 | Messaging: JMS (ActiveMQ Artemis) | ❌ | Chuyển thông báo đơn hàng sang JMS (xem bên dưới). |
 | WebSocket + STOMP | ❌ | Realtime đơn mới cho admin, trạng thái đơn cho user. |
 | `@Scheduled` + `@Async` | ✅ | Cấu hình scheduler pool, tách executor theo loại việc. |
@@ -94,7 +95,7 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | Apache POI (Excel import/export) | ❌ | Export đơn hàng/sản phẩm, import sản phẩm. |
 | SOAP (Spring-WS) | ❌ | Expose web service contract-first. |
 | Chart (Chart.js) | 🟡 | Đã có 2 chart (WebJar, dữ liệu qua JSON); cần thêm chart, cập nhật realtime. |
-| JUnit 5 + Mockito + MockMvc | 🟡 | Chỉ có 2 integration test; thiếu unit test Mockito và test slice `@WebMvcTest`. |
+| JUnit 5 + Mockito + MockMvc | ✅ | Unit test Mockito, `@WebMvcTest` với security thật, integration test trên Testcontainers, coverage JaCoCo. |
 | Swagger / OpenAPI | ✅ | Bổ sung `@Operation`/`@ApiResponse` cho endpoint mới. |
 | SLF4J + Logback | ✅ | `logback-spring.xml`, MDC `requestId`/`user.name`, logger `AUDIT` (`audit.log` JSON ECS ở prod). |
 | Thymeleaf | ✅ | — |
@@ -106,7 +107,7 @@ Thứ tự thực hiện. Tên giai đoạn trùng với dropdown "Roadmap phase
 - [x] 0. Hạ tầng (Docker)
 - [x] 1. Logging (Logback, MDC, audit log)
 - [ ] 2. Security hardening (OWASP)
-- [ ] 3. Testing (Mockito, WebMvcTest, Testcontainers)
+- [x] 3. Testing (Mockito, WebMvcTest, Testcontainers)
 - [ ] 4. Scheduler & Multithread
 - [ ] 5. JMS (ActiveMQ Artemis)
 - [ ] 6. WebSocket + STOMP + Chart
@@ -189,9 +190,9 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Testing.** JUnit 5 + Mockito + MockMvc (đã có `spring-boot-starter-test`, `spring-boot-webmvc-test`, `spring-security-test`, `spring-boot-security-test` — module cuối bắt buộc ở Boot 4 để `@WithMockUser` có tác dụng với MockMvc tự cấu hình).
 - Unit test service: `@ExtendWith(MockitoExtension.class)`, `@Mock` repository, `@InjectMocks` service — không khởi động Spring.
-- Test controller: `@WebMvcTest(XxxController.class)` + `@MockitoBean` cho service (Boot 4 đã bỏ `@MockBean`), `@WithMockUser(roles = "ADMIN")`, request POST phải có `.with(csrf())`. Luôn có case 401/403 cho endpoint được bảo vệ. Chain web có `AccountStatusFilter` tra DB mỗi request: trong `@SpringBootTest`, user của `@WithMockUser` phải tồn tại trong DB với đúng role (xem `DashboardChartsTest`), nếu không session bị huỷ → 302 `/login`; trong `@WebMvcTest` thì `@MockitoBean AccountStatusService` (mặc định trả `Optional.empty()` = session hợp lệ).
-- Integration test: chuyển sang Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:mysql`, `@ServiceConnection`) để không đụng DB dev (cần Docker trên máy). JMS test dùng Artemis embedded, không cần container.
-- JaCoCo sinh báo cáo coverage khi `./mvnw test` (issue 3.2); chưa đặt ngưỡng chặn build.
+- Test controller (đã làm cho `CartController`, `OrderAdminController`, `ProductApiController`, `AuthController`): dùng `@SecuredWebMvcTest(XxxController.class)` (`src/test/java/.../support`) = `@WebMvcTest` + `@Import(SecurityConfig.class)` (3 filter chain thật) + mock mọi bean security/`UserService`/`OrderService`; service riêng của controller khai báo `@MockitoBean` trong test (Boot 4 đã bỏ `@MockBean`), mock có sẵn thì `@Autowired` để stub (khai báo lại bị trùng). `@WithMockUser(roles = "ADMIN")`, POST phải có `.with(csrf())`. Luôn có case 401/403 (và POST thiếu CSRF → 403) cho endpoint được bảo vệ; chưa đăng nhập ở chain web → redirect tương đối `/login`. Mặc định của mock: `AccountStatusService` trả `Optional.empty()` (session hợp lệ), `JwtUtil.validUsername` trả rỗng (token sai), `RegistrationRateLimitService.tryAcquire` trả `false` (stub `true` khi test `/register`). Trong `@SpringBootTest`, user của `@WithMockUser` phải tồn tại trong DB với đúng role (`AccountStatusFilter` tra DB mỗi request, xem `DashboardChartsTest`), nếu không session bị huỷ → 302 `/login`.
+- Integration test (đã làm): dùng `@IntegrationTest` (`src/test/java/.../support`, có `webEnvironment`) = `@SpringBootTest` + `@Import(TestcontainersConfiguration.class)` + `@ActiveProfiles("test")` + `@Tag("integration")`, không dùng `@SpringBootTest` trần (`IntegrationTestConventionTest` fail). MySQL 8.4 của Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:testcontainers-mysql` theo BOM, `@ServiceConnection`, URL có `serverTimezone=UTC` như dev), một container dùng chung cho mọi Spring context trong JVM; `spring.datasource.url` trong `src/test/resources/config/application.yml` trỏ tới host `.invalid` để không bao giờ rơi về DB dev. Bỏ qua integration test bằng `-DexcludedGroups=integration`. Vẫn giữ `@Transactional` để rollback (các class dùng chung DB). Cần Docker: `./mvnw test` trên máy, hoặc `docker compose run --rm maven-docker test` (mount Docker socket — rủi ro ghi trong compose). JMS test dùng Artemis embedded, không cần container.
+- JaCoCo (`jacoco-maven-plugin`, version ở property `jacoco.version` vì không có trong BOM) sinh `target/site/jacoco/index.html` khi `./mvnw test`; chưa đặt ngưỡng chặn build.
 
 **Logging (SLF4J + Logback)** — đã làm ở issue 1.1 (xem "Logging/audit" trong Ghi chú nghiệp vụ).
 - `logback-spring.xml` với `<springProfile>`: `dev`/`prod` ghi console + file `SizeAndTimeBasedRollingPolicy` (qua `AsyncAppender`), `prod` thêm `audit.log` dạng JSON (`StructuredLogEncoder`, format `ecs`). Pattern text dùng converter riêng trong package `logging` thay cho `%msg`/`%wEx`: `%safeMsg` (thay mọi ký tự ngắt dòng, kể cả Unicode, bằng `_`), `%safeEx` (làm sạch message của exception), `%safeKvp` (in key-value audit kiểu logfmt, có quote/escape). `LogbackConfigTest` nạp file thật để kiểm tra — sửa pattern/appender thì chạy lại test này.

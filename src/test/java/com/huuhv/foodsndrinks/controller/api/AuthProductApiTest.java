@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.controller.api;
 
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.logging.RequestIdFilter;
 import com.huuhv.foodsndrinks.repository.UserRepository;
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** End-to-end flow of the JWT API: login → token → call protected product endpoints. */
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
 @Transactional // every test rolls back — the test user never persists in the dev DB
 class AuthProductApiTest {
