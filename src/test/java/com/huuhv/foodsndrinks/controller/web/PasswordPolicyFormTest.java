@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.controller.web;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -15,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** Chính sách mật khẩu 8–64 ký tự ở form đăng ký (validation phía server, không tin maxlength của trình duyệt). */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional // rollback user được đăng ký thành công

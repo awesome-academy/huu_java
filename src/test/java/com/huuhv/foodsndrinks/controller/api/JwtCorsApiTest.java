@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.controller.api;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
@@ -28,6 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** JWT phải khớp iss/aud; CORS của /api/** chỉ mở cho origin trong allowlist. */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @TestPropertySource(properties = "app.cors.allowed-origins=https://spa.example.com")

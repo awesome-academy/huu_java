@@ -71,12 +71,13 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 **Build & test:**
 
 ```bash
-# Trong Docker (container JDK 25, dùng MySQL của compose — không cần JDK local)
-docker compose run --rm maven test                          # Toàn bộ test
-docker compose run --rm maven test -Dtest=AuthProductApiTest # Chạy 1 class test
-docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
+# Trong Docker (container JDK 25 — không cần JDK local)
+docker compose run --rm maven-docker test                           # Toàn bộ test (mount Docker socket, xem cảnh báo bên dưới)
+docker compose run --rm maven-docker test -Dtest=AuthProductApiTest # Chạy 1 class test
+docker compose run --rm maven test -Dtest='*ServiceTest,*ControllerTest' # Chỉ test không cần Docker (không mount socket)
+docker compose run --rm maven clean package -DskipTests             # Build file JAR vào target/
 
-# Hoặc bằng JDK local (cần MySQL: compose ở Cách B hoặc MySQL trên máy)
+# Hoặc bằng JDK local (cần Docker đang chạy, không cần MySQL)
 ./mvnw test
 ./mvnw clean package -DskipTests
 
@@ -84,7 +85,19 @@ docker compose up -d --build app     # Build lại image và chạy app sau khi 
 docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
 
-Test hiện tại là `@SpringBootTest` chạy trên database `foodsndrinks` (của compose hoặc của máy) và rollback sau mỗi test.
+**Các loại test:**
+
+| Loại | Ví dụ | Cần |
+|---|---|---|
+| Unit test Mockito (`@ExtendWith(MockitoExtension.class)`) | `OrderServiceTest`, `UserServiceTest` | — |
+| Test slice `@WebMvcTest` + 3 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Integration test `@SpringBootTest` | `AuthProductApiTest`, `FoodsndrinksApplicationTests` | Docker |
+
+Integration test chạy trên **MySQL 8.4 do Testcontainers tạo** (`TestcontainersConfiguration`, `@ServiceConnection`) — không đụng database dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Một container dùng chung cho cả lần chạy, bị xoá khi test kết thúc; mỗi test vẫn rollback bằng `@Transactional`. Lần chạy đầu tải image `mysql:8.4`.
+
+> ⚠ **`maven-docker` mount Docker socket của máy host** để Testcontainers tạo container: mọi code chạy trong build (dependency, plugin, test) đều có quyền tương đương root trên máy. Chỉ dùng trên máy dev với code đã review; service `maven` (không có socket) vẫn dùng cho build/quét dependency.
+
+**Coverage (JaCoCo):** `./mvnw test` (hoặc `maven-docker test`) sinh báo cáo `target/site/jacoco/index.html` (kèm `jacoco.xml`, `jacoco.csv`). Chưa đặt ngưỡng chặn build.
 
 ## Project Structure
 

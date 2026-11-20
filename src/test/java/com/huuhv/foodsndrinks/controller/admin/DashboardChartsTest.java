@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
@@ -26,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * User của {@code @WithMockUser} phải có thật trong DB với đúng role: {@code AccountStatusFilter} huỷ session của
  * tài khoản không tồn tại hoặc khác role.
  */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional // rollback user test, không để lại dữ liệu trong DB dev

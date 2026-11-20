@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.service.audit;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
@@ -17,6 +19,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 
 /** Audit log của form login đi qua security chain web thật: mỗi lần đăng nhập ghi đúng 1 dòng. */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional // rollback user test, không để lại dữ liệu trong DB dev

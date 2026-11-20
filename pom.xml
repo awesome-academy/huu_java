@@ -33,6 +33,8 @@
 		<font-awesome.version>6.4.2</font-awesome.version>
 		<chartjs.version>4.4.0</chartjs.version>
 		<dependency-check.version>13.0.0</dependency-check.version>
+		<!-- Không có trong Spring Boot BOM. 0.8.14 là bản đầu tiên hỗ trợ chính thức class file Java 25 -->
+		<jacoco.version>0.8.14</jacoco.version>
 	</properties>
     <dependencies>
         <dependency>
@@ -208,6 +210,18 @@
             <artifactId>spring-boot-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Integration test chạy trên MySQL do Testcontainers tạo (TestcontainersConfiguration, @ServiceConnection) —
+             cần Docker khi chạy test. Version theo Spring Boot BOM (Testcontainers 2.x: artifact có tiền tố testcontainers-) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-mysql</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 	<build>
@@ -247,6 +261,28 @@
 					<yarnAuditAnalyzerEnabled>false</yarnAuditAnalyzerEnabled>
 					<pnpmAuditAnalyzerEnabled>false</pnpmAuditAnalyzerEnabled>
 				</configuration>
+			</plugin>
+			<!-- Coverage: prepare-agent gắn JaCoCo agent vào JVM test (qua property argLine của surefire), report sinh
+			     target/site/jacoco/index.html (+ jacoco.xml, jacoco.csv) ngay sau ./mvnw test. Chưa đặt ngưỡng chặn build. -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>${jacoco.version}</version>
+				<executions>
+					<execution>
+						<id>prepare-agent</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

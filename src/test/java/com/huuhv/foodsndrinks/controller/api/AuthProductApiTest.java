@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.controller.api;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.logging.RequestIdFilter;
 import com.huuhv.foodsndrinks.repository.UserRepository;
@@ -22,6 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** End-to-end flow of the JWT API: login → token → call protected product endpoints. */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional // every test rolls back — the test user never persists in the dev DB

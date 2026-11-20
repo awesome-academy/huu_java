@@ -20,5 +20,12 @@ if [ "$(stat -c %u:%g /m2)" != "$owner" ]; then
   chown -R "$owner" /m2
 fi
 
+# Service maven-docker mount Docker socket (Testcontainers): socket thuộc root:docker trên Linux/WSL2, user máy host chỉ
+# dùng được nhờ group docker — giữ đúng GID của socket làm group phụ, ngoài ra không giữ group nào của root.
+groups="--clear-groups"
+if [ -S /var/run/docker.sock ]; then
+  groups="--groups=$(stat -c %g /var/run/docker.sock)"
+fi
+
 # exec: Maven (java) nhận trực tiếp tín hiệu dừng của Docker.
-exec setpriv --reuid="${owner%%:*}" --regid="${owner##*:}" --clear-groups sh ./mvnw -B "$@"
+exec setpriv --reuid="${owner%%:*}" --regid="${owner##*:}" "$groups" sh ./mvnw -B "$@"

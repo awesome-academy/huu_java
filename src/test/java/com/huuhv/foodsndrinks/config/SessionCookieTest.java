@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -15,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Cờ của cookie session ({@code server.servlet.session.cookie.*}) do Tomcat ghi — MockMvc không áp dụng nên dùng server
  * thật. Trang /login lưu CSRF token vào session nên luôn tạo cookie JSESSIONID.
  */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class SessionCookieTest {
 

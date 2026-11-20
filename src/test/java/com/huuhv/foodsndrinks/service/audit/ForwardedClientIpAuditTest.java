@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.service.audit;
 
+import com.huuhv.foodsndrinks.TestcontainersConfiguration;
+import org.springframework.context.annotation.Import;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Prod không có default cho {@code internal-proxies} (bắt buộc đặt {@code TRUSTED_PROXIES}), nên test khai báo
  * {@value #LOAD_BALANCER} — request từ 127.0.0.1 đóng vai load balancer.
  */
+@Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ForwardedClientIpAuditTest {
 
