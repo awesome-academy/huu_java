@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!--/*
+    Khung dùng chung cho email gửi admin (EmailNotificationService). Email KHÔNG dùng layout của web:
+    - CSS viết inline trên từng thẻ, bố cục bằng <table> (Gmail/Outlook bỏ <style>, không hỗ trợ flex/grid);
+    - không script, không ảnh/CSS từ host ngoài (client email chặn, lộ việc mở thư), không @{...} (render ngoài request);
+    - dữ liệu luôn qua th:text (tự escape) — tên khách, địa chỉ, ghi chú là dữ liệu người dùng nhập.
+    Màu theo storefront: nền tối #212529 (footer web), xanh Bootstrap primary #0d6efd, icon vàng #ffc107.
+*/-->
+<html xmlns:th="http://www.thymeleaf.org" lang="vi">
+<body>
+
+<table th:fragment="header(title)" role="presentation" width="100%" cellpadding="0" cellspacing="0"
+       style="background-color:#212529;border-radius:8px 8px 0 0;">
+    <tr>
+        <td style="padding:20px 28px;font-family:Arial,Helvetica,sans-serif;">
+            <span style="font-size:20px;font-weight:bold;color:#ffffff;">
+                <span style="color:#ffc107;">&#127860;</span> F&amp;B Store
+            </span>
+            <div style="margin-top:4px;font-size:13px;color:#adb5bd;" th:text="${title}">Thông báo quản trị</div>
+        </td>
+    </tr>
+</table>
+
+<table th:fragment="footer" role="presentation" width="100%" cellpadding="0" cellspacing="0"
+       style="background-color:#f1f3f5;border-radius:0 0 8px 8px;">
+    <tr>
+        <td style="padding:16px 28px;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6c757d;line-height:1.5;">
+            Email được gửi tự động từ hệ thống F&amp;B Store cho quản trị viên — vui lòng không trả lời email này.
+        </td>
+    </tr>
+</table>
+
+</body>
+</html>

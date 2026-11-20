@@ -201,8 +201,8 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 ## Notification & Batch Job
 
-- **Đơn hàng mới:** sau khi checkout commit thành công (`OrderPlacedEvent` + `@TransactionalEventListener`), hệ thống gửi **Slack** + **email** cho admin (chạy async qua thread pool `notify-*`).
-- **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 23h ngày cuối tháng, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái và email cho admin.
+- **Đơn hàng mới:** sau khi checkout commit thành công (`OrderPlacedEvent` + `@TransactionalEventListener`), hệ thống gửi **Slack** + **email** cho admin (chạy async qua thread pool `notify-*`). Email là HTML render bằng Thymeleaf từ `templates/mail/` (kèm bản chữ thuần cho client không hiển thị HTML); Slack dùng Block Kit (Slack không hiển thị HTML). Ở dev, email đi vào hộp thư Mailtrap (`MAIL_*` trong `.env`) để xem giao diện.
+- **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 23h ngày cuối tháng, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái và email HTML (`templates/mail/monthly-statistics.html`) cho admin.
 
 ### Thread pool & chạy nhiều instance
 
