@@ -11,9 +11,11 @@ import com.huuhv.foodsndrinks.security.JwtAuthenticationFilter;
 import com.huuhv.foodsndrinks.security.LoginAttemptAwareAuthenticationProvider;
 import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
+import com.huuhv.foodsndrinks.security.RegistrationRateLimitFilter;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
+import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -69,7 +71,7 @@ import java.util.Map;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity   // enable @PreAuthorize / @Secured on individual methods
-@EnableConfigurationProperties({LoginAttemptProperties.class, CorsProperties.class})
+@EnableConfigurationProperties({LoginAttemptProperties.class, RegistrationRateLimitProperties.class, CorsProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -305,7 +307,9 @@ public class SecurityConfig {
                                                        OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver,
                                                        AuditingRememberMeServices rememberMeServices,
                                                        AccountStatusService accountStatusService,
-                                                       AuditLogService auditLogService) throws Exception {
+                                                       AuditLogService auditLogService,
+                                                       RegistrationRateLimitService registrationRateLimitService)
+            throws Exception {
         http
                 .headers(headers -> {
                     securityHeaders(headers);
@@ -370,6 +374,9 @@ public class SecurityConfig {
                 // Huỷ session của tài khoản bị khoá/đổi role sau khi đăng nhập. Sau remember-me, trước anonymous: request
                 // bị huỷ session đi tiếp như khách
                 .addFilterBefore(new AccountStatusFilter(accountStatusService, auditLogService, rememberMeServices),
+                        AnonymousAuthenticationFilter.class)
+                // Giới hạn POST /register theo IP — trước khi validation của form (gồm Pwned Passwords) chạy
+                .addFilterBefore(new RegistrationRateLimitFilter(registrationRateLimitService),
                         AnonymousAuthenticationFilter.class);
 
         return http.build();

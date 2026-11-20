@@ -49,17 +49,25 @@ JWT ký HS256, sống 1 giờ, có claim `iss` = `jwt.issuer` (`JWT_ISSUER`, m�
 
 ### CORS
 
-Mặc định API chỉ gọi được same-origin từ trình duyệt. Muốn SPA ở origin khác gọi `/api/**` thì khai báo `CORS_ALLOWED_ORIGINS` (origin đầy đủ, cách nhau bởi dấu phẩy, vd. `https://app.example.com,http://localhost:5173`; `*` bị từ chối khi khởi động). Cho phép method `GET/POST/PUT/DELETE`, header `Authorization`, `Content-Type`, `X-Request-Id`; expose `X-Request-Id`, `Retry-After`; không gửi cookie (`allowCredentials=false` — xác thực bằng Bearer token). Preflight từ origin ngoài danh sách → 403. Trang web (session cookie) không mở CORS.
+Mặc định API chỉ gọi được same-origin từ trình duyệt. Muốn SPA ở origin khác gọi `/api/**` thì khai báo `CORS_ALLOWED_ORIGINS` (origin đầy đủ `scheme://host[:port]`, không path hay `/` cuối, cách nhau bởi dấu phẩy, vd. `https://app.example.com,http://localhost:5173`; `*`, `null`, `http` với host khác localhost bị từ chối khi khởi động). Cho phép method `GET/POST/PUT/DELETE`, header `Authorization`, `Content-Type`, `X-Request-Id`; expose `X-Request-Id`, `Retry-After`; không gửi cookie (`allowCredentials=false` — xác thực bằng Bearer token). Preflight từ origin ngoài danh sách → 403. Trang web (session cookie) không mở CORS.
 
 ### Giới hạn đăng nhập sai
 
-Sai mật khẩu **5 lần trong 15 phút** (tính từ lần sai đầu tiên) với cùng một username/email → tên đăng nhập đó bị tạm khoá **15 phút**, kể cả khi sau đó nhập đúng mật khẩu:
+Mỗi lần đăng nhập được đếm ở 3 phạm vi (cửa sổ cố định 15 phút tính từ lần thử đầu tiên); vượt ngưỡng phạm vi nào thì phạm vi đó bị tạm khoá **15 phút**, kể cả khi sau đó nhập đúng mật khẩu:
+
+| Phạm vi | Ngưỡng | Chặn |
+|---|---|---|
+| Cặp (IP, username/email) | 5 lần sai | Dò mật khẩu một tài khoản — người dùng thật gõ sai chỉ khoá chính mình trên máy mình |
+| IP (IPv6: cả mạng /64) | 20 lần sai, mọi username | Password spraying (một mật khẩu thử trên nhiều tài khoản) |
+| Tài khoản, mọi IP | 50 lần sai | Tấn công phân tán; muốn khoá tài khoản người khác phải có nhiều IP |
 
 - Response **429 Too Many Requests**, message chung, header `Retry-After: <số giây còn lại>`.
-- Áp dụng y hệt cho username không tồn tại (không lộ tài khoản nào có thật). Đăng nhập thành công thì xoá bộ đếm.
-- Bộ đếm dùng chung với form login `/login`; username và email của cùng một tài khoản được đếm riêng.
-- Cấu hình: `app.security.login-attempts.{max-failures,window,lock-duration}`. Bộ đếm nằm trong bộ nhớ → chỉ đúng khi chạy 1 instance.
-- Audit log: `LOGIN_LOCKOUT` khi khoá, các lần bị chặn sau đó ghi `LOGIN_FAILURE` với `event.reason=LOGIN_THROTTLED`.
+- Lần thử được tính TRƯỚC khi so mật khẩu: gửi song song nhiều request không vượt được ngưỡng (request vượt số lần thử đang chạy nhận 429, `Retry-After: 1`).
+- Tên đăng nhập được chuẩn hoá giống collation của MySQL (bỏ dấu, ký tự fullwidth, hoa/thường): `ádmin`, `ＡＤＭＩＮ` đếm chung với `admin`. Phạm vi tài khoản đếm thêm theo username thật sau khi tra DB, nên username và email của cùng tài khoản dùng chung bộ đếm này.
+- Áp dụng y hệt cho username không tồn tại (không lộ tài khoản nào có thật). Đăng nhập thành công xoá bộ đếm của tên đăng nhập/tài khoản (không xoá bộ đếm theo IP).
+- Bộ đếm dùng chung với form login `/login`.
+- Cấu hình: `app.security.login-attempts.{max-failures,max-failures-per-ip,max-failures-per-account,window,lock-duration}`. Bộ đếm nằm trong bộ nhớ → chỉ đúng khi chạy 1 instance.
+- Audit log: `LOGIN_LOCKOUT` khi khoá (`auth.lock.scope` = `IP_USER` / `IP` / `ACCOUNT`), các lần bị chặn sau đó ghi `LOGIN_FAILURE` với `event.reason=LOGIN_THROTTLED`.
 
 ### Truy vết request (`X-Request-Id`)
 

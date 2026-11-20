@@ -104,6 +104,17 @@ class LoginThrottlingTest {
     }
 
     @Test
+    void accentedOrFullwidthVariantsOfTheName_shareOneCounter() throws Exception {
+        createUser("throttleuni");
+        // MySQL (utf8mb4_0900_ai_ci) coi các biến thể này là cùng một username → phải đếm chung
+        for (String variant : new String[]{"thróttleuni", "THROTTLEUNI", "ｔｈｒｏｔｔｌｅｕｎｉ", "throttleüni", "throttleuni"}) {
+            apiLogin(variant, "wrong-password").andExpect(status().isUnauthorized());
+        }
+
+        apiLogin("throttleuni", PASSWORD).andExpect(status().isTooManyRequests());
+    }
+
+    @Test
     void successfulLogin_resetsCounter() throws Exception {
         createUser("throttlereset");
         for (int i = 0; i < MAX_FAILURES - 1; i++) {

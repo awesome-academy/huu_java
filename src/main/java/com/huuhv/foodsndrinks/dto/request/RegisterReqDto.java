@@ -1,6 +1,9 @@
 package com.huuhv.foodsndrinks.dto.request;
 
+import com.huuhv.foodsndrinks.validation.NotCompromisedPassword;
+import com.huuhv.foodsndrinks.validation.PasswordBreachCheck;
 import com.huuhv.foodsndrinks.validation.ValidPassword;
+import jakarta.validation.GroupSequence;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -11,6 +14,8 @@ import lombok.*;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+// Kiểm tra mật khẩu bị lộ (gọi dịch vụ ngoài) chỉ chạy khi mọi ràng buộc khác đã đạt
+@GroupSequence({RegisterReqDto.class, PasswordBreachCheck.class})
 public class RegisterReqDto {
 
     @NotBlank(message = "Họ và tên không được để trống.")
@@ -34,6 +39,7 @@ public class RegisterReqDto {
 
     @NotBlank(message = "Mật khẩu không được để trống.")
     @ValidPassword
+    @NotCompromisedPassword(groups = PasswordBreachCheck.class)
     private String password;
 
     @NotBlank(message = "Vui lòng xác nhận lại mật khẩu.")

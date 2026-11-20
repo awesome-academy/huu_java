@@ -30,8 +30,10 @@ public class FileStorageService {
     /**
      * Saves a file under the given sub-folder and returns the URL path (e.g. /uploads/products/uuid.jpg).
      * <p>
-     * Chỉ nhận PNG/JPEG/GIF/WEBP: đuôi file phải thuộc danh sách VÀ nội dung (magic bytes) phải đúng định dạng của đuôi
-     * đó. {@code Content-Type} do client gửi lên không được dùng (giả mạo được). Tên file lưu là UUID + đuôi chuẩn hoá.
+     * Chỉ nhận PNG/JPEG: đuôi file phải thuộc danh sách VÀ nội dung (magic bytes) phải đúng định dạng của đuôi đó.
+     * {@code Content-Type} do client gửi lên không được dùng (giả mạo được). Ảnh được decode rồi encode lại
+     * ({@link ImageSanitizer}: bỏ EXIF/GPS và payload thừa, chặn ảnh quá nhiều pixel, thu nhỏ cạnh dài về 2048px) — file
+     * lưu không bao giờ là byte gốc của người dùng. Tên file lưu là UUID + đuôi chuẩn hoá.
      */
     public String store(MultipartFile file, String subFolder) {
         if (file == null || file.isEmpty()) {
@@ -49,14 +51,18 @@ public class FileStorageService {
             throw new IllegalArgumentException("Nội dung file không phải ảnh " + format.name() + " hợp lệ!");
         }
         String fileName = UUID.randomUUID() + format.storedExtension();
+        Path destination = rootLocation.resolve(subFolder).normalize();
+        if (!destination.startsWith(rootLocation)) {
+            throw new IllegalArgumentException("Thư mục upload không hợp lệ!");
+        }
 
         try {
-            Path destination = rootLocation.resolve(subFolder).normalize();
-            if (!destination.startsWith(rootLocation)) {
-                throw new IllegalArgumentException("Thư mục upload không hợp lệ!");
+            byte[] sanitized;
+            try (InputStream in = file.getInputStream()) {
+                sanitized = ImageSanitizer.sanitize(in, format);
             }
             Files.createDirectories(destination);
-            file.transferTo(destination.resolve(fileName));
+            Files.write(destination.resolve(fileName), sanitized);
         } catch (IOException e) {
             throw new IllegalStateException("Không thể lưu file: " + fileName, e);
         }

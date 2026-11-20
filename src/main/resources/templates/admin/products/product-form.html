@@ -142,7 +142,7 @@
                         <span th:text="${productDetail != null} ? 'Thêm ảnh mới' : 'Hình ảnh sản phẩm'"></span>
                     </div>
                     <div class="card-body p-4">
-                        <input type="file" name="newImages" multiple accept="image/png,image/jpeg,image/gif,image/webp"
+                        <input type="file" name="newImages" multiple accept="image/png,image/jpeg"
                                th:data-max-file-size="${maxUploadFileSize}"
                                class="form-control">
                         <div class="form-text mt-1">

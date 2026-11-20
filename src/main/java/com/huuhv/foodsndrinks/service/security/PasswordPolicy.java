@@ -10,7 +10,8 @@ import java.util.Optional;
 
 /**
  * Chính sách mật khẩu theo OWASP/NIST — nguồn duy nhất cho đăng ký, đổi mật khẩu trong hồ sơ và admin đặt lại mật
- * khẩu (qua {@code @ValidPassword}): 8–64 ký tự, không giới hạn loại ký tự, và không nằm trong danh sách đã bị lộ.
+ * khẩu: 8–64 ký tự, không giới hạn loại ký tự ({@code @ValidPassword}), và không nằm trong danh sách đã bị lộ
+ * ({@code @NotCompromisedPassword}, chạy sau cùng — xem {@link #compromisedViolation}).
  * <p>
  * Thêm giới hạn 72 byte UTF-8: BCrypt chỉ dùng 72 byte đầu và {@code BCryptPasswordEncoder} ném exception khi encode
  * chuỗi dài hơn — 64 ký tự có dấu (2–3 byte/ký tự) có thể vượt mức này.
@@ -36,6 +37,8 @@ public class PasswordPolicy {
     }
 
     /**
+     * Ràng buộc rẻ, chạy cùng các field khác ({@code @ValidPassword}): độ dài ký tự và số byte UTF-8.
+     *
      * @return thông báo lỗi (hiển thị cho người dùng) hoặc rỗng nếu hợp lệ. Null/chuỗi rỗng được coi là hợp lệ
      *         ("không đổi mật khẩu") — chỗ bắt buộc nhập thì khai báo thêm {@code @NotBlank}.
      */
@@ -50,10 +53,21 @@ public class PasswordPolicy {
         if (rawPassword.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) {
             return Optional.of(BYTES_MESSAGE);
         }
-        if (isCompromised(rawPassword)) {
-            return Optional.of(COMPROMISED_MESSAGE);
-        }
         return Optional.empty();
+    }
+
+    /**
+     * Mật khẩu có nằm trong danh sách bị lộ không — gọi dịch vụ bên ngoài (chậm, tới vài giây) nên chỉ chạy sau khi mọi
+     * ràng buộc khác của form đã đạt ({@code @NotCompromisedPassword} trong group {@code PasswordBreachCheck}, xếp sau
+     * group mặc định bằng {@code @GroupSequence} trên DTO).
+     *
+     * @return {@link #COMPROMISED_MESSAGE} nếu bị lộ; rỗng nếu không, nếu null/rỗng hoặc nếu dịch vụ lỗi
+     */
+    public Optional<String> compromisedViolation(String rawPassword) {
+        if (rawPassword == null || rawPassword.isEmpty() || !isCompromised(rawPassword)) {
+            return Optional.empty();
+        }
+        return Optional.of(COMPROMISED_MESSAGE);
     }
 
     /** Dịch vụ kiểm tra lỗi/timeout → cho qua (không chặn người dùng vì lỗi bên thứ ba) và ghi WARN. */

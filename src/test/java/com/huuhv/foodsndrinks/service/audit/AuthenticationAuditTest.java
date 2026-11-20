@@ -2,9 +2,11 @@ package com.huuhv.foodsndrinks.service.audit;
 
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
 import com.huuhv.foodsndrinks.security.DisabledOAuth2AccountException;
+import com.huuhv.foodsndrinks.security.OAuth2EmailConflictException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
@@ -206,6 +208,19 @@ class AuthenticationAuditTest {
         assertThat(audit.lines()).containsExactly("Login failed event.action=LOGIN_FAILURE event.outcome=failure"
                 + " event.reason=DISABLED auth.method=OAUTH2:google username=alice source.ip=10.0.0.7");
         assertThat(response.getRedirectedUrl()).isEqualTo("/login?error=true");
+    }
+
+    @Test
+    void oauth2Login_withEmailOfUnlinkableAccount_isAudited_andRedirectsToEmailConflictMessage() throws Exception {
+        MockHttpServletRequest request = currentRequest("/login/oauth2/code/google");
+        var response = new MockHttpServletResponse();
+
+        oauth2FailureHandler().onAuthenticationFailure(request, response,
+                new OAuth2EmailConflictException(new OAuthEmailConflictException(EXISTING_USER)));
+
+        assertThat(audit.lines()).containsExactly("Login failed event.action=LOGIN_FAILURE event.outcome=failure"
+                + " event.reason=EMAIL_CONFLICT auth.method=OAUTH2:google username=alice source.ip=10.0.0.7");
+        assertThat(response.getRedirectedUrl()).isEqualTo("/login?oauthEmailExists=true");
     }
 
     @Test

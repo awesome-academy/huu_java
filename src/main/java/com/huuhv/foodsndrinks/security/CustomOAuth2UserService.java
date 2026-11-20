@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.security;
 
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
@@ -49,8 +50,13 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
             default -> throw new OAuth2AuthenticationException("Nhà cung cấp đăng nhập không được hỗ trợ: " + registrationId);
         };
 
-        User localUser = userService.provisionOAuthUser(
-                profile.provider(), profile.providerId(), profile.email(), profile.name(), profile.avatarUrl());
+        User localUser;
+        try {
+            localUser = userService.provisionOAuthUser(profile.provider(), profile.providerId(), profile.email(),
+                    profile.emailVerified(), profile.name(), profile.avatarUrl());
+        } catch (OAuthEmailConflictException ex) {
+            throw new OAuth2EmailConflictException(ex);
+        }
         DisabledOAuth2AccountException.rejectIfDisabled(localUser);
 
         Map<String, Object> attributes = new HashMap<>(profile.attributes());
@@ -70,6 +76,8 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 AuthProvider.FACEBOOK,
                 String.valueOf(attributes.get("id")),
                 (String) attributes.get("email"),
+                // Graph API không trả cờ xác minh; Facebook chỉ trả email chính đã xác nhận của tài khoản
+                true,
                 (String) attributes.getOrDefault("name", "Facebook User"),
                 pictureUrl,
                 attributes
@@ -86,13 +94,14 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 AuthProvider.TWITTER,
                 String.valueOf(data.get("id")),
                 null, // Twitter's API does not expose an email address via OAuth2
+                false,
                 (String) data.getOrDefault("name", "Twitter User"),
                 (String) data.get("profile_image_url"),
                 data
         );
     }
 
-    private record ProviderProfile(AuthProvider provider, String providerId, String email, String name,
-                                   String avatarUrl, Map<String, Object> attributes) {
+    private record ProviderProfile(AuthProvider provider, String providerId, String email, boolean emailVerified,
+                                   String name, String avatarUrl, Map<String, Object> attributes) {
     }
 }

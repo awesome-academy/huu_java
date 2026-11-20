@@ -3,6 +3,7 @@ package com.huuhv.foodsndrinks.security;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.authority.AuthorityUtils;
@@ -16,6 +17,10 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -69,26 +74,57 @@ class CustomOidcUserServiceTest {
                 });
     }
 
+    @Test
+    void emailVerifiedClaim_isPassedToProvisioning() {
+        givenLocalUser("admin01", Role.ROLE_ADMIN);
+
+        service.toLocalUser(googleUser(null, true));
+        service.toLocalUser(googleUser(null, null));
+
+        verify(userService).provisionOAuthUser(AuthProvider.GOOGLE, SUBJECT, EMAIL, true, null, null);
+        verify(userService).provisionOAuthUser(AuthProvider.GOOGLE, SUBJECT, EMAIL, false, null, null);
+    }
+
+    @Test
+    void emailOfAccountThatCannotBeLinked_isRejectedWithEmailConflict() {
+        when(userService.provisionOAuthUser(eq(AuthProvider.GOOGLE), eq(SUBJECT), eq(EMAIL), anyBoolean(), isNull(),
+                isNull())).thenThrow(new OAuthEmailConflictException("victim"));
+
+        assertThatThrownBy(() -> service.toLocalUser(googleUser(null)))
+                .isInstanceOfSatisfying(OAuth2EmailConflictException.class, ex -> {
+                    assertThat(ex.getExistingUsername()).isEqualTo("victim");
+                    assertThat(ex.getError().getErrorCode()).isEqualTo("access_denied");
+                });
+    }
+
     private void givenLocalUser(String username, Role role) {
         givenLocalUser(username, role, true);
     }
 
     private void givenLocalUser(String username, Role role, boolean active) {
         User local = User.builder().username(username).email(EMAIL).role(role).isActive(active).build();
-        when(userService.provisionOAuthUser(AuthProvider.GOOGLE, SUBJECT, EMAIL,
-                "Admin 01", "https://example.com/a.png")).thenReturn(local);
-        when(userService.provisionOAuthUser(AuthProvider.GOOGLE, SUBJECT, EMAIL, null, null)).thenReturn(local);
+        when(userService.provisionOAuthUser(eq(AuthProvider.GOOGLE), eq(SUBJECT), eq(EMAIL), anyBoolean(),
+                eq("Admin 01"), eq("https://example.com/a.png"))).thenReturn(local);
+        when(userService.provisionOAuthUser(eq(AuthProvider.GOOGLE), eq(SUBJECT), eq(EMAIL), anyBoolean(), isNull(), isNull()))
+                .thenReturn(local);
     }
 
     private static OidcUser googleUser(OidcUserInfo userInfo) {
+        return googleUser(userInfo, null);
+    }
+
+    private static OidcUser googleUser(OidcUserInfo userInfo, Boolean emailVerified) {
         Instant now = Instant.now();
-        OidcIdToken idToken = OidcIdToken.withTokenValue("id-token")
+        OidcIdToken.Builder builder = OidcIdToken.withTokenValue("id-token")
                 .subject(SUBJECT)
                 .claim("email", EMAIL)
                 .issuer("https://accounts.google.com")
                 .issuedAt(now)
-                .expiresAt(now.plusSeconds(3600))
-                .build();
+                .expiresAt(now.plusSeconds(3600));
+        if (emailVerified != null) {
+            builder.claim("email_verified", emailVerified);
+        }
+        OidcIdToken idToken = builder.build();
         return new DefaultOidcUser(AuthorityUtils.createAuthorityList("OIDC_USER"), idToken, userInfo, "email");
     }
 }

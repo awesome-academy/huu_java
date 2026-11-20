@@ -3,6 +3,7 @@ package com.huuhv.foodsndrinks.security;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.authority.AuthorityUtils;
@@ -14,6 +15,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -47,6 +49,16 @@ class CustomOAuth2UserServiceTest {
     }
 
     @Test
+    void facebookEmailConflict_isRejectedWithEmailConflict() {
+        when(userService.provisionOAuthUser(eq(AuthProvider.FACEBOOK), any(), any(), anyBoolean(), any(), any()))
+                .thenThrow(new OAuthEmailConflictException("victim"));
+
+        assertThatThrownBy(() -> service.toLocalUser("facebook", facebookUser()))
+                .isInstanceOfSatisfying(OAuth2EmailConflictException.class,
+                        ex -> assertThat(ex.getExistingUsername()).isEqualTo("victim"));
+    }
+
+    @Test
     void twitterLogin_lockedAccount_isRejected() {
         givenLocalUser(AuthProvider.TWITTER, "x-user", false);
 
@@ -60,7 +72,7 @@ class CustomOAuth2UserServiceTest {
 
     private void givenLocalUser(AuthProvider provider, String username, boolean active) {
         User local = User.builder().username(username).role(Role.ROLE_USER).isActive(active).build();
-        when(userService.provisionOAuthUser(eq(provider), any(), any(), any(), any())).thenReturn(local);
+        when(userService.provisionOAuthUser(eq(provider), any(), any(), anyBoolean(), any(), any())).thenReturn(local);
     }
 
     private static OAuth2User facebookUser() {

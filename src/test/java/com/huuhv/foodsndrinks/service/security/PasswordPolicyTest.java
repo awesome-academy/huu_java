@@ -59,13 +59,15 @@ class PasswordPolicyTest {
     void compromisedPassword_isRejected() {
         when(checker.check("password123")).thenReturn(new CompromisedPasswordDecision(true));
 
-        assertThat(policy(checker).violation("password123")).contains(PasswordPolicy.COMPROMISED_MESSAGE);
+        assertThat(policy(checker).compromisedViolation("password123")).contains(PasswordPolicy.COMPROMISED_MESSAGE);
+        // Ràng buộc rẻ không gọi dịch vụ ngoài (chạy cùng các field khác, trước group PasswordBreachCheck)
+        assertThat(policy(checker).violation("password123")).isEmpty();
     }
 
     @Test
     void checkerFailure_failsOpen() {
         when(checker.check(anyString())).thenThrow(new ResourceAccessException("timeout"));
 
-        assertThat(policy(checker).violation("correct-horse-battery")).isEmpty();
+        assertThat(policy(checker).compromisedViolation("correct-horse-battery")).isEmpty();
     }
 }

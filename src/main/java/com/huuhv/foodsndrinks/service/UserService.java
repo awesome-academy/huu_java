@@ -8,9 +8,11 @@ import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +33,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
+    private final LoginAttemptService loginAttemptService;
 
     // -------------------------------------------------------
     // Existence checks (used by registration)
@@ -66,26 +69,42 @@ public class UserService {
 
     /**
      * Resolves the local {@link User} behind an OAuth2 identity, creating one on first login.
-     * Match order: (provider, providerId) first, then by email (lets a Google/Facebook login
-     * attach to an existing account that shares the same — provider-verified — email).
+     * Match order: (provider, providerId) first, then by email — but only when linking cannot hand an account to
+     * someone else (pre-account takeover):
+     * <ul>
+     *   <li>the provider must vouch for the email ({@code emailVerified}); and</li>
+     *   <li>the existing account must have no password, i.e. it was itself created by an OAuth login. Local sign-up does
+     *       not verify email, so an account with a password may have been registered by an attacker with the victim's
+     *       email beforehand — linking would let the attacker keep signing in with that password.</li>
+     * </ul>
+     * Otherwise {@link OAuthEmailConflictException}. An unverified email is never stored on a new account (a placeholder
+     * is used) so it cannot squat the address or be linked to later.
      *
-     * @param email    provider-supplied email; null when the provider doesn't expose one (e.g. Twitter)
-     * @param fullName provider-supplied display name; falls back to a generic label if blank
-     * @param avatarUrl provider-supplied profile picture URL, or null
+     * @param email         provider-supplied email; null when the provider doesn't expose one (e.g. Twitter)
+     * @param emailVerified whether the provider asserts the user controls {@code email}
+     * @param fullName      provider-supplied display name; falls back to a generic label if blank
+     * @param avatarUrl     provider-supplied profile picture URL, or null
+     * @throws OAuthEmailConflictException if {@code email} belongs to an account that must not be linked
      */
     @Transactional
-    public User provisionOAuthUser(AuthProvider provider, String providerId, String email, String fullName, String avatarUrl) {
+    public User provisionOAuthUser(AuthProvider provider, String providerId, String email, boolean emailVerified,
+                                   String fullName, String avatarUrl) {
         User existing = userRepository.findByAuthProviderAndProviderId(provider, providerId).orElse(null);
         if (existing != null) return existing;
 
         if (!blank(email)) {
             User byEmail = userRepository.findByEmail(email).orElse(null);
-            if (byEmail != null) return byEmail;
+            if (byEmail != null) {
+                if (!emailVerified || !blank(byEmail.getPassword())) {
+                    throw new OAuthEmailConflictException(byEmail.getUsername());
+                }
+                return byEmail;
+            }
         }
 
         User user = new User();
         user.setUsername(generateUniqueUsername(fullName, provider, providerId));
-        user.setEmail(!blank(email) ? email : placeholderEmail(provider, providerId));
+        user.setEmail(!blank(email) && emailVerified ? email : placeholderEmail(provider, providerId));
         user.setFullName(!blank(fullName) ? fullName : "Người dùng " + provider.name());
         user.setAvatarUrl(avatarUrl);
         user.setRole(Role.ROLE_USER);
@@ -149,11 +168,18 @@ public class UserService {
         boolean passwordChanged = !blank(dto.getNewPassword());
         if (passwordChanged) {
             // Độ dài/mật khẩu bị lộ: @ValidPassword trên ProfileUpdateReqDto (PasswordPolicy), đã chạy ở controller
-            if (blank(dto.getCurrentPassword()) || !passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
-                // Sai mật khẩu hiện tại lặp lại = dấu hiệu dò mật khẩu bằng session bị chiếm → ghi audit ngay
-                auditLogService.passwordChangeFailed(id, user.getUsername(), "WRONG_CURRENT_PASSWORD");
+            if (blank(dto.getCurrentPassword())) {
                 throw new IllegalArgumentException("Mật khẩu hiện tại không đúng!");
             }
+            // Giới hạn số lần thử như đăng nhập: ai chiếm được session không được đoán mật khẩu hiện tại vô hạn lần
+            loginAttemptService.beginPasswordChange(id);
+            if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
+                // Sai mật khẩu hiện tại lặp lại = dấu hiệu dò mật khẩu bằng session bị chiếm → ghi audit ngay
+                auditLogService.passwordChangeFailed(id, user.getUsername(), "WRONG_CURRENT_PASSWORD");
+                loginAttemptService.passwordChangeFailed(id, user.getUsername());
+                throw new IllegalArgumentException("Mật khẩu hiện tại không đúng!");
+            }
+            loginAttemptService.passwordChangeSucceeded(id);
             if (!dto.getNewPassword().equals(dto.getConfirmNewPassword())) {
                 throw new IllegalArgumentException("Mật khẩu xác nhận mới không khớp!");
             }

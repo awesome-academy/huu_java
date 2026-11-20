@@ -1,7 +1,10 @@
 package com.huuhv.foodsndrinks.dto.request;
 
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.validation.NotCompromisedPassword;
+import com.huuhv.foodsndrinks.validation.PasswordBreachCheck;
 import com.huuhv.foodsndrinks.validation.ValidPassword;
+import jakarta.validation.GroupSequence;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -16,6 +19,8 @@ import lombok.Setter;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+// Kiểm tra mật khẩu bị lộ (gọi dịch vụ ngoài) chỉ chạy khi mọi ràng buộc khác đã đạt
+@GroupSequence({UserEditReqDto.class, PasswordBreachCheck.class})
 public class UserEditReqDto {
 
     private Long id;
@@ -39,6 +44,7 @@ public class UserEditReqDto {
 
     /** Để trống = không đổi mật khẩu (@ValidPassword coi chuỗi rỗng là hợp lệ, khác @Size) */
     @ValidPassword
+    @NotCompromisedPassword(groups = PasswordBreachCheck.class)
     private String newPassword;
 }
 

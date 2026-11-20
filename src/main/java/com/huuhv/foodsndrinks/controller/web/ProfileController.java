@@ -3,8 +3,11 @@ package com.huuhv.foodsndrinks.controller.web;
 import com.huuhv.foodsndrinks.dto.request.ProfileUpdateReqDto;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
+import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.UserService;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
@@ -50,7 +53,8 @@ public class ProfileController {
                                 BindingResult bindingResult,
                                 Principal principal,
                                 Model model,
-                                RedirectAttributes ra) {
+                                RedirectAttributes ra,
+                                HttpServletRequest request) throws ServletException {
         if (bindingResult.hasErrors()) {
             return PROFILE_EDIT_VIEW;
         }
@@ -60,6 +64,11 @@ public class ProfileController {
             userService.updateProfile(user.getId(), dto);
             ra.addFlashAttribute("successMessage", "Cập nhật thông tin thành công!");
             return "redirect:/profile";
+        } catch (PasswordChangeThrottledException e) {
+            // Sai mật khẩu hiện tại quá nhiều lần: session có thể đã bị chiếm → đăng xuất (logout handler của Spring
+            // Security: huỷ session, xoá SecurityContext và cookie remember-me) và bắt đăng nhập lại
+            request.logout();
+            return "redirect:/login?reauth=true";
         } catch (IllegalArgumentException | DuplicateResourceException e) {
             model.addAttribute("errorMessage", e.getMessage());
             return PROFILE_EDIT_VIEW;

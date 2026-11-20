@@ -28,7 +28,9 @@ import java.util.Set;
  * hoặc mã nội bộ của Spring Security (ngược lại ghi {@value #OTHER_ERROR}).
  * <p>
  * Ngoại lệ: tài khoản local đã bị khoá ({@link DisabledOAuth2AccountException}) được ghi {@value #DISABLED_REASON} kèm
- * username, giống đăng nhập form/API bị chặn vì tài khoản bị khoá.
+ * username, giống đăng nhập form/API bị chặn vì tài khoản bị khoá. Email trùng tài khoản không được tự liên kết
+ * ({@link OAuth2EmailConflictException}) được ghi {@value #EMAIL_CONFLICT_REASON} kèm username của tài khoản đó và đưa về
+ * {@value #EMAIL_CONFLICT_URL}.
  */
 @Component
 public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
@@ -37,6 +39,8 @@ public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHan
     static final String UNKNOWN_PROVIDER = "unknown";
     static final String OTHER_ERROR = "OTHER";
     static final String DISABLED_REASON = "DISABLED";
+    static final String EMAIL_CONFLICT_REASON = "EMAIL_CONFLICT";
+    static final String EMAIL_CONFLICT_URL = "/login?oauthEmailExists=true";
     private static final String CALLBACK_PREFIX = "/login/oauth2/code/";
 
     private static final Set<String> KNOWN_ERROR_CODES = Set.of(
@@ -70,6 +74,11 @@ public class OAuth2LoginFailureHandler extends SimpleUrlAuthenticationFailureHan
         if (exception instanceof DisabledOAuth2AccountException disabled) {
             // Cùng reason với DisabledException của form/API; username là của tài khoản local (không do client gửi)
             auditLogService.loginFailure(method, disabled.getUsername(), DISABLED_REASON);
+        } else if (exception instanceof OAuth2EmailConflictException conflict) {
+            // Email trùng tài khoản không được tự liên kết: báo người dùng đăng nhập bằng mật khẩu thay vì lỗi chung
+            auditLogService.loginFailure(method, conflict.getExistingUsername(), EMAIL_CONFLICT_REASON);
+            getRedirectStrategy().sendRedirect(request, response, EMAIL_CONFLICT_URL);
+            return;
         } else {
             auditLogService.loginFailure(method, null, reason(exception));
         }

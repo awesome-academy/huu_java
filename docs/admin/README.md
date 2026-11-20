@@ -35,7 +35,7 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 | POST | `/admin/products/edit/{id}` | Cập nhật (thêm/xóa ảnh, chọn ảnh đại diện) |
 | POST | `/admin/products/{id}/delete` | Xóa sản phẩm |
 
-Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`). Chỉ nhận PNG, JPEG, GIF, WEBP — nội dung file (magic bytes) phải khớp đuôi file, `Content-Type` do trình duyệt gửi không được dùng; tên file lưu là UUID.
+Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`). Chỉ nhận PNG, JPEG — nội dung file (magic bytes) phải khớp đuôi file, `Content-Type` do trình duyệt gửi không được dùng. Ảnh được decode rồi encode lại (bỏ EXIF/GPS và dữ liệu thừa, áp hướng xoay EXIF, từ chối ảnh trên 40 triệu pixel, thu nhỏ cạnh dài về 2048px); tên file lưu là UUID. GIF/WEBP không được nhận vì JDK không có codec WebP và encode lại GIF làm mất animation.
 
 ### Quản lý danh mục — `CategoryAdminController` (`/admin/categories`)
 

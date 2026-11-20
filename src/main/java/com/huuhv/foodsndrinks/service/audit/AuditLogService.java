@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.logging.LogSanitizer;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.utils.RequestUtils;
 import com.huuhv.foodsndrinks.utils.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -13,8 +14,6 @@ import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -80,11 +79,29 @@ public class AuditLogService {
      * giống {@link #loginFailure}. Các lần đăng nhập tiếp theo trong thời gian khoá được ghi bằng
      * {@code loginFailure(..., "LOGIN_THROTTLED")}.
      */
-    public void loginLockedOut(String attemptedUsername, int failures, Duration lockDuration) {
+    public void loginLockedOut(String attemptedUsername, String scope, int failures, Duration lockDuration) {
         write(event(Level.WARN, "Login locked out", "LOGIN_LOCKOUT", "failure")
                 .with("username", existingAccountOrUnknown(attemptedUsername))
                 .with("auth.failures", failures)
-                .with("auth.lock.seconds", lockDuration.toSeconds()));
+                .with("auth.lock.seconds", lockDuration.toSeconds())
+                .with("auth.lock.scope", scope));
+    }
+
+    /**
+     * Mọi lần đăng nhập từ một IP (IPv6: cả mạng /64) bị chặn vì sai quá nhiều lần với bất kỳ tên đăng nhập nào
+     * (password spraying). IP nằm ở trường {@code source.ip} chung của mọi sự kiện.
+     */
+    public void loginSourceBlocked(int failures, Duration lockDuration) {
+        write(event(Level.WARN, "Login source blocked", "LOGIN_LOCKOUT", "failure")
+                .with("username", UNKNOWN)
+                .with("auth.failures", failures)
+                .with("auth.lock.seconds", lockDuration.toSeconds())
+                .with("auth.lock.scope", "IP"));
+    }
+
+    /** Đăng ký tài khoản bị từ chối vì một IP gửi quá nhiều yêu cầu đăng ký. */
+    public void registrationThrottled() {
+        write(event(Level.WARN, "Registration throttled", "REGISTRATION_THROTTLED", "failure"));
     }
 
     /**
@@ -135,6 +152,13 @@ public class AuditLogService {
     public void passwordChangeFailed(Long userId, String username, String reason) {
         write(accountEvent(Level.WARN, "Password change failed", "PASSWORD_CHANGE_FAILED", userId, username)
                 .with("event.reason", reason));
+    }
+
+    /** Nhập sai mật khẩu hiện tại quá nhiều lần khi đổi mật khẩu → tạm khoá đổi mật khẩu và huỷ session. */
+    public void passwordChangeLockedOut(Long userId, String username, int failures, Duration lockDuration) {
+        write(accountEvent(Level.WARN, "Password change locked out", "PASSWORD_CHANGE_LOCKOUT", userId, username)
+                .with("auth.failures", failures)
+                .with("auth.lock.seconds", lockDuration.toSeconds()));
     }
 
     // -------------------------------------------------------
@@ -217,17 +241,9 @@ public class AuditLogService {
         return SecurityUtils.currentUsername().orElse(SYSTEM_ACTOR);
     }
 
-    /**
-     * IP client. Profile prod bật {@code server.forward-headers-strategy=native}: khi request đến từ load balancer thuộc
-     * {@code server.tomcat.remoteip.internal-proxies} ({@code TRUSTED_PROXIES}), Tomcat thay {@code getRemoteAddr()}
-     * bằng IP client thật lấy từ {@code X-Forwarded-For}; header này từ nguồn khác bị bỏ qua nên client không tự giả
-     * được IP. Dev không bật, giá trị là IP kết nối trực tiếp.
-     */
+    /** IP client thật (xem {@link RequestUtils#currentClientIp()}). */
     private static String clientIp() {
-        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
-            return attrs.getRequest().getRemoteAddr();
-        }
-        return UNKNOWN;
+        return RequestUtils.currentClientIp().orElse(UNKNOWN);
     }
 
     /** Message + các trường của một sự kiện audit; chuỗi được cắt về {@link #MAX_FIELD_LENGTH}, enum ghi theo tên. */

@@ -54,4 +54,23 @@ class PwnedPasswordsCheckerTest {
 
         assertThatThrownBy(() -> checker.check("password")).isInstanceOf(RestClientException.class);
     }
+
+    @Test
+    void samePrefix_isFetchedOnce_thenServedFromCache() {
+        // MockRestServiceServer mặc định chỉ cho mỗi expect khớp 1 lần → lần gọi ra ngoài thứ 2 sẽ làm test fail
+        server.expect(requestTo(URL)).andRespond(withSuccess(SUFFIX + ":3\r\n", MediaType.TEXT_PLAIN));
+
+        assertThat(checker.check("password").isCompromised()).isTrue();
+        assertThat(checker.check("password").isCompromised()).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void serviceError_isNotCached() {
+        server.expect(requestTo(URL)).andRespond(withServerError());
+        server.expect(requestTo(URL)).andRespond(withSuccess(SUFFIX + ":3\r\n", MediaType.TEXT_PLAIN));
+
+        assertThatThrownBy(() -> checker.check("password")).isInstanceOf(RestClientException.class);
+        assertThat(checker.check("password").isCompromised()).isTrue();
+    }
 }

@@ -10,8 +10,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Mật khẩu mới phải đạt {@code PasswordPolicy} (8–64 ký tự, không nằm trong danh sách bị lộ). Null/chuỗi rỗng được
- * coi là hợp lệ ("không đổi mật khẩu"); trường bắt buộc thì thêm {@code @NotBlank}.
+ * Mật khẩu mới phải đạt {@code PasswordPolicy#violation} (8–64 ký tự, ≤ 72 byte UTF-8). Luôn khai báo kèm
+ * {@link NotCompromisedPassword} (kiểm tra danh sách bị lộ, chạy sau cùng). Null/chuỗi rỗng được coi là hợp lệ
+ * ("không đổi mật khẩu"); trường bắt buộc thì thêm {@code @NotBlank}.
  */
 @Documented
 @Constraint(validatedBy = PasswordPolicyValidator.class)
