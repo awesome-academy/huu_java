@@ -30,8 +30,10 @@ public class OrderStatisticsScheduler {
     // Không đặt zone: cron chạy theo múi giờ JVM, cùng múi giờ với YearMonth.now() bên dưới
     @Scheduled(cron = "${app.notification.statistics.cron}")
     // Nhiều instance cùng kích hoạt cron: chỉ instance giành được khoá gửi email (config/SchedulerLockConfig).
-    // lockAtLeastFor: giữ khoá dù job xong trong vài ms (email gửi @Async) để instance có đồng hồ/cron trễ vài giây
-    // không chạy lại. Không @Transactional: 2 query đọc độc lập, khoá không bị cuốn vào transaction của job.
+    // Job chạy đồng bộ trên thread sched-: 2 query + gửi SMTP (sendMonthlyStatistics không @Async), giữ khoá suốt lúc
+    // gửi; lockAtMostFor phải dài hơn thời gian SMTP chậm nhất. lockAtLeastFor: job thường xong trong vài giây, vẫn giữ
+    // khoá để instance có đồng hồ/cron trễ vài giây không chạy lại. Không @Transactional: 2 query đọc độc lập, khoá
+    // không bị cuốn vào transaction của job.
     @SchedulerLock(name = "orderMonthlyStatistics", lockAtLeastFor = "5m", lockAtMostFor = "30m")
     public void sendMonthlyStatistics() {
         sendMonthlyStatistics(YearMonth.now().minusMonths(1));

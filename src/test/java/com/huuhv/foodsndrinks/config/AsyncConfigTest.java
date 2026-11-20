@@ -9,15 +9,17 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Các pool của {@link AsyncConfig}: kích thước từ {@link AsyncProperties}, {@code CallerRunsPolicy} khi đầy, cấu hình
- * sai thì app không khởi động. (Chờ task khi tắt app do {@code application.yml} bật — kiểm tra trong
- * {@code SchedulingIntegrationTest} với context đầy đủ.)
+ * Các pool của {@link AsyncConfig}: kích thước từ {@link AsyncProperties}, chính sách khi đầy (notify chạy trên thread
+ * gọi, dashboard từ chối), cấu hình sai thì app không khởi động. (Chờ task khi tắt app do {@code application.yml} bật
+ * — kiểm tra trong {@code SchedulingIntegrationTest} với context đầy đủ.)
  */
 class AsyncConfigTest {
 
@@ -42,11 +44,38 @@ class AsyncConfigTest {
             assertThat(dashboard.getThreadNamePrefix()).isEqualTo("dashboard-");
             assertThat(context.getBean(AsyncProperties.class).dashboard().timeout()).isEqualTo(Duration.ofSeconds(10));
 
-            for (ThreadPoolTaskExecutor executor : new ThreadPoolTaskExecutor[]{notify, dashboard}) {
-                assertThat(executor.getThreadPoolExecutor().getRejectedExecutionHandler())
-                        .isInstanceOf(ThreadPoolExecutor.CallerRunsPolicy.class);
-            }
+            assertThat(notify.getThreadPoolExecutor().getRejectedExecutionHandler())
+                    .isInstanceOf(ThreadPoolExecutor.CallerRunsPolicy.class);
+            assertThat(dashboard.getThreadPoolExecutor().getRejectedExecutionHandler())
+                    .isInstanceOf(ThreadPoolExecutor.AbortPolicy.class);
         });
+    }
+
+    @Test
+    void saturatedDashboardPool_rejects_insteadOfRunningOnCallerThread() {
+        contextRunner
+                .withPropertyValues("app.async.dashboard.core-size=1", "app.async.dashboard.max-size=1",
+                        "app.async.dashboard.queue-capacity=0")
+                .run(context -> {
+                    ThreadPoolTaskExecutor dashboard =
+                            context.getBean(AsyncConfig.DASHBOARD_EXECUTOR, ThreadPoolTaskExecutor.class);
+                    CountDownLatch release = new CountDownLatch(1);
+                    CountDownLatch started = new CountDownLatch(1);
+                    Future<?> blocker = dashboard.submit(() -> {
+                        started.countDown();
+                        release.await(5, TimeUnit.SECONDS);
+                        return null;
+                    });
+                    try {
+                        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+
+                        assertThatThrownBy(() -> dashboard.execute(() -> { }))
+                                .isInstanceOf(RejectedExecutionException.class);
+                    } finally {
+                        release.countDown();
+                        blocker.get(5, TimeUnit.SECONDS);
+                    }
+                });
     }
 
     @Test

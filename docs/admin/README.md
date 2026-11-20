@@ -19,7 +19,7 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 
 | Method | Path | Mô tả |
 |---|---|---|
-| GET | `/admin`, `/admin/dashboard` | Dashboard thống kê tổng quan. Các truy vấn thống kê chạy song song trên pool `dashboard-*` (`DashboardService`); một truy vấn lỗi hoặc quá `app.async.dashboard.timeout` (mặc định 10s) → 503, trang lỗi admin với thông báo chung |
+| GET | `/admin`, `/admin/dashboard` | Dashboard thống kê tổng quan. Các truy vấn thống kê chạy song song trên pool `dashboard-*` (`DashboardService`); một truy vấn lỗi, quá `app.async.dashboard.timeout` (mặc định 10s) hoặc pool đầy (nhiều admin cùng tải) → 503, trang lỗi admin với thông báo chung |
 | GET | `/admin/dashboard/charts` | JSON dữ liệu 2 biểu đồ (`DashboardChartResDto`: doanh thu 6 tháng, số đơn theo trạng thái) cho `static/js/admin/dashboard.js` — thay cho script inline (CSP) |
 
 JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua thuộc tính `data-confirm="..."` trên `<form>`/`<button>`, kiểm tra kích thước file qua `data-max-file-size`), `dashboard.js` (Chart.js). Không viết `onclick`/`onsubmit` hay `<script>` inline — CSP chặn.
