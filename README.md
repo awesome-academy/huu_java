@@ -11,7 +11,7 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 ## Tech Stack
 
 - **Ngôn ngữ:** Java 25
-- **Framework:** Spring Boot 4.x (`spring-boot-starter-parent` 4.0.7)
+- **Framework:** Spring Boot 4.x (`spring-boot-starter-parent` 4.0.9)
 - **Build tool:** Maven (Maven Wrapper đi kèm)
 - **Database:** MySQL 8 + Spring Data JPA / Hibernate
 - **Migration:** Flyway (`src/main/resources/db/migration`)

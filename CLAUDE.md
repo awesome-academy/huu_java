@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-F&B Store ("foodsndrinks") — một ứng dụng Spring Boot 4.0.7 / Java 25 phục vụ ba phần: trang quản trị SSR (`/admin/**`), storefront SSR cho khách hàng (`/`, `/menu`, `/cart`, ...) và REST API dùng JWT (`/api/v1/**`). Tài liệu riêng cho từng phần nằm ở [docs/admin](docs/admin/README.md), [docs/web](docs/web/README.md), [docs/api](docs/api/README.md) — cập nhật các file này khi thêm endpoint/trang mới.
+F&B Store ("foodsndrinks") — một ứng dụng Spring Boot 4.0.9 / Java 25 phục vụ ba phần: trang quản trị SSR (`/admin/**`), storefront SSR cho khách hàng (`/`, `/menu`, `/cart`, ...) và REST API dùng JWT (`/api/v1/**`). Tài liệu riêng cho từng phần nằm ở [docs/admin](docs/admin/README.md), [docs/web](docs/web/README.md), [docs/api](docs/api/README.md) — cập nhật các file này khi thêm endpoint/trang mới.
 
 Đây là mock project đã hoàn thành phần cơ bản; giai đoạn hiện tại là **khóa Advance**: bổ sung các công nghệ ở mục [Lộ trình Advance](#lộ-trình-advance) và mọi code mới phải tuân thủ [OWASP Secure Coding Practices](#owasp-secure-coding--quy-tắc-bắt-buộc).
 
