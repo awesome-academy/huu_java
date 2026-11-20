@@ -1,14 +1,19 @@
 # Chỉ nằm trên classpath khi chạy test (Maven, IDE, container maven). Spring Boot nạp file này BỔ SUNG cho
-# classpath:/application.yml, không thay thế nó — profile dev vẫn bật như cũ. classpath:/config/ có độ ưu tiên cao hơn
-# cả classpath:/application-dev.yml, nên mọi giá trị dưới đây thắng cấu hình dev và biến trong .env (qua placeholder).
+# classpath:/application.yml, không thay thế nó, và giá trị ở đây thắng classpath:/application.yml.
+# Các giá trị này CHỈ có hiệu lực khi profile dev KHÔNG bật: classpath:/ và classpath:/config/ cùng một nhóm vị trí,
+# trong nhóm thì file theo profile (application-dev.yml) luôn thắng file không theo profile (file này). Vì vậy test
+# chạy chỉ với profile "test": @IntegrationTest có @ActiveProfiles("test"), và surefire đặt system property
+# spring.profiles.active=test (pom.xml). Cả hai đều thắng SPRING_PROFILES_ACTIVE của môi trường/.env.
+# TestEnvironmentIsolationTest kiểm tra.
 spring:
   profiles:
-    # Thêm profile "test": logback-spring.xml chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
+    # Profile "test" cũng bật khi chạy test trong IDE mà không qua @IntegrationTest (vd. @WebMvcTest): logback-spring.xml
+    # chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
     include: test
   datasource:
-    # Test KHÔNG BAO GIỜ dùng database dev. @SpringBootTest lấy kết nối từ MySQL của Testcontainers
-    # (@Import(TestcontainersConfiguration.class) → @ServiceConnection ghi đè các giá trị này). Quên import thì context
-    # nối tới host không tồn tại (.invalid) và lỗi ngay, thay vì âm thầm ghi vào DB dev. Không cần DB_USERNAME/DB_PASSWORD.
+    # Test KHÔNG BAO GIỜ dùng database dev. @IntegrationTest lấy kết nối từ MySQL của Testcontainers
+    # (TestcontainersConfiguration → @ServiceConnection thay các giá trị này). Context không có container thì nối tới host
+    # không tồn tại (.invalid) và lỗi ngay, thay vì âm thầm ghi vào DB dev. Không cần DB_USERNAME/DB_PASSWORD.
     url: jdbc:mysql://testcontainers-required.invalid:3306/foodsndrinks
     username: ""
     password: ""
@@ -27,7 +32,10 @@ spring:
             client-id: test-twitter-client-id
             client-secret: test-twitter-client-secret
 
-# Khoá ký ngẫu nhiên cho mỗi lần chạy (256 bit từ SecureRandom), không lấy JWT_SECRET/REMEMBER_ME_KEY trong .env
+# Khoá ký ngẫu nhiên cho mỗi lần chạy (SecureRandom), không lấy JWT_SECRET/REMEMBER_ME_KEY trong .env. Biến môi trường
+# JWT_SECRET (compose: env_file .env) vẫn thắng file này qua relaxed binding → @IntegrationTest khai báo lại bằng
+# @TestPropertySource (thắng biến môi trường).
+# Profile dev không bật nên thời hạn token cũng khai báo ở đây (cùng giá trị với dev/prod: 1 giờ).
 jwt:
   secret: ${random.value}${random.value}
   expiration: 3600000

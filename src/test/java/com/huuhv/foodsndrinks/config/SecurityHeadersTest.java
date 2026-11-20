@@ -1,12 +1,10 @@
 package com.huuhv.foodsndrinks.config;
 
-import com.huuhv.foodsndrinks.TestcontainersConfiguration;
-import org.springframework.context.annotation.Import;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultMatcher;
@@ -18,8 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** Header bảo mật có trên mọi chain; thư viện front-end tự host qua WebJars truy cập được khi chưa đăng nhập. */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
 class SecurityHeadersTest {
 

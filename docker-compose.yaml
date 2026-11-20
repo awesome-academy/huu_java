@@ -89,8 +89,8 @@ services:
   # Container JDK 25 để chạy lệnh Maven (compile, package, dependency-check...) mà không cần cài JDK local.
   # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
   # Không mount Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host. Vì vậy
-  # service này chỉ chạy được test không cần Docker (unit test, @WebMvcTest, vd. -Dtest='*ServiceTest'); toàn bộ test
-  # (@SpringBootTest dùng MySQL của Testcontainers) chạy bằng service maven-docker bên dưới hoặc ./mvnw test trên máy.
+  # service này chỉ chạy được test không cần Docker (unit test, @WebMvcTest: test -DexcludedGroups=integration); toàn bộ test
+  # (@IntegrationTest dùng MySQL của Testcontainers) chạy bằng service maven-docker bên dưới hoặc ./mvnw test trên máy.
   # Chạy Maven bằng đúng chủ sở hữu thư mục project (tự nhận diện, không cần HOST_UID) — xem docker/maven-entrypoint.sh:
   # Linux/WSL2 thì target/ và mọi file test ghi ra thuộc user máy host ngay từ đầu, không cần chown sau khi chạy.
   # UID của user máy host không có trong /etc/passwd của image nên đặt HOME, MAVEN_USER_HOME (mvnw tải Maven vào

@@ -284,6 +284,20 @@
 					</execution>
 				</executions>
 			</plugin>
+			<!-- Test chỉ chạy với profile "test", không bao giờ với dev: application-dev.yml thắng
+			     src/test/resources/config/application.yml nên dev bật thì test dùng datasource/secret của dev (.env).
+			     System property thắng cả SPRING_PROFILES_ACTIVE của môi trường. Áp dụng cho mọi test chạy qua Maven,
+			     kể cả test không dùng @IntegrationTest (annotation này tự đặt @ActiveProfiles("test") khi chạy trong IDE).
+			     Bỏ qua integration test (cần Docker): ./mvnw test -DexcludedGroups=integration -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<spring.profiles.active>test</spring.profiles.active>
+					</systemPropertyVariables>
+				</configuration>
+			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>

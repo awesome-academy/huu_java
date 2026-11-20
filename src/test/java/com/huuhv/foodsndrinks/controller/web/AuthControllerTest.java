@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
-/** Đăng ký ({@link AuthController}): trùng username/email bị từ chối trước khi tạo user, giới hạn theo IP, CSRF. */
+/** Đăng ký ({@link AuthController}): trùng username/email/SĐT bị từ chối trước khi tạo user, giới hạn theo IP, CSRF. */
 @SecuredWebMvcTest(AuthController.class)
 @Import(PasswordPolicy.class) // @ValidPassword trên RegisterReqDto; không có CompromisedPasswordChecker = không gọi mạng
 class AuthControllerTest {
@@ -77,6 +77,16 @@ class AuthControllerTest {
         mockMvc.perform(registerForm().with(csrf()))
                 .andExpect(view().name("web/register"))
                 .andExpect(model().attributeHasFieldErrors("registerReqDto", "email"));
+        verify(userService, never()).registerNewUser(any());
+    }
+
+    @Test
+    void duplicatePhone_isRejected() throws Exception {
+        when(userService.existsByPhone("0912345678")).thenReturn(true);
+
+        mockMvc.perform(registerForm().with(csrf()))
+                .andExpect(view().name("web/register"))
+                .andExpect(model().attributeHasFieldErrors("registerReqDto", "phone"));
         verify(userService, never()).registerNewUser(any());
     }
 

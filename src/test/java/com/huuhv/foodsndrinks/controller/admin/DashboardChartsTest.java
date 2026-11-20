@@ -1,14 +1,12 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
-import com.huuhv.foodsndrinks.TestcontainersConfiguration;
-import org.springframework.context.annotation.Import;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -28,10 +26,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * User của {@code @WithMockUser} phải có thật trong DB với đúng role: {@code AccountStatusFilter} huỷ session của
  * tài khoản không tồn tại hoặc khác role.
  */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
-@Transactional // rollback user test, không để lại dữ liệu trong DB dev
+@Transactional // rollback: mọi test class dùng chung MySQL của Testcontainers
 class DashboardChartsTest {
 
     private static final String URL = "/admin/dashboard/charts";

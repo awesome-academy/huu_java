@@ -1,14 +1,12 @@
 package com.huuhv.foodsndrinks.security;
 
-import com.huuhv.foodsndrinks.TestcontainersConfiguration;
-import org.springframework.context.annotation.Import;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -28,10 +26,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Session web đang đăng nhập bị huỷ ngay ở request tiếp theo khi admin khoá tài khoản hoặc đổi role
  * ({@link AccountStatusFilter}), thay vì dùng tiếp tới khi session hết hạn.
  */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
-@Transactional // rollback user test, không để lại dữ liệu trong DB dev
+@Transactional // rollback: mọi test class dùng chung MySQL của Testcontainers
 class SessionRevocationTest {
 
     private static final String PASSWORD = "sessionrevoke123";

@@ -1,14 +1,12 @@
 package com.huuhv.foodsndrinks.service.audit;
 
-import com.huuhv.foodsndrinks.TestcontainersConfiguration;
-import org.springframework.context.annotation.Import;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -27,10 +25,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code event.reason=DISABLED} (không phải lỗi hệ thống), API trả 401 (không phải 500), và JWT cấp trước khi khoá
  * không còn dùng được.
  */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
-@Transactional // rollback user test, không để lại dữ liệu trong DB dev
+@Transactional // rollback: mọi test class dùng chung MySQL của Testcontainers
 class DisabledAccountLoginTest {
 
     private static final String USERNAME = "lockedaudituser";

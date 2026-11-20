@@ -1,14 +1,12 @@
 package com.huuhv.foodsndrinks.security;
 
-import com.huuhv.foodsndrinks.TestcontainersConfiguration;
-import org.springframework.context.annotation.Import;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -30,10 +28,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Chống brute-force qua security chain thật (mặc định 5 lần sai/15 phút). Bộ đếm nằm trong bộ nhớ và dùng chung giữa
  * các test cùng Spring context (không rollback theo transaction) → mỗi test dùng tên đăng nhập riêng.
  */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
-@Transactional // rollback user test, không để lại dữ liệu trong DB dev
+@Transactional // rollback: mọi test class dùng chung MySQL của Testcontainers
 class LoginThrottlingTest {
 
     private static final String PASSWORD = "throttle-pass-123";

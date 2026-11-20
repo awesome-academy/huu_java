@@ -22,9 +22,17 @@ fi
 
 # Service maven-docker mount Docker socket (Testcontainers): socket thuộc root:docker trên Linux/WSL2, user máy host chỉ
 # dùng được nhờ group docker — giữ đúng GID của socket làm group phụ, ngoài ra không giữ group nào của root.
+# Socket thuộc group 0 (root:root, vd. Docker Desktop tích hợp WSL2) thì KHÔNG cấp group root: Maven/test sẽ ghi được
+# mọi file có quyền group root trong container. Khi đó user máy host không dùng được socket → Testcontainers báo lỗi.
 groups="--clear-groups"
 if [ -S /var/run/docker.sock ]; then
-  groups="--groups=$(stat -c %g /var/run/docker.sock)"
+  socket_gid="$(stat -c %g /var/run/docker.sock)"
+  if [ "$socket_gid" = "0" ]; then
+    echo "maven-entrypoint: /var/run/docker.sock thuộc group root (GID 0), không cấp group này cho user build." >&2
+    echo "maven-entrypoint: integration test (Testcontainers) sẽ không truy cập được Docker; dùng ./mvnw test trên máy." >&2
+  else
+    groups="--groups=$socket_gid"
+  fi
 fi
 
 # exec: Maven (java) nhận trực tiếp tín hiệu dừng của Docker.

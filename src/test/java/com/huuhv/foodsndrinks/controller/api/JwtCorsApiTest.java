@@ -1,7 +1,6 @@
 package com.huuhv.foodsndrinks.controller.api;
 
-import com.huuhv.foodsndrinks.TestcontainersConfiguration;
-import org.springframework.context.annotation.Import;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.UserRepository;
@@ -11,7 +10,6 @@ import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -30,11 +28,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** JWT phải khớp iss/aud; CORS của /api/** chỉ mở cho origin trong allowlist. */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@IntegrationTest
 @AutoConfigureMockMvc
 @TestPropertySource(properties = "app.cors.allowed-origins=https://spa.example.com")
-@Transactional // rollback user test, không để lại dữ liệu trong DB dev
+@Transactional // rollback: mọi test class dùng chung MySQL của Testcontainers
 class JwtCorsApiTest {
 
     private static final String USERNAME = "jwtcorsuser";
