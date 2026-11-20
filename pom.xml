@@ -35,6 +35,8 @@
 		<dependency-check.version>13.0.0</dependency-check.version>
 		<!-- Không có trong Spring Boot BOM. 0.8.14 là bản đầu tiên hỗ trợ chính thức class file Java 25 -->
 		<jacoco.version>0.8.14</jacoco.version>
+		<!-- Không có trong Spring Boot BOM. Dòng 7.x build trên Spring Framework 7 -->
+		<shedlock.version>7.10.1</shedlock.version>
 		<!-- Ghi đè version của Spring Boot BOM để vá lỗ hổng (OWASP Dependency-Check). Bỏ khi BOM đã có bản >= -->
 		<!-- Connector/J 9.7.0 (Boot 4.0.9): CVE-2026-60586, CVE-2026-60623. Boot 4.0.10 đã dùng 26.10.0 -->
 		<mysql.version>26.10.0</mysql.version>
@@ -136,6 +138,19 @@
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- ShedLock: job @Scheduled chỉ chạy trên một instance khi có nhiều instance sau load balancer
+             (khoá lưu trong bảng shedlock của MySQL dùng chung — config/SchedulerLockConfig) -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
         </dependency>
 
         <dependency>

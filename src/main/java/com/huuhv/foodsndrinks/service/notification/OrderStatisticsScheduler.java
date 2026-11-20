@@ -4,9 +4,9 @@ import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -23,9 +23,12 @@ public class OrderStatisticsScheduler {
     private final OrderRepository orderRepository;
     private final EmailNotificationService emailNotificationService;
 
-    @Transactional(readOnly = true)
     // Không đặt zone: cron chạy theo múi giờ JVM, cùng múi giờ với LocalDate.now() bên dưới
     @Scheduled(cron = "${app.notification.statistics.cron}")
+    // Nhiều instance cùng kích hoạt cron: chỉ instance giành được khoá gửi email (config/SchedulerLockConfig).
+    // lockAtLeastFor: giữ khoá dù job xong trong vài ms (email gửi @Async) để instance có đồng hồ/cron trễ vài giây
+    // không chạy lại. Không @Transactional: 2 query đọc độc lập, khoá không bị cuốn vào transaction của job.
+    @SchedulerLock(name = "orderMonthlyStatistics", lockAtLeastFor = "5m", lockAtMostFor = "30m")
     public void sendMonthlyStatistics() {
         LocalDate today = LocalDate.now();
         LocalDateTime startOfMonth = today.withDayOfMonth(1).atStartOfDay();
