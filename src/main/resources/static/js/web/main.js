@@ -1,7 +1,16 @@
 // Main Javascript for Web — shared helpers (CSRF, toast, cart badge) + AJAX cart actions.
+// Gắn sự kiện bằng addEventListener: CSP cấm handler on* và script inline trong template.
 document.addEventListener("DOMContentLoaded", function () {
-    console.log("Web Storefront Loaded!");
     wireAddToCartForms(document);
+});
+
+// Trang chi tiết sản phẩm: bấm ảnh thumbnail (data-action="show-main-image") → hiện ở ảnh chính
+document.addEventListener("click", function (event) {
+    const thumbnail = event.target.closest("img[data-action='show-main-image']");
+    const mainImage = document.getElementById("mainProductImage");
+    if (thumbnail && mainImage) {
+        mainImage.src = thumbnail.src;
+    }
 });
 
 // -------------------------------------------------------

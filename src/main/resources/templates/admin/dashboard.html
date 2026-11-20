@@ -77,8 +77,8 @@
         </div>
     </div>
 
-    <!-- Charts row -->
-    <div class="row g-3 mb-4">
+    <!-- Charts row — dữ liệu lấy qua JSON (static/js/admin/dashboard.js), không inline script (CSP) -->
+    <div class="row g-3 mb-4" id="dashboardCharts" th:data-charts-url="@{/admin/dashboard/charts}">
         <div class="col-lg-8">
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-header fw-bold bg-white border-bottom">
@@ -194,58 +194,8 @@
 </div>
 
 <th:block layout:fragment="scripts">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script th:inline="javascript">
-        // Monthly revenue bar chart
-        const monthLabels   = /*[[${stats.monthlyRevenue.![label]}]]*/ [];
-        const monthRevenues = /*[[${stats.monthlyRevenue.![revenue]}]]*/ [];
-
-        new Chart(document.getElementById('revenueChart'), {
-            type: 'bar',
-            data: {
-                labels: monthLabels,
-                datasets: [{
-                    label: 'Doanh thu (đ)',
-                    data: monthRevenues,
-                    backgroundColor: 'rgba(13,110,253,0.75)',
-                    borderColor: 'rgba(13,110,253,1)',
-                    borderWidth: 1,
-                    borderRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: { callback: v => v.toLocaleString('vi-VN') + ' đ' }
-                    }
-                }
-            }
-        });
-
-        // Order status doughnut chart
-        const statusLabels = /*[[${stats.statusCounts.keySet()}]]*/ [];
-        const statusValues = /*[[${stats.statusCounts.values()}]]*/ [];
-
-        new Chart(document.getElementById('statusChart'), {
-            type: 'doughnut',
-            data: {
-                labels: statusLabels,
-                datasets: [{
-                    data: statusValues,
-                    backgroundColor: ['#ffc107','#0dcaf0','#198754','#dc3545'],
-                    borderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 8 } } },
-                cutout: '65%'
-            }
-        });
-    </script>
+    <script th:src="@{/webjars/chart.js/dist/chart.umd.js}"></script>
+    <script th:src="@{/js/admin/dashboard.js}"></script>
 </th:block>
 
 </body>

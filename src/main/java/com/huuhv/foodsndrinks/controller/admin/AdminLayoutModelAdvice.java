@@ -6,11 +6,25 @@ import com.huuhv.foodsndrinks.enums.ProductType;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.enums.SuggestionStatus;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ModelAttribute;
 
 @ControllerAdvice(basePackages = "com.huuhv.foodsndrinks.controller.admin")
 public class AdminLayoutModelAdvice {
+
+    private final long maxUploadFileSize;
+
+    public AdminLayoutModelAdvice(@Value("${spring.servlet.multipart.max-file-size}") DataSize maxUploadFileSize) {
+        this.maxUploadFileSize = maxUploadFileSize.toBytes();
+    }
+
+    /** Giới hạn 1 file upload (byte) cho {@code data-max-file-size} của input file — kiểm tra sớm phía client. */
+    @ModelAttribute("maxUploadFileSize")
+    public long maxUploadFileSize() {
+        return maxUploadFileSize;
+    }
 
     @ModelAttribute("currentPath")
     public String currentPath(HttpServletRequest request) {

@@ -1,12 +1,15 @@
 package com.huuhv.foodsndrinks.exception;
 
 import com.huuhv.foodsndrinks.dto.response.ErrorResponse;
+import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -20,6 +23,9 @@ import java.util.Map;
 // @RestControllerAdvice tự động chuyển output thành JSON
 @RestControllerAdvice(basePackages = "com.huuhv.foodsndrinks.controller.api")
 public class ApiExceptionHandler {
+
+    private static final String BAD_CREDENTIALS_MESSAGE = "Tên đăng nhập, email hoặc mật khẩu không chính xác.";
+    private static final String LOGIN_THROTTLED_MESSAGE = "Bạn đã đăng nhập sai quá nhiều lần. Vui lòng thử lại sau.";
 
     // Handle 404 Not found
     @ExceptionHandler(ResourceNotFoundException.class)
@@ -53,11 +59,37 @@ public class ApiExceptionHandler {
         return buildErrorResponse(HttpStatus.CONFLICT, ex.getMessage(), request);
     }
 
-    // Handle 401 - sai thông tin đăng nhập hoặc tài khoản bị khóa
-    @ExceptionHandler({BadCredentialsException.class, DisabledException.class})
-    public ResponseEntity<ErrorResponse> handleAuthenticationException(Exception ex, HttpServletRequest request) {
-        log.warn("Unauthorized access at {}: {}", request.getRequestURI(), ex.getMessage());
-        return buildErrorResponse(HttpStatus.UNAUTHORIZED, ex.getMessage(), request);
+    // Handle 429 - sai mật khẩu quá nhiều lần, tên đăng nhập đang bị tạm khoá (kể cả tên không tồn tại)
+    @ExceptionHandler(LoginThrottledException.class)
+    public ResponseEntity<ErrorResponse> handleLoginThrottled(LoginThrottledException ex, HttpServletRequest request) {
+        log.warn("Login throttled at {}", request.getRequestURI());
+        ResponseEntity<ErrorResponse> body = buildErrorResponse(HttpStatus.TOO_MANY_REQUESTS, LOGIN_THROTTLED_MESSAGE, request);
+        return ResponseEntity.status(body.getStatusCode())
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+                .body(body.getBody());
+    }
+
+    // Handle 401 - sai thông tin đăng nhập. Message cố định: không phân biệt sai username hay sai mật khẩu,
+    // không trả ex.getMessage() của Spring Security ra ngoài.
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<ErrorResponse> handleBadCredentials(BadCredentialsException ex, HttpServletRequest request) {
+        log.warn("Bad credentials at {}", request.getRequestURI());
+        return buildErrorResponse(HttpStatus.UNAUTHORIZED, BAD_CREDENTIALS_MESSAGE, request);
+    }
+
+    // Handle 401 - tài khoản bị vô hiệu hoá. Chỉ xảy ra khi đã nhập ĐÚNG mật khẩu (trạng thái được kiểm tra sau mật
+    // khẩu, xem LoginAttemptAwareAuthenticationProvider) nên báo rõ lý do không làm lộ tài khoản.
+    @ExceptionHandler(DisabledException.class)
+    public ResponseEntity<ErrorResponse> handleDisabled(DisabledException ex, HttpServletRequest request) {
+        log.warn("Disabled account login at {}", request.getRequestURI());
+        return buildErrorResponse(HttpStatus.UNAUTHORIZED, "Tài khoản đã bị vô hiệu hoá.", request);
+    }
+
+    // Handle 401 - mọi lỗi xác thực khác (trước đây rơi vào handler 500)
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthenticationException(AuthenticationException ex, HttpServletRequest request) {
+        log.warn("Authentication failed at {}: {}", request.getRequestURI(), ex.getClass().getSimpleName());
+        return buildErrorResponse(HttpStatus.UNAUTHORIZED, BAD_CREDENTIALS_MESSAGE, request);
     }
 
     // Handle other exceptions (500 Internal Server Error)

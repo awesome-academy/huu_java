@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.security;
 
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
@@ -34,17 +35,29 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
 
     @Override
     public OAuth2User loadUser(OAuth2UserRequest userRequest) throws OAuth2AuthenticationException {
-        OAuth2User oauth2User = super.loadUser(userRequest);
-        String registrationId = userRequest.getClientRegistration().getRegistrationId();
+        return toLocalUser(userRequest.getClientRegistration().getRegistrationId(), super.loadUser(userRequest));
+    }
 
+    /**
+     * Resolves (or creates) the local account behind a Facebook/Twitter identity and builds the principal for it.
+     *
+     * @throws DisabledOAuth2AccountException if the local account has been locked by an admin
+     */
+    OAuth2User toLocalUser(String registrationId, OAuth2User oauth2User) {
         ProviderProfile profile = switch (registrationId) {
             case "facebook" -> readFacebookProfile(oauth2User.getAttributes());
             case "twitter" -> readTwitterProfile(oauth2User.getAttributes());
             default -> throw new OAuth2AuthenticationException("Nhà cung cấp đăng nhập không được hỗ trợ: " + registrationId);
         };
 
-        User localUser = userService.provisionOAuthUser(
-                profile.provider(), profile.providerId(), profile.email(), profile.name(), profile.avatarUrl());
+        User localUser;
+        try {
+            localUser = userService.provisionOAuthUser(profile.provider(), profile.providerId(), profile.email(),
+                    profile.emailVerified(), profile.name(), profile.avatarUrl());
+        } catch (OAuthEmailConflictException ex) {
+            throw new OAuth2EmailConflictException(ex);
+        }
+        DisabledOAuth2AccountException.rejectIfDisabled(localUser);
 
         Map<String, Object> attributes = new HashMap<>(profile.attributes());
         attributes.put(NAME_ATTRIBUTE_KEY, localUser.getUsername());
@@ -63,6 +76,8 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 AuthProvider.FACEBOOK,
                 String.valueOf(attributes.get("id")),
                 (String) attributes.get("email"),
+                // Graph API không trả cờ xác minh; Facebook chỉ trả email chính đã xác nhận của tài khoản
+                true,
                 (String) attributes.getOrDefault("name", "Facebook User"),
                 pictureUrl,
                 attributes
@@ -79,13 +94,14 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 AuthProvider.TWITTER,
                 String.valueOf(data.get("id")),
                 null, // Twitter's API does not expose an email address via OAuth2
+                false,
                 (String) data.getOrDefault("name", "Twitter User"),
                 (String) data.get("profile_image_url"),
                 data
         );
     }
 
-    private record ProviderProfile(AuthProvider provider, String providerId, String email, String name,
-                                   String avatarUrl, Map<String, Object> attributes) {
+    private record ProviderProfile(AuthProvider provider, String providerId, String email, boolean emailVerified,
+                                   String name, String avatarUrl, Map<String, Object> attributes) {
     }
 }

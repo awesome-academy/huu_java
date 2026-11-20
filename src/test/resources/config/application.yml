@@ -4,3 +4,15 @@ spring:
   profiles:
     # Thêm profile "test": logback-spring.xml chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
     include: test
+
+app:
+  security:
+    # Mọi request của MockMvc đều đến từ 127.0.0.1 và bộ đếm dùng chung trong cả Spring context: nới giới hạn theo IP để
+    # các test không chặn nhau. Test của giới hạn theo IP tự đặt remoteAddr riêng hoặc dùng unit test.
+    login-attempts:
+      max-failures-per-ip: 10000
+    registration:
+      max-per-ip: 10000
+    password:
+      # Không gọi dịch vụ Pwned Passwords bên ngoài khi chạy test (chậm, phụ thuộc mạng)
+      breach-check-enabled: false

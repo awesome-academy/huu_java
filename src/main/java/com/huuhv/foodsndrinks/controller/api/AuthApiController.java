@@ -29,6 +29,8 @@ public class AuthApiController {
     @ApiResponse(responseCode = "200", description = "Đăng nhập thành công, trả về access token")
     @ApiResponse(responseCode = "400", description = "Thiếu username hoặc mật khẩu")
     @ApiResponse(responseCode = "401", description = "Sai thông tin đăng nhập hoặc tài khoản bị khóa")
+    @ApiResponse(responseCode = "429", description = "Sai mật khẩu quá nhiều lần với tên đăng nhập này, tạm khoá đăng nhập"
+            + " (mặc định 5 lần/15 phút → khoá 15 phút). Header Retry-After = số giây còn lại")
     @PostMapping("/login")
     public ResponseEntity<AuthResDto> login(@Valid @RequestBody LoginReqDto loginReqDto) {
         return ResponseEntity.ok(authService.login(loginReqDto));

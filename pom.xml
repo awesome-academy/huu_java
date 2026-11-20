@@ -28,6 +28,11 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<!-- WebJars front-end (không có trong Spring Boot BOM) -->
+		<bootstrap.version>5.3.2</bootstrap.version>
+		<font-awesome.version>6.4.2</font-awesome.version>
+		<chartjs.version>4.4.0</chartjs.version>
+		<dependency-check.version>13.0.0</dependency-check.version>
 	</properties>
     <dependencies>
         <dependency>
@@ -143,6 +148,43 @@
             <groupId>nz.net.ultraq.thymeleaf</groupId>
             <artifactId>thymeleaf-layout-dialect</artifactId>
         </dependency>
+
+        <!-- Thư viện front-end tự host qua WebJars (phục vụ tại /webjars/**, thay CDN): CSP chỉ cần 'self', không phụ
+             thuộc CDN bên ngoài, và OWASP Dependency-Check quét được các thư viện này. webjars-locator-lite (Boot quản lý
+             version) cho phép URL không chứa version: /webjars/bootstrap/css/bootstrap.min.css -->
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>webjars-locator-lite</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>bootstrap</artifactId>
+            <version>${bootstrap.version}</version>
+            <exclusions>
+                <!-- Dùng bootstrap.bundle.min.js (đã gồm Popper) -->
+                <exclusion>
+                    <groupId>org.webjars</groupId>
+                    <artifactId>popper.js</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>font-awesome</artifactId>
+            <version>${font-awesome.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars.npm</groupId>
+            <artifactId>chart.js</artifactId>
+            <version>${chartjs.version}</version>
+            <exclusions>
+                <!-- dist/chart.umd.js đã đóng gói sẵn @kurkle/color (WebJar này khai báo bằng version range) -->
+                <exclusion>
+                    <groupId>org.webjars.npm</groupId>
+                    <artifactId>kurkle__color</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -159,6 +201,13 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Boot 4 tách phần gắn Spring Security vào MockMvc tự cấu hình (springSecurity() configurer) ra module riêng:
+             thiếu module này thì @WithMockUser / user(...) không có tác dụng với @AutoConfigureMockMvc -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 	<build>
@@ -166,6 +215,38 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<!-- OWASP Dependency-Check (Top 10 A06): quét CVE của dependency. KHÔNG gắn vào lifecycle (không có
+			     <executions>) để ./mvnw test vẫn nhanh — chạy riêng trước khi tạo PR có thêm/đổi dependency:
+			       ./mvnw dependency-check:check   (Docker: lệnh trong README, mục "Quét Lỗ Hổng Thư Viện")
+			     NVD API key (bắt buộc từ bản 12+) đọc từ biến môi trường NVD_API_KEY, không ghi vào pom. Dữ liệu NVD cache
+			     trong ~/.m2/repository/org/owasp/dependency-check-data (volume maven-repo khi chạy bằng Docker).
+			     Báo cáo: target/dependency-check-report.html (+ .json). Fail khi có lỗ hổng CVSS >= 7. -->
+			<plugin>
+				<groupId>org.owasp</groupId>
+				<artifactId>dependency-check-maven</artifactId>
+				<version>${dependency-check.version}</version>
+				<configuration>
+					<nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+					<failBuildOnCVSS>7</failBuildOnCVSS>
+					<formats>
+						<format>HTML</format>
+						<format>JSON</format>
+					</formats>
+					<suppressionFiles>
+						<suppressionFile>${project.basedir}/dependency-check-suppressions.xml</suppressionFile>
+					</suppressionFiles>
+					<!-- Sonatype OSS Index bắt buộc tài khoản riêng; nguồn chính là NVD. RetireJS giữ bật: quét JS trong
+					     WebJars (Bootstrap, Chart.js) và static/js. Tắt các analyzer .NET/Node không dùng (cần npm/dotnet). -->
+					<ossIndexAnalyzerEnabled>false</ossIndexAnalyzerEnabled>
+					<assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+					<nuspecAnalyzerEnabled>false</nuspecAnalyzerEnabled>
+					<nugetconfAnalyzerEnabled>false</nugetconfAnalyzerEnabled>
+					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
+					<nodeAuditAnalyzerEnabled>false</nodeAuditAnalyzerEnabled>
+					<yarnAuditAnalyzerEnabled>false</yarnAuditAnalyzerEnabled>
+					<pnpmAuditAnalyzerEnabled>false</pnpmAuditAnalyzerEnabled>
+				</configuration>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

@@ -147,7 +147,12 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `HOST_UID` / `HOST_GID` | Linux/WSL2 nếu khác 1000 | UID/GID user máy host (`id -u` / `id -g`): container app chạy bằng user này để ghi được `uploads/`, `logs/` mà file vẫn thuộc user máy host (mặc định 1000). Container maven tự chạy bằng chủ sở hữu thư mục project (`docker/maven-entrypoint.sh`), không dùng biến này |
 | `DB_FOODSNDRINKS_URL` | Prod | JDBC URL (dev mặc định `jdbc:mysql://localhost:3306/foodsndrinks`) |
 | `JWT_SECRET` | Prod | Secret ký JWT, ≥ 32 byte / 256 bit (dev không đặt thì tự sinh khoá random 256 bit mỗi khi context khởi động — token cũ hết hiệu lực sau restart, kể cả hot restart của devtools) |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | — | Claim `iss` / `aud` của JWT, bắt buộc khớp khi kiểm tra token (mặc định `foodsndrinks` / `foodsndrinks-api`; đổi thì token cũ hết hiệu lực) |
+| `CORS_ALLOWED_ORIGINS` | Khi SPA khác origin gọi API | Origin được gọi `/api/**` từ trình duyệt, cách nhau bởi dấu phẩy (vd. `https://app.example.com`). Rỗng = chỉ same-origin. Phải đúng dạng `scheme://host[:port]` (không `/` cuối), không `*`, không `null`; `http` chỉ cho localhost — sai thì app không khởi động |
 | `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random 256 bit) |
+| `SESSION_COOKIE_SECURE` | — | Cờ `Secure` của cookie session (`JSESSIONID`, chỉ gửi qua HTTPS). Mặc định `false` ở dev (http://localhost), `true` ở prod |
+| `NVD_API_KEY` | Khi chạy Dependency-Check | API key của NVD cho `dependency-check:check` (xem [Quét lỗ hổng thư viện](#quét-lỗ-hổng-thư-viện-owasp-dependency-check)); không dùng khi chạy app |
+| `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Khi dùng login Google | OAuth2 credentials từ Google Console |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Khi dùng login Facebook | OAuth2 credentials |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Khi dùng login Twitter/X | OAuth2 credentials |
@@ -201,7 +206,7 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
   | `logs/foodsndrinks.log` (prod: `logs/<INSTANCE_ID>/foodsndrinks.log`) | Toàn bộ log của app (kể cả audit) | Text | 30 ngày, tối đa 1GB / instance |
   | `logs/<INSTANCE_ID>/audit.log` (chỉ prod) | Chỉ logger `AUDIT` (sự kiện bảo mật); có `service.node.name` = `INSTANCE_ID` | JSON 1 dòng/sự kiện ([ECS](https://www.elastic.co/guide/en/ecs/current/index.html)) | 90 ngày, tối đa 500MB |
 
-- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
+- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), session bị huỷ (`SESSION_REVOKED`, `event.reason` = `DISABLED`, `ROLE_CHANGED`, `ACCOUNT_NOT_FOUND` — tài khoản bị khoá/đổi role/xoá sau khi đăng nhập: session bị huỷ ở request kế tiếp), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
 
   ```
   Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS auth.method=FORM username=alice source.ip=127.0.0.1
@@ -213,6 +218,23 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
   ```json
   {"@timestamp":"…","log":{"level":"WARN","logger":"AUDIT"},"message":"Login failed","requestId":"…","event":{"action":"LOGIN_FAILURE","outcome":"failure","reason":"BAD_CREDENTIALS"},"auth":{"method":"FORM"},"username":"alice","source":{"ip":"127.0.0.1"},"ecs":{"version":"8.11"}}
   ```
+
+## Quét Lỗ Hổng Thư Viện (OWASP Dependency-Check)
+
+Quét CVE của mọi dependency (kể cả thư viện front-end trong WebJars) — chạy **trước khi tạo PR có thêm/đổi dependency**. Không gắn vào `./mvnw test`/`package`, phải gọi riêng:
+
+```bash
+# Cần NVD API key (miễn phí): https://nvd.nist.gov/developers/request-an-api-key → NVD_API_KEY trong .env
+docker compose run --rm --no-deps maven dependency-check:check
+
+# JDK local: Maven không đọc .env → đặt biến trong shell trước
+export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
+./mvnw dependency-check:check
+```
+
+- Lần đầu tải toàn bộ dữ liệu NVD (vài phút đến vài chục phút), các lần sau chỉ cập nhật phần thay đổi — cache ở `~/.m2/repository/org/owasp/dependency-check-data` (với Docker là volume `maven-repo`).
+- Build **fail khi có lỗ hổng CVSS ≥ 7**. Báo cáo: `target/dependency-check-report.html` (và `.json`).
+- Xử lý: ưu tiên nâng version (Spring Boot patch mới nhất, hoặc property version của BOM / WebJar trong `pom.xml`). Lỗ hổng chắc chắn không áp dụng thì thêm vào `dependency-check-suppressions.xml` kèm `<notes>` giải thích và hạn xem lại `until`.
 
 ## Monitoring
 

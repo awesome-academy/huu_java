@@ -42,7 +42,7 @@
             <div class="d-flex gap-2 overflow-auto" th:if="${product.images.size() > 1}">
                 <img th:each="img : ${product.images}" th:src="${img.imageUrl}" th:alt="${product.name}"
                      class="rounded border" style="width: 80px; height: 80px; object-fit: cover; cursor: pointer;"
-                     onclick="document.getElementById('mainProductImage').src = this.src">
+                     data-action="show-main-image">
             </div>
         </div>
 

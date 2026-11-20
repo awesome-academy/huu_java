@@ -1,29 +1,45 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.logging.RequestIdFilter;
+import com.huuhv.foodsndrinks.security.AccountStatusFilter;
 import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
 import com.huuhv.foodsndrinks.security.CustomOAuth2UserService;
 import com.huuhv.foodsndrinks.security.CustomOidcUserService;
 import com.huuhv.foodsndrinks.security.CustomUserDetailsService;
 import com.huuhv.foodsndrinks.security.JwtAuthenticationFilter;
+import com.huuhv.foodsndrinks.security.LoginAttemptAwareAuthenticationProvider;
+import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
+import com.huuhv.foodsndrinks.security.RegistrationRateLimitFilter;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.AccountStatusService;
+import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
+import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.DefaultAuthenticationEventPublisher;
+import org.springframework.security.authentication.event.AuthenticationFailureLockedEvent;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -34,18 +50,55 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.web.DefaultRedirectStrategy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
+import org.springframework.security.web.authentication.ExceptionMappingAuthenticationFailureHandler;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.time.Duration;
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity   // enable @PreAuthorize / @Secured on individual methods
+@EnableConfigurationProperties({LoginAttemptProperties.class, RegistrationRateLimitProperties.class, CorsProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
+
+    /** App không dùng camera, micro, vị trí — tắt cho cả trang và mọi iframe. */
+    static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()";
+
+    /**
+     * Content-Security-Policy của chain web (storefront + admin + trang lỗi). Script chỉ từ file của chính app
+     * ({@code static/js/**}, {@code /webjars/**}) — KHÔNG script inline, KHÔNG handler {@code on*} (test
+     * {@code TemplateCspComplianceTest} chặn). Style: file CSS của app; riêng thuộc tính {@code style="..."} được phép
+     * ({@code style-src-attr}) vì template còn dùng nhiều, còn thẻ {@code <style>} inline (dạng tiêm CSS nguy hiểm hơn)
+     * vẫn bị chặn. {@code img-src}: {@code data:} cho icon SVG nhúng trong CSS của Bootstrap, cùng các host avatar
+     * OAuth2 (Google, Facebook, Twitter/X). Chain API không đặt CSP vì Swagger UI ({@code /api-docs/**}) nằm chung chain.
+     */
+    static final String CONTENT_SECURITY_POLICY = String.join("; ",
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "style-src-attr 'unsafe-inline'",
+            "img-src 'self' data: https://*.googleusercontent.com https://platform-lookaside.fbsbx.com"
+                    + " https://*.fbcdn.net https://pbs.twimg.com",
+            "font-src 'self'",
+            "connect-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "frame-ancestors 'none'");
 
     @Value("${app.security.remember-me-key}")
     private String rememberMeKey;
@@ -59,6 +112,70 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
+    }
+
+    /**
+     * Provider username/mật khẩu có chống brute-force. Là bean {@code AuthenticationProvider} duy nhất nên
+     * {@code AuthenticationManager} toàn cục (form login + API login) dùng nó thay cho provider Spring tự tạo.
+     */
+    @Bean
+    public LoginAttemptAwareAuthenticationProvider loginAttemptAwareAuthenticationProvider(
+            CustomUserDetailsService userDetailsService, PasswordEncoder passwordEncoder,
+            LoginAttemptService loginAttemptService) {
+        return new LoginAttemptAwareAuthenticationProvider(userDetailsService, passwordEncoder, loginAttemptService);
+    }
+
+    /**
+     * Thay bean mặc định của Boot chỉ để map thêm {@link LoginThrottledException} → event lỗi (publisher map theo đúng
+     * tên class, subclass của LockedException không được publish) — audit log ghi được cả lần đăng nhập bị chặn.
+     */
+    @Bean
+    public AuthenticationEventPublisher authenticationEventPublisher(ApplicationEventPublisher publisher) {
+        DefaultAuthenticationEventPublisher eventPublisher = new DefaultAuthenticationEventPublisher(publisher);
+        eventPublisher.setAdditionalExceptionMappings(
+                Map.of(LoginThrottledException.class, AuthenticationFailureLockedEvent.class));
+        return eventPublisher;
+    }
+
+    /**
+     * CORS chỉ cho REST API {@code /api/**} (chain web dùng session cookie, không mở CORS). Allowlist rỗng → không đăng
+     * ký cấu hình nào → trình duyệt chỉ cho gọi same-origin. API xác thực bằng Bearer token nên
+     * {@code allowCredentials=false} (trình duyệt không gửi cookie).
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource(CorsProperties corsProperties) {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        if (!corsProperties.allowedOrigins().isEmpty()) {
+            CorsConfiguration config = new CorsConfiguration();
+            config.setAllowedOrigins(corsProperties.allowedOrigins());
+            config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE"));
+            config.setAllowedHeaders(List.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE, RequestIdFilter.HEADER));
+            config.setExposedHeaders(List.of(RequestIdFilter.HEADER, HttpHeaders.RETRY_AFTER));
+            config.setAllowCredentials(false);
+            config.setMaxAge(Duration.ofHours(1));
+            source.registerCorsConfiguration("/api/**", config);
+        }
+        return source;
+    }
+
+    /**
+     * Header bảo mật dùng chung cho cả 3 chain. Giữ nguyên các header mặc định của Spring Security:
+     * {@code X-Content-Type-Options: nosniff}, {@code X-Frame-Options: DENY}, {@code Cache-Control: no-cache...} và HSTS
+     * ({@code max-age=31536000; includeSubDomains}) — HSTS chỉ được gửi trên request HTTPS, tức prod sau load balancer
+     * (forward-headers-strategy=native nhận X-Forwarded-Proto từ TRUSTED_PROXIES).
+     */
+    static void securityHeaders(HeadersConfigurer<HttpSecurity> headers) {
+        headers
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .permissionsPolicyHeader(permissions -> permissions.policy(PERMISSIONS_POLICY));
+    }
+
+    /** Form login: bị chặn do sai quá nhiều lần → /login?locked=true, lỗi khác → thông báo chung /login?error=true. */
+    private static AuthenticationFailureHandler formLoginFailureHandler() {
+        ExceptionMappingAuthenticationFailureHandler handler = new ExceptionMappingAuthenticationFailureHandler();
+        handler.setDefaultFailureUrl("/login?error=true");
+        handler.setExceptionMappings(Map.of(LoginThrottledException.class.getName(), "/login?locked=true"));
+        return handler;
     }
 
     /** jwtAuthFilter is a @Component, so Boot would also auto-register it as a servlet filter for EVERY
@@ -80,6 +197,7 @@ public class SecurityConfig {
     public SecurityFilterChain actuatorSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/actuator/**")
+                .headers(SecurityConfig::securityHeaders)
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -100,7 +218,10 @@ public class SecurityConfig {
     public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/api/**", "/api-docs/**")
+                .headers(SecurityConfig::securityHeaders)
                 .csrf(AbstractHttpConfigurer::disable)   // stateless → CSRF not needed
+                // Bean corsConfigurationSource: chỉ origin trong app.cors.allowed-origins, preflight trả lời trước khi xác thực
+                .cors(Customizer.withDefaults())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // Swagger UI & OpenAPI spec (tighten or remove in prod via springdoc.swagger-ui.enabled=false)
@@ -184,11 +305,19 @@ public class SecurityConfig {
     @Order(3)
     public SecurityFilterChain webSecurityFilterChain(HttpSecurity http,
                                                        OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver,
-                                                       AuditingRememberMeServices rememberMeServices) throws Exception {
+                                                       AuditingRememberMeServices rememberMeServices,
+                                                       AccountStatusService accountStatusService,
+                                                       AuditLogService auditLogService,
+                                                       RegistrationRateLimitService registrationRateLimitService)
+            throws Exception {
         http
+                .headers(headers -> {
+                    securityHeaders(headers);
+                    headers.contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY));
+                })
                 .authorizeHttpRequests(auth -> auth
-                        // Static assets
-                        .requestMatchers("/css/**", "/js/**", "/images/**", "/uploads/**", "/favicon.ico").permitAll()
+                        // Static assets (thư viện front-end tự host qua WebJars ở /webjars/**)
+                        .requestMatchers("/css/**", "/js/**", "/images/**", "/webjars/**", "/uploads/**", "/favicon.ico").permitAll()
                         // Rating submission requires login — must be matched before the public /products/** rule below
                         .requestMatchers("/products/*/rate").hasAnyRole("USER", "ADMIN")
                         // Public pages
@@ -211,7 +340,7 @@ public class SecurityConfig {
                         // THAY THẾ .defaultSuccessUrl bằng .successHandler vừa tạo ở trên
                         .successHandler(customAuthenticationSuccessHandler())
 
-                        .failureUrl("/login?error=true")
+                        .failureHandler(formLoginFailureHandler())
                         .permitAll()
                 )
                 .oauth2Login(oauth2 -> oauth2
@@ -241,7 +370,14 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex
                         // Redirect to a friendly 403 page instead of the default whitelabel
                         .accessDeniedPage("/error")
-                );
+                )
+                // Huỷ session của tài khoản bị khoá/đổi role sau khi đăng nhập. Sau remember-me, trước anonymous: request
+                // bị huỷ session đi tiếp như khách
+                .addFilterBefore(new AccountStatusFilter(accountStatusService, auditLogService, rememberMeServices),
+                        AnonymousAuthenticationFilter.class)
+                // Giới hạn POST /register theo IP — trước khi validation của form (gồm Pwned Passwords) chạy
+                .addFilterBefore(new RegistrationRateLimitFilter(registrationRateLimitService),
+                        AnonymousAuthenticationFilter.class);
 
         return http.build();
     }
