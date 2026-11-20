@@ -109,6 +109,21 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT o.status, COUNT(o) FROM Order o WHERE o.status <> 'CART' GROUP BY o.status")
     List<Object[]> countGroupByStatus();
 
+    /** Doanh thu đơn COMPLETED đặt (orderedAt) trong {@code [from, to)} — báo cáo tháng. */
+    @Query("""
+            SELECT COALESCE(SUM(o.totalPrice), 0) FROM Order o
+            WHERE o.status = 'COMPLETED' AND o.orderedAt >= :from AND o.orderedAt < :to
+            """)
+    BigDecimal sumCompletedRevenueBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /** Số đơn (trừ CART) đặt (orderedAt) trong {@code [from, to)}, theo trạng thái hiện tại — báo cáo tháng. */
+    @Query("""
+            SELECT o.status, COUNT(o) FROM Order o
+            WHERE o.status <> 'CART' AND o.orderedAt >= :from AND o.orderedAt < :to
+            GROUP BY o.status
+            """)
+    List<Object[]> countGroupByStatusBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
     /** Recent N orders (excluding CART) with user info */
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.user WHERE o.status <> 'CART' ORDER BY o.createdAt DESC")
     List<Order> findRecent(Pageable pageable);

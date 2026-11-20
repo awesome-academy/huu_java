@@ -161,6 +161,6 @@ app:
     mail:
       enabled: ${MAIL_NOTIFY_ENABLED:true}
     statistics:
-      # 23h ngày cuối tháng, theo múi giờ JVM (TZ/APP_TZ). Không khai báo zone riêng: OrderStatisticsScheduler tính
-      # tháng bằng LocalDate.now() (múi giờ JVM), cron phải chạy cùng múi giờ đó thì mới lấy đúng tháng.
-      cron: ${ORDER_STATS_CRON:0 0 23 L * *}
+      # 00:05 ngày 1, báo cáo tháng vừa kết thúc; theo múi giờ JVM (TZ/APP_TZ). Không khai báo zone riêng: OrderStatisticsScheduler tính
+      # tháng bằng YearMonth.now() (múi giờ JVM), cron phải chạy cùng múi giờ đó thì mới lấy đúng tháng.
+      cron: ${ORDER_STATS_CRON:0 5 0 1 * *}

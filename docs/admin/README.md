@@ -76,7 +76,7 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 Admin nhận thông báo tự động (không cần thao tác trên UI):
 
 - **Đơn hàng mới:** sau khi user checkout thành công → gửi **Slack** (incoming webhook) + **email** tới `ADMIN_NOTIFY_EMAIL`. Chạy async (`@Async`), fire sau khi transaction commit (`@TransactionalEventListener`).
-- **Báo cáo doanh thu tháng:** `OrderStatisticsScheduler` chạy cron `ORDER_STATS_CRON` (mặc định 23h ngày cuối tháng, giờ VN) — email tổng doanh thu, số đơn hoàn thành, số đơn theo từng trạng thái.
+- **Báo cáo doanh thu tháng:** `OrderStatisticsScheduler` chạy cron `ORDER_STATS_CRON` (mặc định 00:05 ngày 1, giờ VN) — email báo cáo tháng vừa kết thúc: tổng doanh thu, số đơn hoàn thành, số đơn theo từng trạng thái (cùng phạm vi: đơn đặt trong tháng đó).
 
 Bật/tắt qua `SLACK_NOTIFY_ENABLED`, `MAIL_NOTIFY_ENABLED`. Xem package `service/notification/`.
 

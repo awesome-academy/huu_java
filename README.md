@@ -173,7 +173,7 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `ADMIN_NOTIFY_EMAIL` | — | Email nhận thông báo đơn hàng & báo cáo tháng |
 | `SLACK_WEBHOOK_URL` / `SLACK_NOTIFY_ENABLED` | — | Slack incoming webhook thông báo đơn mới |
 | `MAIL_NOTIFY_ENABLED` | — | Bật/tắt email thông báo |
-| `ORDER_STATS_CRON` | — | Cron gửi báo cáo tháng (mặc định `0 0 23 L * *`, 23h ngày cuối tháng, theo múi giờ JVM — `APP_TZ` khi chạy bằng compose) |
+| `ORDER_STATS_CRON` | — | Cron gửi báo cáo tháng vừa kết thúc (mặc định `0 5 0 1 * *`, 00:05 ngày 1, theo múi giờ JVM — `APP_TZ` khi chạy bằng compose) |
 | `UPLOAD_DIR` | — | Thư mục lưu ảnh upload (mặc định `./uploads`) |
 | `SERVER_PORT` | — | Port (mặc định 8080) |
 | `INSTANCE_ID` | Prod | Định danh instance: in trong mỗi dòng log, `service.node.name` của `audit.log`, tên thư mục log `logs/<INSTANCE_ID>/` ở prod. **Bắt buộc ở prod** (thiếu, rỗng hoặc sai định dạng — chỉ chữ, số, `.`, `_`, `-`, tối đa 64 ký tự — thì app không khởi động): tên cố định, khác nhau cho từng instance và giữ nguyên qua các lần deploy. Không dùng hostname vì container tạo lại có hostname mới → log ghi sang thư mục mới, thư mục cũ không bao giờ được dọn. Dev mặc định lấy hostname |
@@ -202,7 +202,7 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 ## Notification & Batch Job
 
 - **Đơn hàng mới:** sau khi checkout commit thành công (`OrderPlacedEvent` + `@TransactionalEventListener`), hệ thống gửi **Slack** + **email** cho admin (chạy async qua thread pool `notify-*`). Email là HTML render bằng Thymeleaf từ `templates/mail/` (kèm bản chữ thuần cho client không hiển thị HTML); Slack dùng Block Kit (Slack không hiển thị HTML). Ở dev, email đi vào hộp thư Mailtrap (`MAIL_*` trong `.env`) để xem giao diện.
-- **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 23h ngày cuối tháng, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái và email HTML (`templates/mail/monthly-statistics.html`) cho admin.
+- **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 00:05 ngày 1, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái của các đơn đặt trong tháng vừa kết thúc và email HTML (`templates/mail/monthly-statistics.html`) cho admin.
 
 ### Thread pool & chạy nhiều instance
 

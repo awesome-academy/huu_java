@@ -91,8 +91,24 @@ final class SlackMessageBuilder {
         return Map.of("type", "mrkdwn", "text", truncate(text, maxLength));
     }
 
-    private static String truncate(String text, int maxLength) {
-        return text.length() <= maxLength ? text : text.substring(0, maxLength - 1) + "…";
+    /**
+     * Cắt còn tối đa {@code maxLength} ký tự UTF-16 (giới hạn của Slack), kể cả dấu "…". Không cắt giữa cặp surrogate
+     * (emoji) — nửa surrogate lẻ làm Jackson lỗi và mất cả thông báo — và không cắt giữa entity {@code &amp;}/{@code &lt;}/
+     * {@code &gt;} do {@link #escape} sinh ra (mọi {@code &} trong text đã escape đều là đầu một entity).
+     */
+    static String truncate(String text, int maxLength) {
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        int end = maxLength - 1;
+        if (Character.isHighSurrogate(text.charAt(end - 1)) && Character.isLowSurrogate(text.charAt(end))) {
+            end--;
+        }
+        int amp = text.lastIndexOf('&', end - 1);
+        if (amp >= 0 && text.indexOf(';', amp) >= end) {
+            end = amp;
+        }
+        return text.substring(0, end) + "…";
     }
 
     private static boolean hasText(String value) {

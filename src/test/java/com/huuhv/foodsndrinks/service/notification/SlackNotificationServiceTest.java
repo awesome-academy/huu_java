@@ -83,6 +83,41 @@ class SlackNotificationServiceTest {
     }
 
     @Test
+    void truncate_neverSplitsSurrogatePair() {
+        // "ab😀c": '😀' chiếm index 2-3; cắt ở 4 (3 ký tự + "…") sẽ rơi giữa cặp surrogate
+        String result = SlackMessageBuilder.truncate("ab😀cdef", 4);
+
+        assertThat(result).isEqualTo("ab…");
+        assertThat(result.chars().noneMatch(c -> Character.isSurrogate((char) c))).isTrue();
+        assertThat(SlackMessageBuilder.truncate("ab😀cdef", 5)).isEqualTo("ab😀…");
+    }
+
+    @Test
+    void truncate_neverSplitsEscapedEntity() {
+        String escaped = SlackMessageBuilder.escape("abc<def");   // "abc&lt;def"
+
+        assertThat(SlackMessageBuilder.truncate(escaped, 6)).isEqualTo("abc…");
+        assertThat(SlackMessageBuilder.truncate(escaped, 8)).isEqualTo("abc&lt;…");
+        assertThat(SlackMessageBuilder.truncate(SlackMessageBuilder.escape("a&b"), 5)).isEqualTo("a…");
+    }
+
+    @Test
+    void longEmojiItemList_staysValidJson() {
+        // 15 dòng × tên ~250 ký tự có emoji → vượt 3000 ký tự, bị cắt
+        List<OrderPlacedEvent.OrderLineItem> items = new ArrayList<>();
+        for (int i = 1; i <= 15; i++) {
+            items.add(new OrderPlacedEvent.OrderLineItem("🍜<".repeat(80) + i, 1, BigDecimal.ONE, BigDecimal.ONE));
+        }
+        server.expect(requestTo(WEBHOOK))
+                .andExpect(jsonPath("$.blocks[4].text.text").exists())
+                .andRespond(withSuccess());
+
+        service.sendOrderPlaced(order("A", null, items));
+
+        server.verify();
+    }
+
+    @Test
     void optionalFields_areOmitted_whenMissing() {
         OrderPlacedEvent event = new OrderPlacedEvent(7L, "B", "b@example.com", " ", "HN", null,
                 BigDecimal.TEN, null, items(1));
