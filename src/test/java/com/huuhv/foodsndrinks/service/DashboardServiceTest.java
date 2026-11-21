@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
+import com.huuhv.foodsndrinks.config.AsyncConfig;
 import com.huuhv.foodsndrinks.config.AsyncProperties;
 import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
 import com.huuhv.foodsndrinks.dto.response.DashboardResDto;
@@ -17,14 +18,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.lang.reflect.Parameter;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -209,6 +213,19 @@ class DashboardServiceTest {
         assertThat(charts.statusLabels()).containsExactly(OrderStatus.PENDING.getLabel(),
                 OrderStatus.PROCESSING.getLabel(), OrderStatus.COMPLETED.getLabel(), OrderStatus.CANCELLED.getLabel());
         assertThat(charts.statusCounts()).containsExactly(2L, 0L, 0L, 0L);
+    }
+
+    @Test
+    void constructor_injectsDashboardExecutorByQualifier() {
+        // @RequiredArgsConstructor chỉ copy @Qualifier sang tham số khi lombok.config có lombok.copyableAnnotations
+        Parameter executorParam = Arrays.stream(DashboardService.class.getDeclaredConstructors())
+                .flatMap(c -> Arrays.stream(c.getParameters()))
+                .filter(p -> p.getType() == Executor.class)
+                .findFirst().orElseThrow();
+
+        assertThat(executorParam.getAnnotation(Qualifier.class))
+                .isNotNull()
+                .extracting(Qualifier::value).isEqualTo(AsyncConfig.DASHBOARD_EXECUTOR);
     }
 
     private static Order recentOrder() {

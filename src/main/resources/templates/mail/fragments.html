@@ -3,7 +3,9 @@
     Khung dùng chung cho email gửi admin (EmailNotificationService). Email KHÔNG dùng layout của web:
     - CSS viết inline trên từng thẻ, bố cục bằng <table> (Gmail/Outlook bỏ <style>, không hỗ trợ flex/grid);
     - không script, không ảnh/CSS từ host ngoài (client email chặn, lộ việc mở thư), không @{...} (render ngoài request);
-    - dữ liệu luôn qua th:text (tự escape) — tên khách, địa chỉ, ghi chú là dữ liệu người dùng nhập.
+    - dữ liệu luôn qua th:text (tự escape) — tên khách, địa chỉ, ghi chú là dữ liệu người dùng nhập;
+    - số tiền/thời gian qua biến fmt (NotificationFormat: ${fmt.money(x)}, ${fmt.dateTime(x)}), không #numbers/#temporals,
+      để email HTML, bản chữ thuần và Slack hiển thị cùng một con số.
     Màu theo storefront: nền tối #212529 (footer web), xanh Bootstrap primary #0d6efd, icon vàng #ffc107.
 */-->
 <html xmlns:th="http://www.thymeleaf.org" lang="vi">

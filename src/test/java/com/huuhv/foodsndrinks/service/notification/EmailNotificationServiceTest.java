@@ -104,6 +104,22 @@ class EmailNotificationServiceTest {
     }
 
     @Test
+    void fractionalAmount_isFormattedIdentically_inHtmlPlainTextAndSlack() throws Exception {
+        MimeMessage message = stubMimeMessage();
+        OrderPlacedEvent event = new OrderPlacedEvent(9L, "C", "c@example.com", null, "HN", null,
+                new BigDecimal("150000.50"), null, List.of(new OrderPlacedEvent.OrderLineItem(
+                "Trà", 1, new BigDecimal("150000.50"), new BigDecimal("150000.50"))));
+
+        service.sendNewOrderEmail(event);
+
+        // VND làm tròn HALF_UP về số nguyên, giống nhau ở mọi kênh
+        Map<String, String> parts = textParts(message);
+        assertThat(parts.get("text/html")).contains("150.001 ₫").doesNotContain("150.000 ₫", "150.000,5");
+        assertThat(parts.get("text/plain")).contains("Tổng tiền: 150.001 VND").doesNotContain("150.000,5");
+        assertThat(SlackMessageBuilder.orderPlaced(event).toString()).contains("150.001 ₫").doesNotContain("150.000,5");
+    }
+
+    @Test
     void monthlyStatistics_isHtml() throws Exception {
         MimeMessage message = stubMimeMessage();
         Map<OrderStatus, Long> counts = new EnumMap<>(OrderStatus.class);

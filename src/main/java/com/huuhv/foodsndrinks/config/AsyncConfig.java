@@ -4,9 +4,11 @@ import com.huuhv.foodsndrinks.logging.MdcTaskDecorator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.core.task.TaskDecorator;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -39,6 +41,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class AsyncConfig implements AsyncConfigurer {
 
     public static final String DASHBOARD_EXECUTOR = "dashboardExecutor";
+    static final String HIKARI_MAX_POOL_SIZE = "spring.datasource.hikari.maximum-pool-size";
+    /** Mặc định của HikariCP khi không cấu hình {@value #HIKARI_MAX_POOL_SIZE}. */
+    private static final int HIKARI_DEFAULT_MAX = 10;
 
     @Bean
     public TaskDecorator mdcTaskDecorator() {
@@ -48,13 +53,7 @@ public class AsyncConfig implements AsyncConfigurer {
     /** Pool chạy thông báo Slack/email ({@code @Async("taskExecutor")}); cũng là executor mặc định của {@code @Async}. */
     @Bean(name = "taskExecutor")
     public ThreadPoolTaskExecutor taskExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
-        AsyncProperties.Pool pool = properties.notification();
-        return withCallerRunsPolicy(builder
-                .corePoolSize(pool.coreSize())
-                .maxPoolSize(pool.maxSize())
-                .queueCapacity(pool.queueCapacity())
-                .threadNamePrefix("notify-")
-                .build());
+        return build(builder, properties.notification(), "notify-", new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     /**
@@ -64,26 +63,32 @@ public class AsyncConfig implements AsyncConfigurer {
      * {@code AbortPolicy}: pool và hàng đợi đầy thì từ chối, {@code /admin} trả 503. Không dùng {@code CallerRunsPolicy}
      * ở đây: truy vấn sẽ chạy trên thread request, ngoài timeout của dashboard, và (Open Session in View) giữ connection
      * tới hết request — đúng tình huống làm cạn pool Hikari mà pool riêng này muốn tránh.
+     * <p>
+     * Mỗi thread giữ một connection JDBC, nên {@code app.async.dashboard.max-size} không được quá nửa
+     * {@code spring.datasource.hikari.maximum-pool-size} (mặc định 10): vượt thì app không khởi động.
      */
     @Bean(name = DASHBOARD_EXECUTOR)
-    public ThreadPoolTaskExecutor dashboardExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
+    public ThreadPoolTaskExecutor dashboardExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties,
+                                                    Environment environment) {
         AsyncProperties.DashboardPool pool = properties.dashboard();
-        return withRejectionPolicy(builder
+        int hikariMax = Binder.get(environment).bind(HIKARI_MAX_POOL_SIZE, Integer.class).orElse(HIKARI_DEFAULT_MAX);
+        if (pool.maxSize() > hikariMax / 2) {
+            throw new IllegalStateException("app.async.dashboard.max-size (" + pool.maxSize() + ") must be <= half of "
+                    + HIKARI_MAX_POOL_SIZE + " (" + hikariMax + "): each dashboard thread holds a JDBC connection");
+        }
+        return build(builder, pool, "dashboard-", new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    private static ThreadPoolTaskExecutor build(ThreadPoolTaskExecutorBuilder builder, AsyncProperties.PoolSize pool,
+                                                String threadNamePrefix, RejectedExecutionHandler rejectionPolicy) {
+        ThreadPoolTaskExecutor executor = builder
                 .corePoolSize(pool.coreSize())
                 .maxPoolSize(pool.maxSize())
                 .queueCapacity(pool.queueCapacity())
-                .threadNamePrefix("dashboard-")
-                .build(), new ThreadPoolExecutor.AbortPolicy());
-    }
-
-    private static ThreadPoolTaskExecutor withCallerRunsPolicy(ThreadPoolTaskExecutor executor) {
-        return withRejectionPolicy(executor, new ThreadPoolExecutor.CallerRunsPolicy());
-    }
-
-    private static ThreadPoolTaskExecutor withRejectionPolicy(ThreadPoolTaskExecutor executor,
-                                                              RejectedExecutionHandler policy) {
+                .threadNamePrefix(threadNamePrefix)
+                .build();
         // Builder chưa initialize executor (Spring gọi afterPropertiesSet sau khi trả bean) nên đặt ở đây vẫn có hiệu lực
-        executor.setRejectedExecutionHandler(policy);
+        executor.setRejectedExecutionHandler(rejectionPolicy);
         return executor;
     }
 

@@ -45,7 +45,7 @@ public class EmailNotificationService {
             return;
         }
         try {
-            Context context = new Context(VIETNAMESE);
+            Context context = newContext();
             context.setVariable("event", event);
             // Đơn vừa checkout luôn ở trạng thái PENDING (OrderService.checkout)
             context.setVariable("status", OrderStatus.PENDING);
@@ -63,7 +63,7 @@ public class EmailNotificationService {
             return;
         }
         try {
-            Context context = new Context(VIETNAMESE);
+            Context context = newContext();
             context.setVariable("year", year);
             context.setVariable("month", month);
             context.setVariable("revenue", revenue);
@@ -75,6 +75,13 @@ public class EmailNotificationService {
         } catch (Exception e) {
             log.error("Failed to send admin statistics email", e);
         }
+    }
+
+    /** Context có sẵn biến {@code fmt} ({@link NotificationFormat}) để định dạng tiền/thời gian trong template. */
+    private static Context newContext() {
+        Context context = new Context(VIETNAMESE);
+        context.setVariable(NotificationFormat.TEMPLATE_VARIABLE, NotificationFormat.INSTANCE);
+        return context;
     }
 
     private boolean isDisabled() {

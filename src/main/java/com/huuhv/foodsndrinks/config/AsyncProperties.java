@@ -23,25 +23,36 @@ public record AsyncProperties(
         @DefaultValue @Valid DashboardPool dashboard) {
 
     /**
-     * @param coreSize      số thread thường trực
-     * @param maxSize       số thread tối đa, chỉ tạo thêm khi hàng đợi đã đầy
-     * @param queueCapacity sức chứa hàng đợi; đầy và đã đủ {@code maxSize} thì task chạy luôn trên thread gọi
-     *                      ({@code CallerRunsPolicy}) thay vì bị từ chối
+     * Kích thước chung của một pool; ràng buộc khai báo một lần ở đây (Bean Validation áp ràng buộc của interface cho
+     * mọi record implement nó). Pool mới thêm vào {@link AsyncProperties} chỉ cần implement interface này.
      */
-    public record Pool(
-            @DefaultValue("2") @Min(1) int coreSize,
-            @DefaultValue("4") @Min(1) int maxSize,
-            @DefaultValue("100") @Min(0) int queueCapacity) {
+    public interface PoolSize {
+
+        /** Số thread thường trực. */
+        int coreSize();
+
+        /** Số thread tối đa, chỉ tạo thêm khi hàng đợi đã đầy. */
+        int maxSize();
+
+        /** Sức chứa hàng đợi; đầy và đã đủ {@link #maxSize()} thì áp chính sách từ chối của executor (AsyncConfig). */
+        int queueCapacity();
 
         @AssertTrue(message = "max-size must be >= core-size")
-        public boolean isMaxSizeAtLeastCoreSize() {
-            return maxSize >= coreSize;
+        default boolean isMaxSizeAtLeastCoreSize() {
+            return maxSize() >= coreSize();
         }
     }
 
+    /** Pool chung ({@code notify-*}). */
+    public record Pool(
+            @DefaultValue("2") @Min(1) int coreSize,
+            @DefaultValue("4") @Min(1) int maxSize,
+            @DefaultValue("100") @Min(0) int queueCapacity) implements PoolSize {
+    }
+
     /**
-     * Mỗi truy vấn chiếm một connection JDBC: {@code maxSize} phải nhỏ hơn hẳn pool Hikari (mặc định 10) để dashboard
-     * không lấy hết connection của request khác.
+     * Mỗi truy vấn chiếm một connection JDBC: {@code maxSize} không được quá nửa pool Hikari, để dashboard không lấy hết
+     * connection của request khác — kiểm tra lúc khởi động trong {@link AsyncConfig}.
      *
      * @param timeout thời gian chờ tối đa cho toàn bộ truy vấn của một lần tải dashboard
      */
@@ -49,12 +60,7 @@ public record AsyncProperties(
             @DefaultValue("4") @Min(1) int coreSize,
             @DefaultValue("4") @Min(1) int maxSize,
             @DefaultValue("50") @Min(0) int queueCapacity,
-            @DefaultValue("10s") Duration timeout) {
-
-        @AssertTrue(message = "max-size must be >= core-size")
-        public boolean isMaxSizeAtLeastCoreSize() {
-            return maxSize >= coreSize;
-        }
+            @DefaultValue("10s") Duration timeout) implements PoolSize {
 
         @AssertTrue(message = "timeout must be positive")
         public boolean isTimeoutPositive() {

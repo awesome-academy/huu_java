@@ -83,7 +83,8 @@ class AsyncConfigTest {
         contextRunner
                 .withPropertyValues("app.async.notification.core-size=1", "app.async.notification.max-size=3",
                         "app.async.dashboard.core-size=2", "app.async.dashboard.max-size=6",
-                        "app.async.dashboard.queue-capacity=10", "app.async.dashboard.timeout=3s")
+                        "app.async.dashboard.queue-capacity=10", "app.async.dashboard.timeout=3s",
+                        AsyncConfig.HIKARI_MAX_POOL_SIZE + "=12")
                 .run(context -> {
                     ThreadPoolTaskExecutor notify = context.getBean("taskExecutor", ThreadPoolTaskExecutor.class);
                     ThreadPoolTaskExecutor dashboard =
@@ -105,6 +106,26 @@ class AsyncConfigTest {
                 .withPropertyValues("app.async.dashboard.core-size=4", "app.async.dashboard.max-size=2")
                 .run(context -> assertThat(context).hasFailed()
                         .getFailure().rootCause().hasMessageContaining("max-size must be >= core-size"));
+    }
+
+    @Test
+    void maxSizeBelowCoreSize_failsStartup_forEveryPool() {
+        // Ràng buộc khai báo ở interface PoolSize → áp cho cả pool notify
+        contextRunner
+                .withPropertyValues("app.async.notification.core-size=3", "app.async.notification.max-size=1")
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().rootCause().hasMessageContaining("max-size must be >= core-size"));
+    }
+
+    @Test
+    void dashboardPoolLargerThanHalfOfHikariPool_failsStartup() {
+        contextRunner
+                .withPropertyValues("app.async.dashboard.max-size=6")   // Hikari mặc định 10 → tối đa 5
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().rootCause().hasMessageContaining("must be <= half of"));
+        contextRunner
+                .withPropertyValues("app.async.dashboard.max-size=5")
+                .run(context -> assertThat(context).hasNotFailed());
     }
 
     @Test

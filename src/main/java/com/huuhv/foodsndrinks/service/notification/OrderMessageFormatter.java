@@ -3,10 +3,7 @@ package com.huuhv.foodsndrinks.service.notification;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 
 import java.math.BigDecimal;
-import java.text.NumberFormat;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -15,18 +12,16 @@ import java.util.Map;
  */
 final class OrderMessageFormatter {
 
-    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
-
     private OrderMessageFormatter() {
     }
 
-    /** Số tiền kiểu Việt Nam ({@code 150.000}). NumberFormat không thread-safe nên tạo mới mỗi lần gọi. */
+    /** Số tiền kiểu Việt Nam ({@code 150.000}) — cùng quy tắc với email HTML/Slack ({@link NotificationFormat}). */
     static String formatMoney(BigDecimal amount) {
-        return NumberFormat.getInstance(Locale.of("vi", "VN")).format(amount == null ? BigDecimal.ZERO : amount);
+        return NotificationFormat.INSTANCE.money(amount);
     }
 
     static String formatDateTime(LocalDateTime dateTime) {
-        return dateTime == null ? "" : dateTime.format(DATE_TIME);
+        return NotificationFormat.INSTANCE.dateTime(dateTime);
     }
 
     static String buildOrderSummary(OrderPlacedEvent event) {

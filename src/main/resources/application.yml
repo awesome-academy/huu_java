@@ -129,7 +129,8 @@ app:
       core-size: 2
       max-size: 4
       queue-capacity: 100
-    dashboard:         # dashboard-*: truy vấn thống kê song song. Mỗi thread giữ 1 connection → max-size < pool Hikari (10)
+    dashboard:         # dashboard-*: truy vấn thống kê song song. Mỗi thread giữ 1 connection → max-size ≤ nửa pool Hikari
+                       # (spring.datasource.hikari.maximum-pool-size, mặc định 10), vượt thì app không khởi động
       core-size: 4
       max-size: 4
       queue-capacity: 50

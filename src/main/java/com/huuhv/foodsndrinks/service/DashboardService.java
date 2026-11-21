@@ -10,12 +10,15 @@ import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -37,32 +40,26 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class DashboardService {
 
-    private final OrderRepository       orderRepository;
-    private final OrderDetailRepository orderDetailRepository;
-    private final ProductRepository     productRepository;
-    private final UserRepository        userRepository;
-    private final Executor              dashboardExecutor;
-    private final TransactionTemplate   readOnlyTx;
-    private final Duration              timeout;
+    private static final TransactionDefinition READ_ONLY;
 
-    public DashboardService(OrderRepository orderRepository,
-                            OrderDetailRepository orderDetailRepository,
-                            ProductRepository productRepository,
-                            UserRepository userRepository,
-                            @Qualifier(AsyncConfig.DASHBOARD_EXECUTOR) Executor dashboardExecutor,
-                            PlatformTransactionManager transactionManager,
-                            AsyncProperties asyncProperties) {
-        this.orderRepository       = orderRepository;
-        this.orderDetailRepository = orderDetailRepository;
-        this.productRepository     = productRepository;
-        this.userRepository        = userRepository;
-        this.dashboardExecutor     = dashboardExecutor;
-        this.readOnlyTx            = new TransactionTemplate(transactionManager);
-        this.readOnlyTx.setReadOnly(true);
-        this.timeout               = asyncProperties.dashboard().timeout();
+    static {
+        DefaultTransactionDefinition definition = new DefaultTransactionDefinition();
+        definition.setReadOnly(true);
+        READ_ONLY = definition;
     }
+
+    private final OrderRepository            orderRepository;
+    private final OrderDetailRepository      orderDetailRepository;
+    private final ProductRepository          productRepository;
+    private final UserRepository             userRepository;
+    // @Qualifier được Lombok copy sang tham số constructor (lombok.config: lombok.copyableAnnotations)
+    @Qualifier(AsyncConfig.DASHBOARD_EXECUTOR)
+    private final Executor                   dashboardExecutor;
+    private final PlatformTransactionManager transactionManager;
+    private final AsyncProperties            asyncProperties;
 
     /**
      * Các truy vấn độc lập chạy song song trên {@code dashboardExecutor}, gộp lại với timeout
@@ -128,6 +125,7 @@ public class DashboardService {
      * (ngoài timeout, giữ connection tới hết request vì Open Session in View) — {@link #awaitAll} báo 503 ngay.
      */
     private <T> CompletableFuture<T> query(Supplier<T> supplier) {
+        TransactionTemplate readOnlyTx = new TransactionTemplate(transactionManager, READ_ONLY);
         try {
             return CompletableFuture.supplyAsync(() -> readOnlyTx.execute(status -> supplier.get()), dashboardExecutor);
         } catch (RejectedExecutionException ex) {
@@ -136,10 +134,11 @@ public class DashboardService {
     }
 
     /**
-     * Chờ mọi truy vấn, tối đa {@link #timeout}. Truy vấn nào lỗi thì báo lỗi ngay (không chờ các truy vấn còn lại);
-     * quá thời gian thì huỷ các future chưa xong (truy vấn JDBC đang chạy vẫn tự kết thúc, kết quả bị bỏ).
+     * Chờ mọi truy vấn, tối đa {@code app.async.dashboard.timeout}. Truy vấn nào lỗi thì báo lỗi ngay (không chờ các
+     * truy vấn còn lại); quá thời gian thì huỷ các future chưa xong (truy vấn JDBC đang chạy vẫn tự kết thúc, kết quả bị bỏ).
      */
     private void awaitAll(CompletableFuture<?>... futures) {
+        Duration timeout = asyncProperties.dashboard().timeout();
         CompletableFuture<Void> all = CompletableFuture.allOf(futures);
         // allOf chỉ hoàn tất khi MỌI future xong — truy vấn đầu tiên lỗi thì kết thúc luôn, không đợi tới timeout
         for (CompletableFuture<?> future : futures) {
