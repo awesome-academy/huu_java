@@ -1,6 +1,11 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.config.properties.AttemptLimitProperties;
+import com.huuhv.foodsndrinks.config.properties.CorsProperties;
+import com.huuhv.foodsndrinks.config.properties.LoginAttemptProperties;
+import com.huuhv.foodsndrinks.config.properties.RegistrationRateLimitProperties;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.exception.LoginThrottledException;
 import com.huuhv.foodsndrinks.logging.RequestIdFilter;
 import com.huuhv.foodsndrinks.security.AccountStatusFilter;
 import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
@@ -9,7 +14,6 @@ import com.huuhv.foodsndrinks.security.CustomOidcUserService;
 import com.huuhv.foodsndrinks.security.CustomUserDetailsService;
 import com.huuhv.foodsndrinks.security.JwtAuthenticationFilter;
 import com.huuhv.foodsndrinks.security.LoginAttemptAwareAuthenticationProvider;
-import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import com.huuhv.foodsndrinks.security.RegistrationRateLimitFilter;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
@@ -71,7 +75,8 @@ import java.util.Map;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity   // enable @PreAuthorize / @Secured on individual methods
-@EnableConfigurationProperties({LoginAttemptProperties.class, RegistrationRateLimitProperties.class, CorsProperties.class})
+@EnableConfigurationProperties({LoginAttemptProperties.class, RegistrationRateLimitProperties.class,
+        AttemptLimitProperties.class, CorsProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 

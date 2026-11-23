@@ -1,8 +1,8 @@
 package com.huuhv.foodsndrinks.service.security;
 
-import com.huuhv.foodsndrinks.config.LoginAttemptProperties;
+import com.huuhv.foodsndrinks.config.properties.LoginAttemptProperties;
 import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
-import com.huuhv.foodsndrinks.security.LoginThrottledException;
+import com.huuhv.foodsndrinks.exception.LoginThrottledException;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService.LoginAttempt;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -37,12 +38,13 @@ class LoginAttemptServiceTest {
 
     @Mock private AuditLogService auditLogService;
 
-    private final AtomicLong nanos = new AtomicLong();
+    private final AtomicLong millis = new AtomicLong(1_700_000_000_000L);
     private LoginAttemptService service;
 
     @BeforeEach
     void setUp() {
-        service = new LoginAttemptService(PROPS, auditLogService, nanos::get);
+        service = new LoginAttemptService(PROPS,
+                InMemoryAttemptLimitRepository.factory(() -> Instant.ofEpochMilli(millis.get())), auditLogService);
     }
 
     private void fail(String loginId, String ip, int times) {
@@ -56,7 +58,7 @@ class LoginAttemptServiceTest {
     }
 
     private void advance(Duration duration) {
-        nanos.addAndGet(duration.toNanos());
+        millis.addAndGet(duration.toMillis());
     }
 
     private void assertBlocked(String loginId, String ip) {

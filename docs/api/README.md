@@ -66,7 +66,7 @@ Mỗi lần đăng nhập được đếm ở 3 phạm vi (cửa sổ cố đị
 - Tên đăng nhập được chuẩn hoá giống collation của MySQL (bỏ dấu, ký tự fullwidth, hoa/thường): `ádmin`, `ＡＤＭＩＮ` đếm chung với `admin`. Phạm vi tài khoản đếm thêm theo username thật sau khi tra DB, nên username và email của cùng tài khoản dùng chung bộ đếm này.
 - Áp dụng y hệt cho username không tồn tại (không lộ tài khoản nào có thật). Đăng nhập thành công xoá bộ đếm của tên đăng nhập/tài khoản (không xoá bộ đếm theo IP).
 - Bộ đếm dùng chung với form login `/login`.
-- Cấu hình: `app.security.login-attempts.{max-failures,max-failures-per-ip,max-failures-per-account,window,lock-duration}`. Bộ đếm nằm trong bộ nhớ → chỉ đúng khi chạy 1 instance.
+- Cấu hình: `app.security.login-attempts.{max-failures,max-failures-per-ip,max-failures-per-account,window,lock-duration}` (`window`, `lock-duration` ≥ 1 giây, không thì app không khởi động). Bộ đếm nằm trong bảng `attempt_limits` (key băm HMAC bằng `ATTEMPT_LIMITS_KEY_SECRET`): mọi instance sau load balancer dùng chung, restart/deploy không xoá khoá; bản ghi hết hạn được job dọn mỗi 5 phút.
 - Audit log: `LOGIN_LOCKOUT` khi khoá (`auth.lock.scope` = `IP_USER` / `IP` / `ACCOUNT`), các lần bị chặn sau đó ghi `LOGIN_FAILURE` với `event.reason=LOGIN_THROTTLED`.
 
 ### Truy vết request (`X-Request-Id`)

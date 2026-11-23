@@ -25,8 +25,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Chống brute-force qua security chain thật (mặc định 5 lần sai/15 phút). Bộ đếm nằm trong bộ nhớ và dùng chung giữa
- * các test cùng Spring context (không rollback theo transaction) → mỗi test dùng tên đăng nhập riêng.
+ * Chống brute-force qua security chain thật (mặc định 5 lần sai/15 phút). Bộ đếm nằm trong bảng
+ * {@code attempt_limits}, ghi ngoài transaction của test (không rollback) và dùng chung giữa các test cùng Spring
+ * context → mỗi test dùng tên đăng nhập riêng. Khoá băm key sinh ngẫu nhiên mỗi lần context khởi động (profile dev) nên
+ * bản ghi của lần chạy trước không ảnh hưởng lần chạy sau.
  */
 @IntegrationTest
 @AutoConfigureMockMvc

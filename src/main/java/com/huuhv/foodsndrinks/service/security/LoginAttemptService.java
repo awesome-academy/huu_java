@@ -1,12 +1,10 @@
 package com.huuhv.foodsndrinks.service.security;
 
-import com.github.benmanes.caffeine.cache.Ticker;
-import com.huuhv.foodsndrinks.config.LoginAttemptProperties;
+import com.huuhv.foodsndrinks.config.properties.LoginAttemptProperties;
+import com.huuhv.foodsndrinks.exception.LoginThrottledException;
 import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
-import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.utils.RequestUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -32,8 +30,8 @@ import java.util.regex.Pattern;
  * {@code admin}. Trường hợp collation còn coi là bằng nhau mà cách chuẩn hoá này bỏ sót được bộ đếm theo username thật
  * bắt lại.
  * <p>
- * <b>Bộ đếm nằm trong bộ nhớ của JVM (Caffeine) → chỉ đúng khi chạy 1 instance.</b> Chạy nhiều instance sau load
- * balancer thì mỗi instance đếm riêng — khi đó cần chuyển bộ đếm sang kho dùng chung (Redis/DB).
+ * Bộ đếm nằm trong DB (bảng {@code attempt_limits}, xem {@link AttemptLimiter}): mọi instance sau load balancer dùng
+ * chung một bộ đếm, restart/deploy không xoá khoá.
  */
 @Service
 public class LoginAttemptService {
@@ -41,6 +39,7 @@ public class LoginAttemptService {
     static final String SCOPE_IP = "IP";
     static final String SCOPE_IP_USER = "IP_USER";
     static final String SCOPE_ACCOUNT = "ACCOUNT";
+    static final String SCOPE_PASSWORD_CHANGE = "PASSWORD_CHANGE";
 
     private static final Pattern COMBINING_MARKS = Pattern.compile("\\p{M}+");
 
@@ -50,21 +49,17 @@ public class LoginAttemptService {
     private final AttemptLimiter accountLimiter;
     private final AttemptLimiter passwordChangeLimiter;
 
-    @Autowired
-    public LoginAttemptService(LoginAttemptProperties properties, AuditLogService auditLogService) {
-        this(properties, auditLogService, Ticker.systemTicker());
-    }
-
-    LoginAttemptService(LoginAttemptProperties properties, AuditLogService auditLogService, Ticker ticker) {
+    public LoginAttemptService(LoginAttemptProperties properties, AttemptLimiterFactory limiters,
+                               AuditLogService auditLogService) {
         this.auditLogService = auditLogService;
-        this.ipLimiter = new AttemptLimiter(SCOPE_IP, properties.maxFailuresPerIp(),
-                properties.window(), properties.lockDuration(), ticker);
-        this.ipUserLimiter = new AttemptLimiter(SCOPE_IP_USER, properties.maxFailures(),
-                properties.window(), properties.lockDuration(), ticker);
-        this.accountLimiter = new AttemptLimiter(SCOPE_ACCOUNT, properties.maxFailuresPerAccount(),
-                properties.window(), properties.lockDuration(), ticker);
-        this.passwordChangeLimiter = new AttemptLimiter("PASSWORD_CHANGE", properties.maxFailures(),
-                properties.window(), properties.lockDuration(), ticker);
+        this.ipLimiter = limiters.create(SCOPE_IP, properties.maxFailuresPerIp(),
+                properties.window(), properties.lockDuration());
+        this.ipUserLimiter = limiters.create(SCOPE_IP_USER, properties.maxFailures(),
+                properties.window(), properties.lockDuration());
+        this.accountLimiter = limiters.create(SCOPE_ACCOUNT, properties.maxFailuresPerAccount(),
+                properties.window(), properties.lockDuration());
+        this.passwordChangeLimiter = limiters.create(SCOPE_PASSWORD_CHANGE, properties.maxFailures(),
+                properties.window(), properties.lockDuration());
     }
 
     // -------------------------------------------------------
