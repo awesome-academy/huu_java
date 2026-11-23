@@ -3,15 +3,19 @@ package com.huuhv.foodsndrinks.service.messaging;
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.enums.NotificationChannel;
 import com.huuhv.foodsndrinks.exception.NotificationDeliveryException;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.ValidatorFactory;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -28,8 +32,21 @@ import static org.mockito.Mockito.when;
 @ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class OrderPlacedNotificationHandlerTest {
 
+    private static final Validator VALIDATOR;
+
+    static {
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            VALIDATOR = factory.getValidator();
+        }
+    }
+
     @Mock private NotificationLogService notificationLogService;
-    @InjectMocks private OrderPlacedNotificationHandler handler;
+    private OrderPlacedNotificationHandler handler;
+
+    @BeforeEach
+    void setUp() {
+        handler = new OrderPlacedNotificationHandler(notificationLogService, VALIDATOR);
+    }
 
     @SuppressWarnings("unchecked")
     private final Consumer<OrderPlacedMessage> sender = mock(Consumer.class);
@@ -61,6 +78,35 @@ class OrderPlacedNotificationHandlerTest {
         handler.handle(NotificationChannel.SLACK, null, 1, () -> true, sender);
 
         verifyNoInteractions(notificationLogService, sender);
+    }
+
+    @Test
+    void messageWithoutItems_isDropped_insteadOfFailingOnEveryDelivery(CapturedOutput output) {
+        // Không validate: formatter ném NPE ở mọi lần giao (× 2 kênh × 5 lần) rồi mới vào DLQ
+        OrderPlacedMessage noItems = new OrderPlacedMessage(42L, "A", "a@example.com", null, "HN", null,
+                BigDecimal.TEN, null, null);
+        List<OrderPlacedMessage.OrderLineItem> nullItem = new ArrayList<>();
+        nullItem.add(null);
+        OrderPlacedMessage withNullItem = new OrderPlacedMessage(43L, "A", "a@example.com", null, "HN", null,
+                BigDecimal.TEN, null, nullItem);
+
+        handler.handle(NotificationChannel.EMAIL, noItems, 1, () -> true, sender);
+        handler.handle(NotificationChannel.EMAIL, withNullItem, 1, () -> true, sender);
+
+        verifyNoInteractions(notificationLogService, sender);
+        assertThat(output).contains("WARN").contains("Ignoring invalid order.placed message (EMAIL notification)")
+                .contains("invalid items").contains("items[0]");
+    }
+
+    @Test
+    void optionalFieldsMissing_isStillSent() {
+        // Chỉ orderId + items là bắt buộc: khách đăng nhập bằng X có thể không có email
+        OrderPlacedMessage message = new OrderPlacedMessage(42L, null, null, null, null, null, null, null, List.of());
+        when(notificationLogService.sendOnce(eq(42L), eq(NotificationChannel.SLACK), any())).thenReturn(true);
+
+        handler.handle(NotificationChannel.SLACK, message, 1, () -> true, sender);
+
+        verify(notificationLogService).sendOnce(eq(42L), eq(NotificationChannel.SLACK), any());
     }
 
     @Test

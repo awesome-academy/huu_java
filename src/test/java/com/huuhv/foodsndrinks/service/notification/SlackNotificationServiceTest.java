@@ -94,6 +94,18 @@ class SlackNotificationServiceTest {
     }
 
     @Test
+    void malformedWebhookUrl_isThrown_withoutLeakingWebhookUrl() {
+        // Dán sai cấu hình: lỗi dựng URI (không phải RestClientException) thường nối nguyên URL vào message
+        ReflectionTestUtils.setField(service, "webhookUrl", "https://hooks.slack.test:SECRET-TOKEN/services");
+
+        assertThatThrownBy(() -> service.sendOrderPlaced(order("A", null, items(1))))
+                .isInstanceOf(NotificationDeliveryException.class)
+                .hasMessageNotContaining("SECRET-TOKEN")
+                .hasMessageNotContaining("hooks.slack.test")
+                .hasNoCause();
+    }
+
+    @Test
     void userInput_isEscaped_soItCannotPingChannelsOrInjectLinks() {
         Map<String, Object> payload = SlackMessageBuilder.orderPlaced(
                 order("<!channel> & co", "<https://evil.example|bấm vào đây>", items(1)));

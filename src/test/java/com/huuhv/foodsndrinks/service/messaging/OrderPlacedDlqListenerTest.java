@@ -13,7 +13,9 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -64,6 +66,23 @@ class OrderPlacedDlqListenerTest {
         listener.onDeadLetter(message);
 
         assertThat(output).contains("WARN").contains("Outbox message #9 is no longer SENT");
+    }
+
+    @Test
+    void sameMessageDeadLetteredByBothSubscriptions_noWarning(CapturedOutput output) throws Exception {
+        // OutboxService coi bản ghi đã DEAD_LETTERED là thành công → lần DLQ thứ hai không báo "đã bị reset"
+        TextMessage fromEmail = deadLetter("order-placed-email", "{}");
+        TextMessage fromSlack = deadLetter("order-placed-slack", "{}");
+        withOutboxId(fromEmail, 9L);
+        withOutboxId(fromSlack, 9L);
+        when(outboxService.markDeadLettered(9L)).thenReturn(true);
+        when(converter.fromMessage(any())).thenThrow(new MessageConversionException("Unknown alias"));
+
+        listener.onDeadLetter(fromEmail);
+        listener.onDeadLetter(fromSlack);
+
+        verify(outboxService, times(2)).markDeadLettered(9L);
+        assertThat(output).doesNotContain("no longer SENT");
     }
 
     @Test

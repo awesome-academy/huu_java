@@ -7,8 +7,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+
+import java.util.Map;
 
 /**
  * Thông báo Slack (Incoming Webhook). Gọi đồng bộ từ consumer JMS ({@code OrderPlacedSlackConsumer}): lỗi được ném ra để
@@ -34,19 +35,24 @@ public class SlackNotificationService {
     }
 
     /**
-     * @throws NotificationDeliveryException webhook lỗi/timeout. Thông điệp không chứa URL webhook (là secret) — exception
-     *                                       của {@code RestClient} nối URL vào message nên không giữ làm cause.
+     * @throws NotificationDeliveryException webhook lỗi/timeout/URL webhook cấu hình sai. Thông điệp không chứa URL
+     *                                       webhook (là secret) — exception của {@code RestClient} và của việc dựng URI
+     *                                       ({@code IllegalArgumentException}/{@code IllegalStateException} khi URL sai
+     *                                       cú pháp) nối URL vào message nên không giữ làm cause.
      */
     public void sendOrderPlaced(OrderPlacedMessage message) {
+        // Dựng payload ngoài try: lỗi ở đây là lỗi code/dữ liệu, không liên quan webhook → giữ nguyên stack trace
+        Map<String, Object> payload = SlackMessageBuilder.orderPlaced(message);
         try {
             restClient.post()
                     .uri(webhookUrl)
-                    .body(SlackMessageBuilder.orderPlaced(message))
+                    .body(payload)
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientResponseException ex) {
             throw new NotificationDeliveryException("Slack webhook returned HTTP " + ex.getStatusCode().value());
-        } catch (RestClientException ex) {
+        } catch (RuntimeException ex) {
+            // RestClientException (I/O, timeout) và lỗi dựng URI từ webhookUrl sai cú pháp
             throw new NotificationDeliveryException("Slack webhook call failed (" + ex.getClass().getSimpleName() + ")");
         }
     }

@@ -2,9 +2,12 @@ package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.task.TaskExecutionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
@@ -22,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * gọi, dashboard từ chối), cấu hình sai thì app không khởi động. (Chờ task khi tắt app do {@code application.yml} bật
  * — kiểm tra trong {@code SchedulingIntegrationTest} với context đầy đủ.)
  */
+@ExtendWith(OutputCaptureExtension.class)
 class AsyncConfigTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -164,7 +168,7 @@ class AsyncConfigTest {
     }
 
     @Test
-    void saturatedOutboxPool_dropsTask_neverRunsItOnCallerThread() {
+    void saturatedOutboxPool_dropsTask_neverRunsItOnCallerThread(CapturedOutput output) {
         contextRunner
                 .withPropertyValues("app.async.outbox.core-size=1", "app.async.outbox.max-size=1",
                         "app.async.outbox.queue-capacity=0")
@@ -189,10 +193,25 @@ class AsyncConfigTest {
                         outbox.execute(() -> ranOnCaller[0] = Thread.currentThread() == caller);
 
                         assertThat(ranOnCaller[0]).isFalse();
+                        assertThat(output).contains("WARN").contains("Outbox executor saturated (1 active, 0 queued)");
                     } finally {
                         release.countDown();
                         blocker.get(5, TimeUnit.SECONDS);
                     }
                 });
+    }
+
+    @Test
+    void outboxTaskRejectedWhileShuttingDown_isNotReportedAsSaturation(CapturedOutput output) {
+        contextRunner.run(context -> {
+            ThreadPoolTaskExecutor outbox = context.getBean(AsyncConfig.OUTBOX_EXECUTOR, ThreadPoolTaskExecutor.class);
+            outbox.shutdown();
+            boolean[] ran = {false};
+
+            outbox.execute(() -> ran[0] = true);
+
+            assertThat(ran[0]).isFalse();
+            assertThat(output).contains("Outbox executor is shutting down").doesNotContain("saturated");
+        });
     }
 }

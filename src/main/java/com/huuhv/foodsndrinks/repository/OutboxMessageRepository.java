@@ -1,12 +1,12 @@
 package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.OutboxMessage;
+import com.huuhv.foodsndrinks.enums.OutboxStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
@@ -76,8 +76,10 @@ public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Lo
             """, nativeQuery = true)
     int markDeadLettered(@Param("id") long id);
 
-    /** Xoá tối đa {@code limit} bản ghi SENT cũ hơn {@code retentionSeconds} (transaction riêng, gọi từ job). */
-    @Transactional
+    @Query("SELECT o.status FROM OutboxMessage o WHERE o.id = :id")
+    Optional<OutboxStatus> findStatusById(@Param("id") long id);
+
+    /** Xoá tối đa {@code limit} bản ghi SENT cũ hơn {@code retentionSeconds} (gọi trong transaction của service). */
     @Modifying
     @Query(value = """
             DELETE FROM outbox_messages

@@ -65,7 +65,8 @@ public class OrderPlacedDlqListener {
 
     private void keepOutboxRecord(Long outboxId) {
         if (outboxId != null && !outboxService.markDeadLettered(outboxId)) {
-            log.warn("Outbox message #{} is no longer SENT (already reset, marked or purged), left unchanged", outboxId);
+            // Bản ghi đã DEAD_LETTERED (subscription khác đẩy cùng message vào DLQ trước) tính là thành công, không vào đây
+            log.warn("Outbox message #{} is no longer SENT (reset to PENDING or purged), left unchanged", outboxId);
         }
     }
 

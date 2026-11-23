@@ -93,8 +93,20 @@ public class AsyncConfig implements AsyncConfigurer {
      */
     @Bean(name = OUTBOX_EXECUTOR)
     public ThreadPoolTaskExecutor outboxExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
-        return build(builder, properties.outbox(), "outbox-", (task, executor) ->
-                log.warn("Outbox executor saturated, immediate publish skipped (the relay job will send it)"));
+        return build(builder, properties.outbox(), "outbox-", AsyncConfig::skipOutboxPublish);
+    }
+
+    /**
+     * Task bị từ chối vì pool đầy HOẶC vì executor đã shutdown (app đang tắt, request checkout cuối commit muộn) — log
+     * đúng nguyên nhân để không ai đi tăng {@code app.async.outbox.*} vì một lần rolling restart.
+     */
+    static void skipOutboxPublish(Runnable task, ThreadPoolExecutor executor) {
+        if (executor.isShutdown()) {
+            log.info("Outbox executor is shutting down, immediate publish skipped (the relay job will send it)");
+        } else {
+            log.warn("Outbox executor saturated ({} active, {} queued), immediate publish skipped (the relay job will "
+                    + "send it)", executor.getActiveCount(), executor.getQueue().size());
+        }
     }
 
     /** {@value #HIKARI_MAX_POOL_SIZE}, mặc định của HikariCP nếu không cấu hình. */

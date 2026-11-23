@@ -17,12 +17,16 @@ import org.springframework.stereotype.Component;
  * Ngân sách connection JDBC: các thread nền có thể giữ connection cùng lúc — truy vấn dashboard ({@code dashboard-*}),
  * gửi outbox ({@code outbox-*}, khoá bản ghi lúc gửi), listener JMS (consumer thông báo giữ connection suốt lúc gọi
  * Slack/SMTP — {@code NotificationLogService}) và job {@code @Scheduled} ({@code sched-*}) — cộng lại không được quá NỬA
- * {@code spring.datasource.hikari.maximum-pool-size}, để luôn còn connection cho request web. Vượt thì app không khởi
- * động (giống kiểm tra pool dashboard trong {@link AsyncConfig}), thay vì cạn pool lúc SMTP chậm: request chờ
- * {@code connectionTimeout} 30s rồi lỗi.
+ * {@code spring.datasource.hikari.maximum-pool-size}, để luôn còn connection cho request web. Vượt thì quá trình khởi
+ * động thất bại và app tắt, thay vì chạy tiếp rồi cạn pool lúc SMTP chậm: request chờ {@code connectionTimeout} 30s rồi
+ * lỗi. Thêm listener JMS hay tăng kích thước pool nền thì phải tăng pool Hikari tương ứng.
  * <p>
- * Kiểm tra khi context refresh xong (listener container đã được tạo): thêm listener JMS hay tăng kích thước pool nền thì
- * phải tăng pool Hikari tương ứng.
+ * Kiểm tra chạy ở {@link ContextRefreshedEvent}: lúc đó cần mọi listener container đã được tạo để đếm consumer. Spring phát
+ * event này SAU khi start các bean {@code Lifecycle}, nên khi cấu hình vượt ngân sách, listener JMS và Tomcat đã chạy
+ * trong một khoảng ngắn trước khi app tắt: consumer có thể đã kịp xử lý và ack vài message đang chờ. Điều này chấp nhận
+ * được vì các message đó vẫn được xử lý đúng ({@code notification_logs} chống gửi lặp) và đây chỉ là kiểm tra cấu hình
+ * lúc triển khai. Muốn chặn trước khi bất cứ thứ gì start thì phải chuyển sang {@code SmartLifecycle} có phase nhỏ hơn
+ * {@link JmsListenerEndpointRegistry}.
  */
 @Slf4j
 @Component

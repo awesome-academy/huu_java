@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.entity.OutboxMessage;
+import com.huuhv.foodsndrinks.enums.OutboxStatus;
 import com.huuhv.foodsndrinks.repository.OutboxMessageRepository;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService.OutboxMessageSavedEvent;
 import org.junit.jupiter.api.Test;
@@ -13,11 +14,14 @@ import org.springframework.context.ApplicationEventPublisher;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -53,6 +57,43 @@ class OutboxServiceTest {
 
         assertThatIllegalArgumentException().isThrownBy(() -> service.enqueue(OutboxType.ORDER_PLACED, "not a DTO"));
         verifyNoInteractions(repository, eventPublisher);
+    }
+
+    @Test
+    void markDeadLettered_sentRecord_isMarked() {
+        OutboxService service = new OutboxService(repository, JsonMapper.builder().build(), eventPublisher);
+        when(repository.markDeadLettered(9L)).thenReturn(1);
+
+        assertThat(service.markDeadLettered(9L)).isTrue();
+    }
+
+    @Test
+    void markDeadLettered_alreadyMarkedByAnotherSubscription_countsAsDone() {
+        // Cùng message vào DLQ từ cả subscription email lẫn slack → lần thứ hai bản ghi đã DEAD_LETTERED
+        OutboxService service = new OutboxService(repository, JsonMapper.builder().build(), eventPublisher);
+        when(repository.markDeadLettered(9L)).thenReturn(0);
+        when(repository.findStatusById(9L)).thenReturn(Optional.of(OutboxStatus.DEAD_LETTERED));
+
+        assertThat(service.markDeadLettered(9L)).isTrue();
+    }
+
+    @Test
+    void markDeadLettered_resetOrPurgedRecord_isReported() {
+        OutboxService service = new OutboxService(repository, JsonMapper.builder().build(), eventPublisher);
+        when(repository.markDeadLettered(anyLong())).thenReturn(0);
+        when(repository.findStatusById(9L)).thenReturn(Optional.of(OutboxStatus.PENDING));
+        when(repository.findStatusById(10L)).thenReturn(Optional.empty());
+
+        assertThat(service.markDeadLettered(9L)).isFalse();
+        assertThat(service.markDeadLettered(10L)).isFalse();
+    }
+
+    @Test
+    void purgeSent_deletesThroughRepository_withRetentionInSeconds() {
+        OutboxService service = new OutboxService(repository, JsonMapper.builder().build(), eventPublisher);
+        when(repository.deleteSentBefore(604_800L, 1000)).thenReturn(3);
+
+        assertThat(service.purgeSent(Duration.ofDays(7), 1000)).isEqualTo(3);
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.config.properties.OutboxProperties;
-import com.huuhv.foodsndrinks.repository.OutboxMessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -25,7 +24,7 @@ public class OutboxRelayJob {
     static final int CLEANUP_BATCH_SIZE = 1000;
 
     private final OutboxPublisher outboxPublisher;
-    private final OutboxMessageRepository repository;
+    private final OutboxService outboxService;
     private final OutboxProperties properties;
 
     @Scheduled(initialDelayString = "${app.outbox.poll-interval:1m}", fixedDelayString = "${app.outbox.poll-interval:1m}")
@@ -39,7 +38,7 @@ public class OutboxRelayJob {
             log.error("Outbox relay failed, will retry next cycle", ex);
         }
         try {
-            int deleted = repository.deleteSentBefore(properties.retention().toSeconds(), CLEANUP_BATCH_SIZE);
+            int deleted = outboxService.purgeSent(properties.retention(), CLEANUP_BATCH_SIZE);
             if (deleted > 0) {
                 log.debug("Deleted {} sent outbox message(s) older than {}", deleted, properties.retention());
             }
