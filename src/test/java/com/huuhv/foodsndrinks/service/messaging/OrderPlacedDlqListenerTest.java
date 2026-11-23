@@ -14,34 +14,69 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(OutputCaptureExtension.class)
 class OrderPlacedDlqListenerTest {
 
     private final MessageConverter converter = mock(MessageConverter.class);
-    private final OrderPlacedDlqListener listener = new OrderPlacedDlqListener(converter);
+    private final OutboxService outboxService = mock(OutboxService.class);
+    private final OrderPlacedDlqListener listener = new OrderPlacedDlqListener(converter, outboxService);
 
     @Test
-    void readableMessage_loggedAsErrorWithOrderIdAndSubscription(CapturedOutput output) throws Exception {
+    void readableMessage_loggedAsErrorWithOrderIdAndSubscription_andOutboxRecordKept(CapturedOutput output)
+            throws Exception {
         TextMessage message = deadLetter("order-placed-slack", "{}");
+        withOutboxId(message, 9L);
+        when(outboxService.markDeadLettered(9L)).thenReturn(true);
         when(converter.fromMessage(message)).thenReturn(new OrderPlacedMessage(42L, "A", "a@example.com", null, "HN",
                 null, BigDecimal.TEN, null, List.of()));
 
         listener.onDeadLetter(message);
 
         assertThat(output).contains("ERROR")
-                .contains("Notification for order #42 dead-lettered from subscription order-placed-slack");
+                .contains("Notification for order #42 dead-lettered from subscription order-placed-slack")
+                .contains("(outbox #9)");
+        // Job dọn dẹp chỉ xoá SENT → bản ghi còn để gửi lại sau khi sửa kênh lỗi
+        verify(outboxService).markDeadLettered(9L);
     }
 
     @Test
-    void unreadableMessage_loggedWithoutPayload(CapturedOutput output) throws Exception {
+    void messageNotSentThroughOutbox_marksNothing() throws Exception {
+        TextMessage message = deadLetter("order-placed-email", "{}");
+        when(converter.fromMessage(message)).thenReturn(new OrderPlacedMessage(42L, "A", "a@example.com", null, "HN",
+                null, BigDecimal.TEN, null, List.of()));
+
+        listener.onDeadLetter(message);
+
+        verifyNoInteractions(outboxService);
+    }
+
+    @Test
+    void outboxRecordNoLongerSent_isLeftUnchanged_withWarning(CapturedOutput output) throws Exception {
+        TextMessage message = deadLetter("order-placed-email", "{}");
+        withOutboxId(message, 9L);
+        when(converter.fromMessage(message)).thenReturn(new OrderPlacedMessage(42L, "A", "a@example.com", null, "HN",
+                null, BigDecimal.TEN, null, List.of()));
+
+        listener.onDeadLetter(message);
+
+        assertThat(output).contains("WARN").contains("Outbox message #9 is no longer SENT");
+    }
+
+    @Test
+    void unreadableMessage_loggedWithoutPayload_andOutboxRecordKept(CapturedOutput output) throws Exception {
         TextMessage message = deadLetter("order-placed-email\nFAKE LOG LINE", "{\"secret\":\"PAYLOAD\"}");
+        withOutboxId(message, 9L);
+        when(outboxService.markDeadLettered(9L)).thenReturn(true);
         when(converter.fromMessage(message))
                 .thenThrow(new MessageConversionException("Missing or unknown message type alias on JMS message ID:1"));
 
         listener.onDeadLetter(message);
 
+        verify(outboxService).markDeadLettered(9L);
         assertThat(output).contains("ERROR").contains("Unreadable order.placed message dead-lettered")
                 .contains("body length 20")
                 .doesNotContain("PAYLOAD")
@@ -54,5 +89,10 @@ class OrderPlacedDlqListenerTest {
         when(message.getStringProperty(OrderPlacedDlqListener.ORIGINAL_QUEUE_PROPERTY)).thenReturn(originalQueue);
         when(message.getText()).thenReturn(body);
         return message;
+    }
+
+    private static void withOutboxId(TextMessage message, long outboxId) throws Exception {
+        when(message.propertyExists(MessageTypes.OUTBOX_ID_PROPERTY)).thenReturn(true);
+        when(message.getLongProperty(MessageTypes.OUTBOX_ID_PROPERTY)).thenReturn(outboxId);
     }
 }

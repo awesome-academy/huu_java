@@ -15,7 +15,8 @@ public final class Destinations {
 
     /**
      * Shared durable subscription của {@link #ORDER_PLACED} — mỗi kênh thông báo một subscription (một hàng đợi riêng trên
-     * broker, tên = tên subscription). Không đổi tên: subscription cũ cùng message trong đó bị bỏ lại trên broker.
+     * broker, tên = tên subscription, tạo sẵn trong {@code artemis/broker.properties} để message tới trước khi listener
+     * đăng ký không bị bỏ). Không đổi tên: subscription cũ cùng message trong đó bị bỏ lại trên broker.
      */
     public static final String ORDER_PLACED_EMAIL_SUBSCRIPTION = "order-placed-email";
     public static final String ORDER_PLACED_SLACK_SUBSCRIPTION = "order-placed-slack";

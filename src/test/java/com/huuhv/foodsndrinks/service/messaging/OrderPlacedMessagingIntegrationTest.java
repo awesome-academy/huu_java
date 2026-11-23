@@ -14,8 +14,10 @@ import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Luồng thật: transaction commit → outbox → topic {@code order.placed} trên broker embedded → hai subscription (email,
@@ -24,6 +26,7 @@ import static org.mockito.Mockito.verify;
 class OrderPlacedMessagingIntegrationTest extends AbstractMessagingIntegrationTest {
 
     @Autowired private NotificationLogRepository notificationLogRepository;
+    @Autowired private OutboxPublisher outboxPublisher;
 
     @Test
     void committedOrder_isNotifiedOncePerChannel() {
@@ -79,6 +82,19 @@ class OrderPlacedMessagingIntegrationTest extends AbstractMessagingIntegrationTe
         verify(emailNotificationService, timeout(WAIT.toMillis()).times(1)).sendNewOrderEmail(order(orderId));
         // Lần gửi lỗi đã rollback: không có bản ghi, gửi lại sau khi sửa sẽ gửi được
         assertThat(notificationLogRepository.countByOrderIdAndChannel(orderId, NotificationChannel.SLACK)).isZero();
+        // Bản ghi outbox được giữ lại (job chỉ xoá SENT) để gửi lại bằng tay
+        await().atMost(WAIT).until(() -> "DEAD_LETTERED".equals(outboxStatusOf(orderId)));
+
+        // Sửa Slack rồi đặt lại về PENDING (README) → chỉ Slack được gửi lại, email không gửi lần hai
+        reset(slackNotificationService);
+        when(slackNotificationService.isEnabled()).thenReturn(true);
+        jdbcTemplate.update("UPDATE outbox_messages SET status = 'PENDING', attempts = 0 WHERE id = ?",
+                outboxIdOf(orderId));
+        outboxPublisher.publishDue();
+
+        verify(slackNotificationService, timeout(WAIT.toMillis())).sendOrderPlaced(order(orderId));
+        verify(emailNotificationService, after(1000).times(1)).sendNewOrderEmail(order(orderId));
+        assertThat(outboxStatusOf(orderId)).isEqualTo("SENT");
     }
 
     @Test

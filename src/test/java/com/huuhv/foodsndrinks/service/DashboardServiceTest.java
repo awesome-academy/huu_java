@@ -76,7 +76,8 @@ class DashboardServiceTest {
 
         AsyncProperties properties = new AsyncProperties(
                 new AsyncProperties.Pool(2, 4, 100),
-                new AsyncProperties.DashboardPool(4, 4, 50, TIMEOUT));
+                new AsyncProperties.DashboardPool(4, 4, 50, TIMEOUT),
+                new AsyncProperties.OutboxPool(1, 2, 100));
         dashboardService = new DashboardService(orderRepository, orderDetailRepository, productRepository,
                 userRepository, executor, transactionManager, properties);
     }
@@ -183,7 +184,8 @@ class DashboardServiceTest {
         };
         AsyncProperties properties = new AsyncProperties(
                 new AsyncProperties.Pool(2, 4, 100),
-                new AsyncProperties.DashboardPool(4, 4, 50, Duration.ofSeconds(30)));
+                new AsyncProperties.DashboardPool(4, 4, 50, Duration.ofSeconds(30)),
+                new AsyncProperties.OutboxPool(1, 2, 100));
         DashboardService service = new DashboardService(orderRepository, orderDetailRepository, productRepository,
                 userRepository, saturated, transactionManager, properties);
 

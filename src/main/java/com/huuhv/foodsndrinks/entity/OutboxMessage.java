@@ -41,8 +41,11 @@ public class OutboxMessage {
     @Column(nullable = false, length = 64)
     private String type;
 
-    /** Payload JSON, gửi nguyên văn làm body của {@code TextMessage}. */
-    @Column(nullable = false, columnDefinition = "json")
+    /**
+     * Payload JSON, gửi nguyên văn làm body của {@code TextMessage}. Cột {@code MEDIUMTEXT} (có CHECK {@code JSON_VALID}),
+     * không phải kiểu {@code JSON} của MySQL — kiểu đó chuẩn hoá lại văn bản (số thập phân thành DOUBLE, đổi thứ tự key).
+     */
+    @Column(nullable = false, columnDefinition = "mediumtext")
     private String payload;
 
     @Enumerated(EnumType.STRING)

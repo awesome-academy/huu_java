@@ -89,6 +89,23 @@ class JmsConfigTest {
     }
 
     @Test
+    void topic_messageSentBeforeAnyListenerRegistered_isKeptForEverySubscription() {
+        // Không có listener nào trong context này: queue của subscription phải do broker.properties tạo sẵn
+        runner.run(context -> {
+            context.getBean(JmsConfig.TOPIC_JMS_TEMPLATE, JmsTemplate.class)
+                    .send(Destinations.ORDER_PLACED, session -> session.createTextMessage("early-order"));
+
+            for (String subscription : List.of(Destinations.ORDER_PLACED_EMAIL_SUBSCRIPTION,
+                    Destinations.ORDER_PLACED_SLACK_SUBSCRIPTION)) {
+                // FQQN address::queue — đọc thẳng hàng đợi của subscription
+                Message kept = receiver(context).receive(Destinations.ORDER_PLACED + "::" + subscription);
+                assertThat(kept).as(subscription).isInstanceOf(TextMessage.class);
+                assertThat(((TextMessage) kept).getText()).isEqualTo("early-order");
+            }
+        });
+    }
+
+    @Test
     void nativeMode_withEmbeddedBrokerStillEnabled_failsStartup() {
         runner.withPropertyValues("spring.artemis.mode=native").run(context -> {
             assertThat(context).hasFailed();

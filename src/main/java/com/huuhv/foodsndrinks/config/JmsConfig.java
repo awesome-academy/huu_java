@@ -71,6 +71,10 @@ public class JmsConfig {
         factory.setPubSubDomain(true);
         factory.setSubscriptionDurable(true);
         factory.setSubscriptionShared(true);
+        // Một thread mỗi subscription (ghi đè spring.jms.listener.*-concurrency): consumer thông báo giữ một connection DB
+        // suốt lúc gọi Slack/SMTP (NotificationLogService) — thông báo admin không cần song song, mỗi thread thêm là một
+        // connection Hikari bị chiếm khi SMTP chậm (ConnectionBudgetCheck). Nhiều instance vẫn chia nhau message.
+        factory.setConcurrency("1");
         return factory;
     }
 

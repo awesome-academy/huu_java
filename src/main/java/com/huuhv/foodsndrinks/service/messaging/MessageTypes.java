@@ -18,6 +18,12 @@ public final class MessageTypes {
     /** Tên property JMS chứa alias của kiểu payload. */
     public static final String TYPE_ID_PROPERTY = "_type";
 
+    /**
+     * Tên property JMS (long) chứa id bản ghi {@code outbox_messages} của message — có trên mọi message gửi qua outbox,
+     * giữ nguyên khi broker chuyển message vào DLQ.
+     */
+    public static final String OUTBOX_ID_PROPERTY = "outboxId";
+
     /** {@link OrderPlacedMessage} trên topic {@code order.placed}. */
     public static final String ORDER_PLACED = "orderPlaced";
 

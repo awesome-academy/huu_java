@@ -7,6 +7,14 @@ spring:
     # Secret cho môi trường local nằm trong file .env (git-ignore, mẫu ở .env.example) ở thư mục chạy app.
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
+  # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
+  # (2) + listener JMS (3) + sched-* (2) = 11 — không được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không
+  # khởi động), nửa còn lại cho request web. Nhiều instance: số instance × maximum-pool-size < max_connections của MySQL
+  # (mặc định 151). minimum-idle: không giữ sẵn cả 24 connection khi rảnh.
+  datasource:
+    hikari:
+      maximum-pool-size: 24
+      minimum-idle: 5
   servlet:
     multipart:
       # Áp dụng mọi profile (prod trước đây dùng mặc định của Spring). Ảnh sản phẩm/avatar: tối đa 5MB/file, 25MB/request
@@ -166,18 +174,23 @@ app:
     batch-size: 100       # số bản ghi tối đa mỗi lần job chạy
     retention: 7d         # bản ghi SENT cũ hơn thì bị xoá
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
-  # (CallerRunsPolicy, không mất thông báo); dashboard từ chối (AbortPolicy) → /admin trả 503.
+  # (CallerRunsPolicy); dashboard từ chối (AbortPolicy) → /admin trả 503; outbox bỏ task (job gửi lại).
   async:
     notification:      # notify-*: executor @Async mặc định (Slack/email đơn hàng chạy trên listener JMS, không ở đây)
       core-size: 2
       max-size: 4
       queue-capacity: 100
     dashboard:         # dashboard-*: truy vấn thống kê song song. Mỗi thread giữ 1 connection → max-size ≤ nửa pool Hikari
-                       # (spring.datasource.hikari.maximum-pool-size, mặc định 10), vượt thì app không khởi động
+                       # (spring.datasource.hikari.maximum-pool-size), vượt thì app không khởi động
       core-size: 4
       max-size: 4
       queue-capacity: 50
       timeout: 10s     # quá thời gian (hoặc 1 truy vấn lỗi, hoặc pool đầy) thì /admin trả 503
+    outbox:            # outbox-*: gửi bản ghi outbox ngay sau commit. Đầy thì BỎ task (job outbox gửi lại), không chạy
+                       # trên thread request. Mỗi thread giữ 1 connection lúc gửi → tính vào ConnectionBudgetCheck
+      core-size: 1
+      max-size: 2
+      queue-capacity: 100
   security:
     # Chống brute-force (form + API). Bộ đếm nằm trong bảng attempt_limits (dùng chung giữa các instance, key băm HMAC
     # bằng app.security.attempt-limits.key-secret — đặt theo profile). Trong window (tính từ lần thử đầu tiên, >= 1s),

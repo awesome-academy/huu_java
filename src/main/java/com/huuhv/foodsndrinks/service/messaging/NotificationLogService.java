@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.enums.NotificationChannel;
 import com.huuhv.foodsndrinks.repository.NotificationLogRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -21,20 +22,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * bỏ qua. Còn sót đúng một trường hợp gửi lặp: gửi xong nhưng commit DB lỗi (rất hiếm).
  * <p>
  * Đánh đổi: giữ một connection DB trong lúc gọi Slack/SMTP — vì vậy cả hai đều có timeout ngắn ({@code AppConfig},
- * {@code spring.mail.properties.mail.smtp.*timeout}) và listener chỉ chạy tối đa {@code spring.jms.listener.max-concurrency}
- * thread mỗi subscription.
+ * {@code spring.mail.properties.mail.smtp.*timeout}), listener topic chạy một thread mỗi subscription
+ * ({@code JmsConfig}) và tổng connection mà việc nền có thể giữ được kiểm tra lúc khởi động
+ * ({@code config/ConnectionBudgetCheck}).
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class NotificationLogService {
 
     private final NotificationLogRepository repository;
-    private final TransactionTemplate transactionTemplate;
-
-    public NotificationLogService(NotificationLogRepository repository, PlatformTransactionManager transactionManager) {
-        this.repository = repository;
-        this.transactionTemplate = new TransactionTemplate(transactionManager);
-    }
+    private final PlatformTransactionManager transactionManager;
 
     /**
      * Gửi nếu (đơn, kênh) chưa từng gửi thành công.
@@ -58,7 +56,7 @@ public class NotificationLogService {
     }
 
     private boolean attempt(long orderId, NotificationChannel channel, Runnable send, AtomicBoolean sendStarted) {
-        Boolean sent = transactionTemplate.execute(status -> {
+        Boolean sent = new TransactionTemplate(transactionManager).execute(status -> {
             if (repository.insertIfAbsent(orderId, channel.name()) == 0) {
                 return false;
             }

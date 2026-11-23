@@ -162,4 +162,37 @@ class AsyncConfigTest {
                     }
                 });
     }
+
+    @Test
+    void saturatedOutboxPool_dropsTask_neverRunsItOnCallerThread() {
+        contextRunner
+                .withPropertyValues("app.async.outbox.core-size=1", "app.async.outbox.max-size=1",
+                        "app.async.outbox.queue-capacity=0")
+                .run(context -> {
+                    ThreadPoolTaskExecutor outbox = context.getBean(AsyncConfig.OUTBOX_EXECUTOR, ThreadPoolTaskExecutor.class);
+                    assertThat(outbox.getThreadNamePrefix()).isEqualTo("outbox-");
+                    assertThat(outbox.getThreadPoolExecutor().getRejectedExecutionHandler())
+                            .isNotInstanceOf(ThreadPoolExecutor.CallerRunsPolicy.class);
+                    CountDownLatch release = new CountDownLatch(1);
+                    CountDownLatch started = new CountDownLatch(1);
+                    Future<?> blocker = outbox.submit(() -> {
+                        started.countDown();
+                        release.await(5, TimeUnit.SECONDS);
+                        return null;
+                    });
+                    try {
+                        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                        Thread caller = Thread.currentThread();
+                        boolean[] ranOnCaller = {false};
+
+                        // Đầy: bỏ task (bản ghi outbox vẫn PENDING, job gửi lại), không ném lỗi về callback AFTER_COMMIT
+                        outbox.execute(() -> ranOnCaller[0] = Thread.currentThread() == caller);
+
+                        assertThat(ranOnCaller[0]).isFalse();
+                    } finally {
+                        release.countDown();
+                        blocker.get(5, TimeUnit.SECONDS);
+                    }
+                });
+    }
 }

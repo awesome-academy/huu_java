@@ -19,15 +19,19 @@ import java.util.Optional;
 @Repository
 public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Long> {
 
-    /** Bản ghi PENDING đã tới hạn, cũ nhất trước. */
+    /**
+     * Bản ghi PENDING đã tới hạn có id lớn hơn {@code afterId}, nhỏ nhất trước. Job duyệt bằng con trỏ id tăng dần nên mỗi
+     * chu kỳ thử mỗi bản ghi tối đa một lần — bản ghi vừa lỗi (vẫn PENDING, có thể đã tới hạn lại) không bị chọn lại và
+     * không chặn các bản ghi sau nó.
+     */
     @Query(value = """
             SELECT * FROM outbox_messages
-            WHERE status = 'PENDING' AND next_attempt_at <= CURRENT_TIMESTAMP(3)
+            WHERE status = 'PENDING' AND next_attempt_at <= CURRENT_TIMESTAMP(3) AND id > :afterId
             ORDER BY id
             LIMIT 1
             FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
-    Optional<OutboxMessage> lockNextDue();
+    Optional<OutboxMessage> lockNextDueAfter(@Param("afterId") long afterId);
 
     /** Bản ghi {@code id} nếu còn PENDING, đã tới hạn và không bị ai khoá. */
     @Query(value = """
@@ -60,6 +64,17 @@ public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Lo
             """, nativeQuery = true)
     int markAttemptFailed(@Param("id") long id, @Param("maxAttempts") int maxAttempts,
                           @Param("retryDelayMillis") long retryDelayMillis, @Param("error") String error);
+
+    /**
+     * Message của bản ghi SENT đã vào DLQ: chuyển sang DEAD_LETTERED để job dọn dẹp không xoá (còn gửi lại được). Chỉ đổi
+     * từ SENT — bản ghi đã đặt lại về PENDING hay đã đánh dấu thì giữ nguyên.
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE outbox_messages SET status = 'DEAD_LETTERED'
+            WHERE id = :id AND status = 'SENT'
+            """, nativeQuery = true)
+    int markDeadLettered(@Param("id") long id);
 
     /** Xoá tối đa {@code limit} bản ghi SENT cũ hơn {@code retentionSeconds} (transaction riêng, gọi từ job). */
     @Transactional

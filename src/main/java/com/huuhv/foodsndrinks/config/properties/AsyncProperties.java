@@ -16,12 +16,20 @@ import java.time.Duration;
  * @param notification pool {@code notify-*} (executor mặc định của {@code @Async}; Slack/email đơn hàng đã chuyển sang
  *                     consumer JMS)
  * @param dashboard    pool {@code dashboard-*} chạy song song các truy vấn thống kê của dashboard admin
+ * @param outbox       pool {@code outbox-*} gửi bản ghi outbox ngay sau commit; đầy thì bỏ task (job outbox gửi lại)
  */
 @Validated
 @ConfigurationProperties("app.async")
 public record AsyncProperties(
         @DefaultValue @Valid Pool notification,
-        @DefaultValue @Valid DashboardPool dashboard) {
+        @DefaultValue @Valid DashboardPool dashboard,
+        @DefaultValue @Valid OutboxPool outbox) {
+
+    /**
+     * Tên bean executor gửi outbox ({@code AsyncConfig}). Đặt ở đây để {@code service.messaging} dùng được mà không import
+     * {@code config} ({@code JmsConfig} đã import {@code service.messaging} — ngược lại sẽ thành vòng).
+     */
+    public static final String OUTBOX_EXECUTOR = "outboxExecutor";
 
     /**
      * Kích thước chung của một pool; ràng buộc khai báo một lần ở đây (Bean Validation áp ràng buộc của interface cho
@@ -48,6 +56,16 @@ public record AsyncProperties(
     public record Pool(
             @DefaultValue("2") @Min(1) int coreSize,
             @DefaultValue("4") @Min(1) int maxSize,
+            @DefaultValue("100") @Min(0) int queueCapacity) implements PoolSize {
+    }
+
+    /**
+     * Pool gửi outbox ({@code outbox-*}). Mỗi thread giữ một connection JDBC trong lúc gửi (khoá bản ghi) — tính vào ngân
+     * sách connection của {@code config/ConnectionBudgetCheck}.
+     */
+    public record OutboxPool(
+            @DefaultValue("1") @Min(1) int coreSize,
+            @DefaultValue("2") @Min(1) int maxSize,
             @DefaultValue("100") @Min(0) int queueCapacity) implements PoolSize {
     }
 

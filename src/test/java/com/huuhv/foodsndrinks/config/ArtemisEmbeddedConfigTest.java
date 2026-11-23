@@ -48,6 +48,22 @@ class ArtemisEmbeddedConfigTest {
     }
 
     @Test
+    void productionFile_predeclaresDurableQueueOfEverySubscription() {
+        ConfigurationImpl configuration = apply(PRODUCTION_FILE);
+
+        // Không có queue lúc message tới (listener chưa đăng ký) thì broker bỏ message
+        assertThat(address(configuration, Destinations.ORDER_PLACED).getQueueConfigs())
+                .extracting(queue -> queue.getName().toString())
+                .containsExactlyInAnyOrder(Destinations.ORDER_PLACED_EMAIL_SUBSCRIPTION,
+                        Destinations.ORDER_PLACED_SLACK_SUBSCRIPTION);
+        assertThat(address(configuration, Destinations.ORDER_PLACED).getQueueConfigs()).allSatisfy(queue -> {
+            assertThat(queue.getAddress().toString()).isEqualTo(Destinations.ORDER_PLACED);
+            assertThat(queue.getRoutingType()).isEqualTo(RoutingType.MULTICAST);
+            assertThat(queue.isDurable()).isTrue();
+        });
+    }
+
+    @Test
     void productionFile_createsDeadLetterQueue_withItsOwnUnlimitedRetry() {
         ConfigurationImpl configuration = apply(PRODUCTION_FILE);
 

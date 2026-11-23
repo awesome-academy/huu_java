@@ -31,8 +31,8 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 
 /**
- * Nền chung của integration test JMS: MySQL Testcontainers + broker embedded, gửi Slack/email là mock, template topic là
- * spy (để giả lập broker lỗi). Các lớp con khai báo đúng bộ override này nên dùng chung MỘT Spring context.
+ * Nền chung của integration test JMS: MySQL Testcontainers + broker embedded, gửi Slack/email là mock, template topic và
+ * {@link JmsBrokerProbe} là spy (để giả lập broker lỗi). Các lớp con khai báo đúng bộ override này nên dùng chung MỘT Spring context.
  * <p>
  * Không {@code @Transactional}: message chỉ được gửi sau commit thật, consumer chạy trên thread khác. Mỗi test dùng
  * {@code orderId} ngẫu nhiên riêng và tự xoá {@code notification_logs}/{@code outbox_messages} của nó. Thời gian chờ giao
@@ -52,6 +52,7 @@ abstract class AbstractMessagingIntegrationTest {
     @MockitoBean protected SlackNotificationService slackNotificationService;
     @MockitoBean protected EmailNotificationService emailNotificationService;
     @MockitoSpyBean(name = JmsBrokerProperties.TOPIC_JMS_TEMPLATE) protected JmsTemplate topicJmsTemplate;
+    @MockitoSpyBean protected JmsBrokerProbe brokerProbe;
 
     private final List<Long> orderIds = new ArrayList<>();
 
@@ -101,7 +102,7 @@ abstract class AbstractMessagingIntegrationTest {
 
     protected static OrderPlacedMessage message(long orderId) {
         return new OrderPlacedMessage(orderId, "Nguyễn Văn A", "a@example.com", "0901234567", "12 Lê Lợi", null,
-                new BigDecimal("120000"), LocalDateTime.of(2026, 11, 23, 9, 30), List.of(
+                new BigDecimal("120000.00"), LocalDateTime.of(2026, 11, 23, 9, 30), List.of(
                 new OrderPlacedMessage.OrderLineItem("Trà sữa", 2, new BigDecimal("35000"), new BigDecimal("70000"))));
     }
 

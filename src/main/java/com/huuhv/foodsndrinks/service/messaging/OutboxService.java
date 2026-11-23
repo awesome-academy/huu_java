@@ -41,6 +41,16 @@ public class OutboxService {
         eventPublisher.publishEvent(new OutboxMessageSavedEvent(saved.getId()));
     }
 
+    /**
+     * Đánh dấu bản ghi có message đã vào DLQ ({@code OrderPlacedDlqListener}) để không bị job dọn dẹp xoá.
+     *
+     * @return {@code false} nếu bản ghi không còn ở SENT (đã bị xoá, đã đặt lại về PENDING hoặc đã đánh dấu)
+     */
+    @Transactional
+    public boolean markDeadLettered(long outboxId) {
+        return repository.markDeadLettered(outboxId) == 1;
+    }
+
     /** Phát trong transaction của {@link #enqueue}; {@link OutboxEventListener} nhận sau khi commit. */
     public record OutboxMessageSavedEvent(long outboxId) {
     }
