@@ -1,85 +1,55 @@
 package com.huuhv.foodsndrinks.service.security;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.Expiry;
-import com.github.benmanes.caffeine.cache.RemovalCause;
-import com.github.benmanes.caffeine.cache.Ticker;
-import lombok.extern.slf4j.Slf4j;
+import com.huuhv.foodsndrinks.repository.AttemptLimitRepository;
 
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
+import java.time.InstantSource;
+import java.util.function.Function;
 
 /**
  * Bộ đếm số lần thử theo key trong một cửa sổ thời gian cố định (tính từ lần thử ĐẦU TIÊN, không trượt), kèm khoá tạm
- * thời khi đủ số lần sai. Dùng cho chống brute-force đăng nhập/đổi mật khẩu và giới hạn tần suất đăng ký.
+ * thời khi đủ số lần sai. Dùng cho chống brute-force đăng nhập/đổi mật khẩu và giới hạn tần suất đăng ký. Tạo qua
+ * {@link AttemptLimiterFactory}.
  * <p>
  * <b>Giữ chỗ trước, kết luận sau:</b> {@link #tryAcquire} tăng bộ đếm NGAY khi bắt đầu một lần thử (trước bước tốn thời
  * gian như so BCrypt) và từ chối khi đã đủ {@code max} lần đang chạy hoặc đã sai. Nếu chỉ đếm sau khi so mật khẩu, nhiều
  * request song song cùng lọt qua bước kiểm tra lúc bộ đếm còn thấp. Sau đó người gọi kết luận: {@link #recordFailure}
  * (giữ lần đếm, đủ ngưỡng thì khoá), {@link #reset} (thành công, xoá bộ đếm) hoặc {@link #release} (trả lại lần đếm).
  * <p>
- * Bộ đếm và khoá nằm trong hai cache riêng: rải nhiều key rác chỉ đẩy được bộ đếm ra khỏi cache, khoá có giới hạn
- * riêng lớn hơn nhiều (mỗi khoá cần {@code max} lần sai, nên số khoá tăng chậm hơn số bộ đếm). Khoá bị loại vì cache
- * đầy được ghi WARN — đó là dấu hiệu bị tấn công. Bộ đếm trong bộ nhớ JVM: chỉ đúng khi chạy 1 instance.
+ * Bộ đếm và khoá nằm trong bảng {@code attempt_limits} ({@link AttemptLimitRepository}): mọi instance sau load balancer
+ * dùng chung, restart/deploy không xoá khoá. Key được băm HMAC trước khi lưu, không lưu IP/tên đăng nhập dạng rõ. Thời
+ * gian lấy theo đồng hồ của JVM — các instance phải đồng bộ giờ (NTP); lệch vài giây chỉ làm cửa sổ/khoá dài ngắn tương
+ * ứng.
  */
-@Slf4j
 final class AttemptLimiter {
 
-    static final long MAX_TRACKED_KEYS = 100_000;
-    static final long MAX_LOCKED_KEYS = 100_000;
+    /** Độ dài tối đa của cột {@code attempt_limits.limiter}. */
+    static final int MAX_NAME_LENGTH = 32;
 
     private final String name;
     private final int max;
+    private final Duration window;
     private final Duration lockDuration;
-    private final Ticker ticker;
-    /** Số lần thử đang chạy + số lần sai trong cửa sổ hiện tại. */
-    private final Cache<String, Integer> attempts;
-    /** Thời điểm hết khoá (nano giây theo {@link #ticker}). */
-    private final Cache<String, Long> locks;
+    private final AttemptLimitRepository repository;
+    private final Function<String, byte[]> keyHasher;
+    private final InstantSource clock;
 
     /**
-     * @param name tên phạm vi, chỉ dùng trong log
+     * @param name tên phạm vi: cột {@code limiter} (tách bộ đếm giữa các phạm vi) và trong log
      * @param max  số lần sai tối đa trong {@code window}; cũng là số lần thử được chạy đồng thời
      */
-    AttemptLimiter(String name, int max, Duration window, Duration lockDuration, Ticker ticker) {
+    AttemptLimiter(String name, int max, Duration window, Duration lockDuration, AttemptLimitRepository repository,
+                   Function<String, byte[]> keyHasher, InstantSource clock) {
+        if (name.isEmpty() || name.length() > MAX_NAME_LENGTH) {
+            throw new IllegalArgumentException("Limiter name must be 1-" + MAX_NAME_LENGTH + " characters: " + name);
+        }
         this.name = name;
         this.max = max;
+        this.window = window;
         this.lockDuration = lockDuration;
-        this.ticker = ticker;
-        long windowNanos = window.toNanos();
-        this.attempts = Caffeine.newBuilder()
-                .maximumSize(MAX_TRACKED_KEYS)
-                .ticker(ticker)
-                .executor(Runnable::run)
-                .expireAfter(new Expiry<String, Integer>() {
-                    @Override
-                    public long expireAfterCreate(String key, Integer value, long currentTime) {
-                        return windowNanos;
-                    }
-
-                    @Override
-                    public long expireAfterUpdate(String key, Integer value, long currentTime, long currentDuration) {
-                        return currentDuration;
-                    }
-
-                    @Override
-                    public long expireAfterRead(String key, Integer value, long currentTime, long currentDuration) {
-                        return currentDuration;
-                    }
-                })
-                .build();
-        this.locks = Caffeine.newBuilder()
-                .maximumSize(MAX_LOCKED_KEYS)
-                .ticker(ticker)
-                .executor(Runnable::run)
-                .expireAfterWrite(lockDuration)
-                .removalListener((String key, Long value, RemovalCause cause) -> {
-                    if (cause == RemovalCause.SIZE) {
-                        log.warn("Login limiter '{}' evicted a lock because the lock cache is full", name);
-                    }
-                })
-                .build();
+        this.repository = repository;
+        this.keyHasher = keyHasher;
+        this.clock = clock;
     }
 
     int max() {
@@ -92,12 +62,11 @@ final class AttemptLimiter {
 
     /** @return số giây còn lại của khoá (làm tròn lên, tối thiểu 1); 0 nếu key không bị khoá */
     long lockedForSeconds(String key) {
-        Long lockedUntil = locks.getIfPresent(key);
-        if (lockedUntil == null) {
+        long remainingMillis = repository.findLockedUntil(name, keyHasher.apply(key)) - clock.millis();
+        if (remainingMillis <= 0) {
             return 0;
         }
-        long remainingNanos = Math.max(0, lockedUntil - ticker.read());
-        return Math.max(1, TimeUnit.NANOSECONDS.toSeconds(remainingNanos + 999_999_999));
+        return Math.max(1, (remainingMillis + 999) / 1000);
     }
 
     /**
@@ -106,12 +75,8 @@ final class AttemptLimiter {
      * @return {@code false} nếu đã có {@code max} lần thử đang chạy hoặc đã sai trong cửa sổ (không tăng bộ đếm)
      */
     boolean tryAcquire(String key) {
-        int count = attempts.asMap().merge(key, 1, Integer::sum);
-        if (count > max) {
-            release(key);
-            return false;
-        }
-        return true;
+        long now = clock.millis();
+        return repository.tryAcquire(name, keyHasher.apply(key), max, now, now + window.toMillis());
     }
 
     /**
@@ -120,22 +85,17 @@ final class AttemptLimiter {
      * @return số lần sai nếu lần này làm key bị khoá, ngược lại 0
      */
     int recordFailure(String key) {
-        Integer count = attempts.getIfPresent(key);
-        if (count == null || count < max) {
-            return 0;
-        }
-        locks.put(key, ticker.read() + lockDuration.toNanos());
-        attempts.invalidate(key);
-        return count;
+        long now = clock.millis();
+        return repository.lockIfReached(name, keyHasher.apply(key), max, now, now + lockDuration.toMillis()) ? max : 0;
     }
 
     /** Lần thử thành công: xoá bộ đếm (gồm cả lần đã giữ chỗ). */
     void reset(String key) {
-        attempts.invalidate(key);
+        repository.resetAttempts(name, keyHasher.apply(key));
     }
 
     /** Trả lại một lần đã giữ chỗ mà không tính là sai (vd. thành công nhưng không được phép xoá cả bộ đếm). */
     void release(String key) {
-        attempts.asMap().computeIfPresent(key, (k, count) -> count <= 1 ? null : count - 1);
+        repository.release(name, keyHasher.apply(key), clock.millis());
     }
 }

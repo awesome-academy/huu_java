@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-F&B Store ("foodsndrinks") — một ứng dụng Spring Boot 4.0.7 / Java 25 phục vụ ba phần: trang quản trị SSR (`/admin/**`), storefront SSR cho khách hàng (`/`, `/menu`, `/cart`, ...) và REST API dùng JWT (`/api/v1/**`). Tài liệu riêng cho từng phần nằm ở [docs/admin](docs/admin/README.md), [docs/web](docs/web/README.md), [docs/api](docs/api/README.md) — cập nhật các file này khi thêm endpoint/trang mới.
+F&B Store ("foodsndrinks") — một ứng dụng Spring Boot 4.0.10 / Java 25 phục vụ ba phần: trang quản trị SSR (`/admin/**`), storefront SSR cho khách hàng (`/`, `/menu`, `/cart`, ...) và REST API dùng JWT (`/api/v1/**`). Tài liệu riêng cho từng phần nằm ở [docs/admin](docs/admin/README.md), [docs/web](docs/web/README.md), [docs/api](docs/api/README.md) — cập nhật các file này khi thêm endpoint/trang mới.
 
 Đây là mock project đã hoàn thành phần cơ bản; giai đoạn hiện tại là **khóa Advance**: bổ sung các công nghệ ở mục [Lộ trình Advance](#lộ-trình-advance) và mọi code mới phải tuân thủ [OWASP Secure Coding Practices](#owasp-secure-coding--quy-tắc-bắt-buộc).
 
@@ -41,7 +41,7 @@ docker compose down                                          # thêm -v để xo
 
 ## Kiến trúc
 
-Package gốc `com.huuhv.foodsndrinks`, tuân thủ nghiêm 3 lớp: controller → service → repository. Controller không bao giờ gọi repository; toàn bộ business logic nằm ở `service/`. Dữ liệu vào/ra luôn đi qua `dto/request` (`*ReqDto`) và `dto/response` (`*ResDto`) — không bao giờ bind entity từ view/API. Việc map DTO được viết tay trong service (ModelMapper và Caffeine có trong classpath nhưng chưa được dùng).
+Package gốc `com.huuhv.foodsndrinks`, tuân thủ nghiêm 3 lớp: controller → service → repository. Controller không bao giờ gọi repository; toàn bộ business logic nằm ở `service/`. Dữ liệu vào/ra luôn đi qua `dto/request` (`*ReqDto`) và `dto/response` (`*ResDto`) — không bao giờ bind entity từ view/API. Việc map DTO được viết tay trong service (ModelMapper có trong classpath nhưng chưa được dùng; Caffeine chỉ dùng làm cache của `PwnedPasswordsChecker`).
 
 ### Security: ba filter chain có thứ tự (`config/SecurityConfig.java`)
 1. `@Order(1)` `/actuator/**` — stateless; `/actuator/health` public, còn lại cần `ROLE_ADMIN`.
@@ -55,6 +55,7 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 - `controller/GlobalErrorController` (`/error`) chỉ xử lý lỗi dispatch cấp servlet và exception đã thoát khỏi mọi advice; nó chọn trả JSON, template `error/admin/*` hay `error/*` dựa theo prefix của URI.
 - Mỗi phần có một advice inject model attribute dùng chung cho layout: `AdminLayoutModelAdvice` (`currentPath` và mảng giá trị của tất cả enum cho dropdown) và `WebLayoutModelAdvice` (`cartItemCount` cho badge trên navbar).
 - Các exception nghiệp vụ dùng chung giữa các service: `ResourceNotFoundException` (404), `DuplicateResourceException` (409), `IllegalArgumentException` (400).
+- Exception mà service ném hoặc exception handler bắt đặt ở `exception/` (kể cả loại kế thừa exception của Spring Security như `LoginThrottledException`), không đặt ở `security/` — `security` đã phụ thuộc `service.security`/`exception`, đặt ngược lại sẽ tạo vòng phụ thuộc giữa package.
 
 ### Ghi chú nghiệp vụ
 - **Giỏ hàng là một `Order` có status `CART`** (xem `OrderStatus`). Thêm/sửa/xóa thao tác trên các `OrderDetail` của order đó (service luôn kiểm tra quyền sở hữu qua `requireOwnedCartItem`); `OrderService.checkout` chuyển nó sang `PENDING`. Các query admin/thống kê đều loại trừ order `CART`. Các endpoint thay đổi giỏ hàng trong `CartController` được gọi qua `fetch()` từ `static/js/web/cart.js` và trả JSON (`CartPayloadResDto`), không redirect.
@@ -67,6 +68,8 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 
 ### Cấu hình
 `application.yml` (dùng chung: mail, OAuth2 client, Slack, cron) + `application-dev.yml` (datasource local, log DEBUG, bật Swagger, giá trị fallback cho JWT/remember-me) / `application-prod.yml` (mọi thứ lấy từ biến môi trường, log level WARN/INFO, tắt Swagger, actuator chỉ expose `health`). Appender/pattern log nằm ở `logback-spring.xml` (`dev`/`prod`: console + `foodsndrinks.log` text qua `AsyncAppender`, 30 ngày; `prod` thêm `audit.log` JSON ECS ghi đồng bộ, 90 ngày; thư mục `logs/` ở dev, `logs/<app.instance-id>/` ở prod; có profile `test` hoặc không bật dev/prod: chỉ console) — không đặt `logging.file.name` trong yml. Chọn profile qua `SPRING_PROFILES_ACTIVE` (mặc định `dev`). Bảng đầy đủ các biến môi trường nằm trong [README.md](README.md).
+
+Record `@ConfigurationProperties` đặt ở `config/properties/` (đăng ký bằng `@EnableConfigurationProperties` trong class config) để service đọc được mà không import `config` — tránh vòng `config ↔ service`.
 
 ## Quy ước
 
@@ -214,7 +217,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 **Authentication & password**
 - Mật khẩu lưu bằng `PasswordEncoder` (BCrypt), không bao giờ log hay trả về.
 - Chính sách mật khẩu (đã làm): mật khẩu mới luôn khai báo `@ValidPassword` + `@NotCompromisedPassword(groups = PasswordBreachCheck.class)` trên field và `@GroupSequence({TheDto.class, PasswordBreachCheck.class})` trên DTO (`PasswordConstraintConventionTest` kiểm tra) — nguồn duy nhất là `service/security/PasswordPolicy`: 8–64 ký tự, ≤ 72 byte UTF-8 vì BCrypt; kiểm tra bị lộ qua `CompromisedPasswordChecker` = `security/PwnedPasswordsChecker` (cache theo prefix) chỉ chạy khi mọi ràng buộc khác đã đạt. Không tự viết `@Size` cho mật khẩu. `POST /register` giới hạn theo IP (`security/RegistrationRateLimitFilter`).
-- Chống brute-force (đã làm): `security/LoginAttemptAwareAuthenticationProvider` (bean `AuthenticationProvider` duy nhất, dùng chung form + API) đếm qua `service/security/LoginAttemptService` (Caffeine, chỉ đúng khi 1 instance) ở 3 phạm vi: cặp (IP, tên nhập), IP (IPv6 gộp /64), tài khoản (tên nhập + username thật sau khi tra DB); key tên được chuẩn hoá như collation MySQL (NFKD, bỏ dấu, viết thường). Lần thử được giữ chỗ TRƯỚC khi so BCrypt (`AttemptLimiter`) để request song song không vượt ngưỡng; đăng nhập đúng không xoá bộ đếm theo IP. Trạng thái tài khoản kiểm tra SAU mật khẩu. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu". Ô "mật khẩu hiện tại" khi đổi mật khẩu cũng bị giới hạn (vượt → đăng xuất). Thao tác mới có so mật khẩu thì dùng lại `LoginAttemptService`.
+- Chống brute-force (đã làm): `security/LoginAttemptAwareAuthenticationProvider` (bean `AuthenticationProvider` duy nhất, dùng chung form + API) đếm qua `service/security/LoginAttemptService` ở 3 phạm vi: cặp (IP, tên nhập), IP (IPv6 gộp /64), tài khoản (tên nhập + username thật sau khi tra DB); key tên được chuẩn hoá như collation MySQL (NFKD, bỏ dấu, viết thường). Bộ đếm/khoá nằm trong bảng `attempt_limits` (`AttemptLimiter` → `repository/JdbcAttemptLimitRepository`: câu SQL nguyên tử, chạy ngoài transaction của người gọi để lần sai không bị rollback; key băm HMAC bằng `ATTEMPT_LIMITS_KEY_SECRET`; `AttemptLimitCleanupJob` xoá bản ghi hết hạn) nên dùng chung giữa các instance và không mất khi restart; `window`/`lock-duration` ≥ 1 giây (`@DurationMin`). Unit test dùng `InMemoryAttemptLimitRepository` (thư mục test) có cùng ngữ nghĩa. Lần thử được giữ chỗ TRƯỚC khi so BCrypt (`AttemptLimiter`) để request song song không vượt ngưỡng; đăng nhập đúng không xoá bộ đếm theo IP. Trạng thái tài khoản kiểm tra SAU mật khẩu. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu". Ô "mật khẩu hiện tại" khi đổi mật khẩu cũng bị giới hạn (vượt → đăng xuất). Thao tác mới có so mật khẩu thì dùng lại `LoginAttemptService`.
 - OAuth2 chỉ tự liên kết theo email khi provider xác minh email và tài khoản có sẵn không có mật khẩu (`UserService.provisionOAuthUser`, chống chiếm trước tài khoản).
 - JWT: secret ≥ 256 bit từ env, HS256 cố định, kiểm tra hạn + `iss`/`aud` (`jwt.issuer`/`jwt.audience`, đã làm trong `JwtUtil`); không đặt dữ liệu nhạy cảm vào claims. Filter kiểm tra token trước khi tra DB.
 
@@ -227,7 +230,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **CSRF & CORS**
 - Không tắt CSRF ở chain web. Chỉ tắt cho chain stateless dùng Bearer token/HTTP Basic (`/api/**`, `/ws/**`). STOMP CONNECT phải mang CSRF token.
-- CORS chỉ mở cho `/api/**` qua bean `corsConfigurationSource` (`SecurityConfig`) với allowlist `app.cors.allowed-origins` (`CORS_ALLOWED_ORIGINS`, rỗng = same-origin; mỗi giá trị phải đúng `scheme://host[:port]`, `*`/`null`/có path/`http` ngoài localhost làm app không khởi động — `CorsProperties`), `allowCredentials=false`. Không mở CORS cho chain web.
+- CORS chỉ mở cho `/api/**` qua bean `corsConfigurationSource` (`SecurityConfig`) với allowlist `app.cors.allowed-origins` (`CORS_ALLOWED_ORIGINS`, rỗng = same-origin; mỗi giá trị phải đúng `scheme://host[:port]`, `*`/`null`/có path/`http` ngoài localhost làm app không khởi động — `config/properties/CorsProperties`), `allowCredentials=false`. Không mở CORS cho chain web.
 
 **Cryptography & secrets**
 - Không commit secret thật vào repo, kể cả làm giá trị mặc định `${VAR:default}` trong `application*.yml`. Default không được là khoá/secret mà app vẫn dùng được (kể cả chuỗi `changeme-*` — repo public nên ai cũng biết): khoá ký/mã hoá ở dev dùng `${VAR:${random.value}${random.value}}` — mỗi `random.value` là 16 byte từ `SecureRandom`, ghép lại đủ 256 bit (như `jwt.secret`, `app.security.remember-me-key`; không dùng `random.uuid`, chỉ có 122 bit ngẫu nhiên), còn lại để trống để app báo lỗi khi thiếu. Secret thật đặt ở biến môi trường hoặc file local đã nằm trong `.gitignore`. Secret nào lỡ bị push thì phải rotate.

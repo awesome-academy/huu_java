@@ -1,4 +1,4 @@
-package com.huuhv.foodsndrinks.security;
+package com.huuhv.foodsndrinks.exception;
 
 import lombok.Getter;
 import org.springframework.security.authentication.LockedException;

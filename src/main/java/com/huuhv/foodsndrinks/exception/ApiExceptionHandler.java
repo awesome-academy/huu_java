@@ -1,7 +1,6 @@
 package com.huuhv.foodsndrinks.exception;
 
 import com.huuhv.foodsndrinks.dto.response.ErrorResponse;
-import com.huuhv.foodsndrinks.security.LoginThrottledException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;

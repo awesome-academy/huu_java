@@ -1,6 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
-import com.huuhv.foodsndrinks.config.LoginAttemptProperties;
+import com.huuhv.foodsndrinks.config.properties.LoginAttemptProperties;
 import com.huuhv.foodsndrinks.dto.request.ProfileUpdateReqDto;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.InMemoryAttemptLimitRepository;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
+import java.time.InstantSource;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,7 +48,8 @@ class UserServiceSecurityTest {
     @BeforeEach
     void setUp() {
         LoginAttemptService loginAttemptService = new LoginAttemptService(
-                new LoginAttemptProperties(3, 20, 50, Duration.ofMinutes(15), Duration.ofMinutes(15)), auditLogService);
+                new LoginAttemptProperties(3, 20, 50, Duration.ofMinutes(15), Duration.ofMinutes(15)),
+                InMemoryAttemptLimitRepository.factory(InstantSource.system()), auditLogService);
         userService = new UserService(userRepository, passwordEncoder, auditLogService, loginAttemptService);
         lenient().when(userRepository.findByAuthProviderAndProviderId(any(), anyString())).thenReturn(Optional.empty());
     }

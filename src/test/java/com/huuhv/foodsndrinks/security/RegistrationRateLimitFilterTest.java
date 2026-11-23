@@ -1,7 +1,8 @@
 package com.huuhv.foodsndrinks.security;
 
-import com.huuhv.foodsndrinks.config.RegistrationRateLimitProperties;
+import com.huuhv.foodsndrinks.config.properties.RegistrationRateLimitProperties;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.InMemoryAttemptLimitRepository;
 import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
@@ -9,6 +10,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.time.Duration;
+import java.time.InstantSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -20,7 +22,8 @@ class RegistrationRateLimitFilterTest {
 
     private final AuditLogService auditLogService = mock(AuditLogService.class);
     private final RegistrationRateLimitFilter filter = new RegistrationRateLimitFilter(
-            new RegistrationRateLimitService(new RegistrationRateLimitProperties(2, Duration.ofHours(1)), auditLogService));
+            new RegistrationRateLimitService(new RegistrationRateLimitProperties(2, Duration.ofHours(1)),
+                    InMemoryAttemptLimitRepository.factory(InstantSource.system()), auditLogService));
 
     private MockHttpServletResponse send(String method, String path, String ip) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest(method, path);

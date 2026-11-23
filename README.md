@@ -11,7 +11,7 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 ## Tech Stack
 
 - **Ngôn ngữ:** Java 25
-- **Framework:** Spring Boot 4.x (`spring-boot-starter-parent` 4.0.7)
+- **Framework:** Spring Boot 4.x (`spring-boot-starter-parent` 4.0.10)
 - **Build tool:** Maven (Maven Wrapper đi kèm)
 - **Database:** MySQL 8 + Spring Data JPA / Hibernate
 - **Migration:** Flyway (`src/main/resources/db/migration`)
@@ -150,6 +150,7 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `JWT_ISSUER` / `JWT_AUDIENCE` | — | Claim `iss` / `aud` của JWT, bắt buộc khớp khi kiểm tra token (mặc định `foodsndrinks` / `foodsndrinks-api`; đổi thì token cũ hết hiệu lực) |
 | `CORS_ALLOWED_ORIGINS` | Khi SPA khác origin gọi API | Origin được gọi `/api/**` từ trình duyệt, cách nhau bởi dấu phẩy (vd. `https://app.example.com`). Rỗng = chỉ same-origin. Phải đúng dạng `scheme://host[:port]` (không `/` cuối), không `*`, không `null`; `http` chỉ cho localhost — sai thì app không khởi động |
 | `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random 256 bit) |
+| `ATTEMPT_LIMITS_KEY_SECRET` | Prod | Khoá HMAC (≥ 32 ký tự) băm IP/tên đăng nhập trước khi lưu bộ đếm chống brute-force và giới hạn đăng ký vào bảng `attempt_limits` (dùng chung giữa các instance, không mất khi restart). Mọi instance phải dùng chung một giá trị; đổi giá trị thì mọi bộ đếm/khoá về 0. Dev không đặt thì tự sinh random 256 bit mỗi lần khởi động |
 | `SESSION_COOKIE_SECURE` | — | Cờ `Secure` của cookie session (`JSESSIONID`, chỉ gửi qua HTTPS). Mặc định `false` ở dev (http://localhost), `true` ở prod |
 | `NVD_API_KEY` | Khi chạy Dependency-Check | API key của NVD cho `dependency-check:check` (xem [Quét lỗ hổng thư viện](#quét-lỗ-hổng-thư-viện-owasp-dependency-check)); không dùng khi chạy app |
 | `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |
