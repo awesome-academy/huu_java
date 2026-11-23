@@ -1,4 +1,4 @@
-package com.huuhv.foodsndrinks.config;
+package com.huuhv.foodsndrinks.config.properties;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

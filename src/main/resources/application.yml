@@ -122,7 +122,7 @@ app:
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
   # (application-prod.yml + config/InstanceIdCheck), vì hostname của container đổi mỗi lần tạo lại.
   instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
-  # Thread pool (config/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
+  # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy, không mất thông báo); dashboard từ chối (AbortPolicy) → /admin trả 503.
   async:
     notification:      # notify-*: gửi Slack/email (@Async mặc định)
@@ -136,8 +136,9 @@ app:
       queue-capacity: 50
       timeout: 10s     # quá thời gian (hoặc 1 truy vấn lỗi, hoặc pool đầy) thì /admin trả 503
   security:
-    # Chống brute-force (form + API, bộ đếm trong bộ nhớ — chỉ đúng khi chạy 1 instance). Trong window (tính từ lần thử
-    # đầu tiên), vượt ngưỡng phạm vi nào thì khoá phạm vi đó lock-duration:
+    # Chống brute-force (form + API). Bộ đếm nằm trong bảng attempt_limits (dùng chung giữa các instance, key băm HMAC
+    # bằng app.security.attempt-limits.key-secret — đặt theo profile). Trong window (tính từ lần thử đầu tiên, >= 1s),
+    # vượt ngưỡng phạm vi nào thì khoá phạm vi đó lock-duration (>= 1s):
     # - max-failures: cặp (IP, tên đăng nhập); cũng là số lần sai mật khẩu hiện tại khi đổi mật khẩu (→ đăng xuất)
     # - max-failures-per-ip: mọi tên đăng nhập từ một IP (IPv6: mạng /64) — chặn password spraying
     # - max-failures-per-account: một tài khoản từ mọi IP — chặn tấn công phân tán (cao để khó khoá tài khoản người khác)

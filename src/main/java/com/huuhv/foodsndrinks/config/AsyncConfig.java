@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import com.huuhv.foodsndrinks.logging.MdcTaskDecorator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;

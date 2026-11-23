@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.task.TaskExecutionAutoConfiguration;

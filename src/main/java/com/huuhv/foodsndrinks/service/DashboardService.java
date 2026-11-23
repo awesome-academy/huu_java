@@ -1,7 +1,7 @@
 package com.huuhv.foodsndrinks.service;
 
 import com.huuhv.foodsndrinks.config.AsyncConfig;
-import com.huuhv.foodsndrinks.config.AsyncProperties;
+import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
 import com.huuhv.foodsndrinks.dto.response.DashboardResDto;
 import com.huuhv.foodsndrinks.enums.OrderStatus;

@@ -43,6 +43,10 @@ jwt:
 app:
   security:
     remember-me-key: ${random.value}${random.value}
+    attempt-limits:
+      # Khoá HMAC của bảng attempt_limits chỉ khai báo ở dev/prod; test chạy profile "test" nên phải khai báo ở đây
+      # (ngẫu nhiên mỗi lần chạy, không lấy ATTEMPT_LIMITS_KEY_SECRET trong .env)
+      key-secret: ${random.value}${random.value}
     # Mọi request của MockMvc đều đến từ 127.0.0.1 và bộ đếm dùng chung trong cả Spring context: nới giới hạn theo IP để
     # các test không chặn nhau. Test của giới hạn theo IP tự đặt remoteAddr riêng hoặc dùng unit test.
     login-attempts:

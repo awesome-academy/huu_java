@@ -1,4 +1,4 @@
-package com.huuhv.foodsndrinks.config;
+package com.huuhv.foodsndrinks.config.properties;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;

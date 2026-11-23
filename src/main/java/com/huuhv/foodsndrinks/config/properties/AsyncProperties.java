@@ -1,4 +1,4 @@
-package com.huuhv.foodsndrinks.config;
+package com.huuhv.foodsndrinks.config.properties;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
@@ -10,7 +10,7 @@ import org.springframework.validation.annotation.Validated;
 import java.time.Duration;
 
 /**
- * Kích thước các thread pool của {@link AsyncConfig}. Thời gian chờ task khi tắt app không nằm ở đây mà ở
+ * Kích thước các thread pool của {@link com.huuhv.foodsndrinks.config.AsyncConfig}. Thời gian chờ task khi tắt app không nằm ở đây mà ở
  * {@code spring.task.execution.shutdown.*} — {@code ThreadPoolTaskExecutorBuilder} áp cho mọi executor.
  *
  * @param notification pool {@code notify-*} gửi Slack/email (executor mặc định của {@code @Async})
@@ -52,7 +52,7 @@ public record AsyncProperties(
 
     /**
      * Mỗi truy vấn chiếm một connection JDBC: {@code maxSize} không được quá nửa pool Hikari, để dashboard không lấy hết
-     * connection của request khác — kiểm tra lúc khởi động trong {@link AsyncConfig}.
+     * connection của request khác — kiểm tra lúc khởi động trong {@link com.huuhv.foodsndrinks.config.AsyncConfig}.
      *
      * @param timeout thời gian chờ tối đa cho toàn bộ truy vấn của một lần tải dashboard
      */

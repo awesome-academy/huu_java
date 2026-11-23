@@ -48,6 +48,8 @@ app:
   instance-id: ${INSTANCE_ID:}
   security:
     remember-me-key: ${REMEMBER_ME_KEY}
+    attempt-limits:
+      key-secret: ${ATTEMPT_LIMITS_KEY_SECRET}  # >= 32 chars, giống nhau ở mọi instance
 jwt:
   secret: ${JWT_SECRET}  # >= 32 chars
   expiration: 3600000 # 1 hour
