@@ -47,18 +47,27 @@ services:
       timeout: 5s
       retries: 10
 
-  # Broker JMS cho các tính năng messaging sắp làm (app hiện chưa kết nối tới).
+  # Broker JMS (ActiveMQ Artemis) của container app (ARTEMIS_MODE=native). App chạy bằng JDK local mặc định dùng broker
+  # embedded; muốn nối broker này thì đặt ARTEMIS_MODE=native + ARTEMIS_EMBEDDED_ENABLED=false trong .env.
+  # Version trùng artemis.version trong pom.xml (client). Từ 2.50 image đổi tên apache/activemq-artemis → apache/artemis.
   artemis:
-    image: apache/activemq-artemis:2.38.0
+    image: apache/artemis:2.57.0
     container_name: foodsndrinks-artemis
     environment:
       ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
       ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+    # Address/retry/DLQ: cùng file với broker embedded, nạp lại MỖI lần khởi động. Không dùng thư mục etc-override của
+    # image: image chỉ chép nó khi tạo instance lần đầu, volume artemis-instance đã có thì bỏ qua (sửa file không có tác dụng).
+    command: ["run", "--properties", "/opt/foodsndrinks/broker.properties"]
     ports:
       - "127.0.0.1:${ARTEMIS_PORT:-61616}:61616"           # JMS (core / OpenWire / AMQP)
       - "127.0.0.1:${ARTEMIS_CONSOLE_PORT:-8161}:8161"     # Web console
     volumes:
-      - artemis-data:/var/lib/artemis-instance
+      # Volume mới (không dùng lại artemis-data): instance tạo bằng image apache/activemq-artemis cũ trỏ ARTEMIS_HOME tới
+      # /opt/activemq-artemis, không còn trong image apache/artemis. Volume artemis-data cũ có thể xoá
+      # (docker volume ls | grep artemis-data, rồi docker volume rm <tên>).
+      - artemis-instance:/var/lib/artemis-instance
+      - ./src/main/resources/artemis/broker.properties:/opt/foodsndrinks/broker.properties:ro
 
   app:
     <<: *app-common
@@ -73,6 +82,11 @@ services:
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       UPLOAD_DIR: /app/uploads
+      # Dùng broker của service artemis (không chạy broker embedded trong container). Cần cả hai biến: Boot 4 tạo broker
+      # embedded theo ARTEMIS_EMBEDDED_ENABLED, không xét mode. Không đặt ở x-app-common: container maven chạy test
+      # luôn dùng broker embedded.
+      ARTEMIS_MODE: native
+      ARTEMIS_EMBEDDED_ENABLED: "false"
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     volumes:
@@ -132,5 +146,5 @@ services:
 
 volumes:
   mysql-data:
-  artemis-data:
+  artemis-instance:
   maven-repo:

@@ -44,7 +44,10 @@ import java.lang.annotation.Target;
         "spring.datasource.url=jdbc:mysql://testcontainers-required.invalid:3306/foodsndrinks",
         "jwt.secret=${random.value}${random.value}",
         "app.security.remember-me-key=${random.value}${random.value}",
-        "app.security.attempt-limits.key-secret=${random.value}${random.value}"
+        "app.security.attempt-limits.key-secret=${random.value}${random.value}",
+        // Broker embedded trong JVM, kể cả khi môi trường có SPRING_ARTEMIS_* (relaxed binding thắng file yml)
+        "spring.artemis.mode=embedded",
+        "spring.artemis.embedded.enabled=true"
 })
 @Tag("integration")
 public @interface IntegrationTest {

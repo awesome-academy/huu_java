@@ -33,6 +33,26 @@ spring:
   # gian dừng (docker-compose: stop_grace_period của service app).
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  # JMS với ActiveMQ Artemis (config/JmsConfig, config/ArtemisEmbeddedConfig).
+  # - embedded (mặc định — dev, test): broker chạy trong JVM, chỉ nối in-VM (không mở port), không lưu message ra đĩa.
+  # - native: broker riêng (service artemis của compose, prod). Phải tắt CẢ embedded.enabled: Boot 4 tạo broker embedded
+  #   theo embedded.enabled, không xét mode (sai cặp thì app không khởi động).
+  artemis:
+    mode: ${ARTEMIS_MODE:embedded}
+    # Timeout kết nối/gọi broker: broker chết thì gửi message báo lỗi sau vài giây thay vì treo thread (OWASP A10)
+    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}?connectTimeoutMillis=5000&callTimeout=10000
+    user: ${ARTEMIS_USER:}
+    password: ${ARTEMIS_PASSWORD:}
+    embedded:
+      enabled: ${ARTEMIS_EMBEDDED_ENABLED:true}
+      persistent: false
+  jms:
+    listener:
+      # Listener ném exception → rollback → broker giao lại; quá số lần thì vào DLQ (artemis/broker.properties)
+      session:
+        transacted: true
+      min-concurrency: 1
+      max-concurrency: 3
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
@@ -122,6 +142,11 @@ app:
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
   # (application-prod.yml + config/InstanceIdCheck), vì hostname của container đổi mỗi lần tạo lại.
   instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
+  jms:
+    # File broker properties áp lên broker embedded, theo thứ tự (file sau ghi đè khoá trùng). Broker riêng (native) nạp
+    # cùng file artemis/broker.properties bằng `artemis run --properties` (docker-compose.yaml)
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy, không mất thông báo); dashboard từ chối (AbortPolicy) → /admin trả 503.
   async:

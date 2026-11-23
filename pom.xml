@@ -37,6 +37,14 @@
 		<jacoco.version>0.8.14</jacoco.version>
 		<!-- Không có trong Spring Boot BOM. Dòng 7.x build trên Spring Framework 7 -->
 		<shedlock.version>7.10.1</shedlock.version>
+		<!-- Ghi đè 2.43.0 của BOM Spring Boot 4.0.x:
+		     - 2.43.0 không khởi động broker embedded trên JDK 24+ (Subject.getSubject → UnsupportedOperationException);
+		     - ActiveMQ Artemis 2.11.0–2.44.0 dính CVE-2026-27446 (CVSS 9.8, broker bị ép nối federation Core ra broker giả
+		       mạo), sửa từ Apache Artemis 2.52.0.
+		     Từ 2.50 dự án đổi groupId sang org.apache.artemis: các artifact org.apache.activemq:artemis-* mà BOM Boot quản lý
+		     (vd. artemis-jakarta-client của spring-boot-starter-artemis) ở version này chỉ là POM relocation sang groupId mới.
+		     Bỏ dòng này khi BOM Boot >= 2.52. Giữ cùng version với image apache/artemis trong docker-compose.yaml. -->
+		<artemis.version>2.57.0</artemis.version>
 	</properties>
     <dependencies>
         <dependency>
@@ -66,6 +74,18 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+        <!-- JMS (Jakarta Messaging) với ActiveMQ Artemis — config/JmsConfig. Broker embedded trong JVM (dev/test) cần
+             artemis-jakarta-server; container app của compose và prod nối broker riêng (spring.artemis.mode=native,
+             spring.artemis.embedded.enabled=false — xem config/ArtemisEmbeddedConfig) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-artemis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.artemis</groupId>
+            <artifactId>artemis-jakarta-server</artifactId>
+            <version>${artemis.version}</version>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>

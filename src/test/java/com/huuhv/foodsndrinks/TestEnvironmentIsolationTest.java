@@ -30,6 +30,12 @@ class TestEnvironmentIsolationTest {
     }
 
     @Test
+    void jms_usesEmbeddedBroker_notTheComposeBroker() {
+        assertThat(environment.getProperty("spring.artemis.mode")).isEqualTo("embedded");
+        assertThat(environment.getProperty("spring.artemis.embedded.enabled")).isEqualTo("true");
+    }
+
+    @Test
     void signingKeys_areRandomPerRun_notTakenFromEnv() {
         // getProperty("JWT_SECRET") gồm cả biến môi trường lẫn .env (spring.config.import)
         assertThat(environment.getProperty("jwt.secret"))

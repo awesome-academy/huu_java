@@ -28,6 +28,15 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  # Prod luôn dùng broker riêng (đã nạp artemis/broker.properties — README, mục Messaging), không chạy broker embedded.
+  # Không có default: thiếu biến thì app không khởi động.
+  artemis:
+    mode: native
+    broker-url: tcp://${ARTEMIS_HOST}:${ARTEMIS_PORT}?connectTimeoutMillis=5000&callTimeout=10000
+    user: ${ARTEMIS_USER}
+    password: ${ARTEMIS_PASSWORD}
+    embedded:
+      enabled: false
 # Customize logging for Prod environment. Appender (console + logs/<app.instance-id>/foodsndrinks.log + audit.log,
 # xoay vòng; mỗi instance một thư mục) khai báo trong logback-spring.xml — không đặt logging.file.name ở đây.
 logging:
