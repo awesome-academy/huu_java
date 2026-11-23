@@ -156,6 +156,15 @@ app:
     # cùng file artemis/broker.properties bằng `artemis run --properties` (docker-compose.yaml)
     embedded-broker-properties:
       - classpath:artemis/broker.properties
+  # Transactional Outbox (config/properties/OutboxProperties, bảng outbox_messages): message ghi cùng transaction với đơn,
+  # gửi ngay sau commit; gửi lỗi (broker chết) thì job OutboxRelayJob gửi lại mỗi poll-interval. Quá max-attempts lần →
+  # FAILED + log ERROR (đặt lại bằng tay — README, mục Messaging).
+  outbox:
+    poll-interval: 1m     # chu kỳ job; broker sống lại thì bản ghi kẹt được gửi trong ≤ 1 chu kỳ
+    retry-delay: 30s      # chờ tối thiểu trước lần thử sau, phải ≤ poll-interval
+    max-attempts: 5
+    batch-size: 100       # số bản ghi tối đa mỗi lần job chạy
+    retention: 7d         # bản ghi SENT cũ hơn thì bị xoá
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy, không mất thông báo); dashboard từ chối (AbortPolicy) → /admin trả 503.
   async:

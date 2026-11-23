@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.dto.response.OrderResDto;
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.OrderDetail;
@@ -12,9 +13,9 @@ import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
-import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.service.messaging.OutboxService;
+import com.huuhv.foodsndrinks.service.messaging.OutboxType;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -36,7 +37,7 @@ public class OrderService {
     private final OrderDetailRepository  orderDetailRepository;
     private final ProductRepository      productRepository;
     private final ProductImageRepository productImageRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    private final OutboxService          outboxService;
     private final AuditLogService        auditLogService;
 
     @Transactional(readOnly = true)
@@ -147,7 +148,8 @@ public class OrderService {
         cart.setOrderedAt(LocalDateTime.now());
         orderRepository.save(cart);
 
-        eventPublisher.publishEvent(buildOrderPlacedMessage(cart, user));
+        // Cùng transaction với đơn: commit thì message chắc chắn được gửi (ngay, hoặc bởi job nếu broker đang chết)
+        outboxService.enqueue(OutboxType.ORDER_PLACED, buildOrderPlacedMessage(cart, user));
     }
 
     // -------------------------------------------------------
@@ -205,7 +207,7 @@ public class OrderService {
         return OrderResDto.forDetail(order, details, primaryUrls);
     }
 
-    /** Flattens order + eagerly-loaded line items into an event snapshot (no lazy JPA access from the async listener). */
+    /** Flattens order + eagerly-loaded line items into a message snapshot (consumers never touch lazy JPA associations). */
     private OrderPlacedMessage buildOrderPlacedMessage(Order order, User user) {
         List<OrderPlacedMessage.OrderLineItem> items = order.getOrderDetails().stream()
                 .map(od -> new OrderPlacedMessage.OrderLineItem(

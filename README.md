@@ -205,7 +205,7 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 ## Notification & Batch Job
 
-- **Đơn hàng mới:** sau khi checkout commit thành công, app gửi message `OrderPlacedMessage` lên topic JMS `order.placed`; hai subscription độc lập gửi **email** và **Slack** cho admin (xem [Messaging](#messaging-jms--activemq-artemis)): kênh này lỗi chỉ kênh đó được thử lại, mỗi kênh gửi tối đa một lần cho mỗi đơn (bảng `notification_logs`). Email là HTML render bằng Thymeleaf từ `templates/mail/` (kèm bản chữ thuần cho client không hiển thị HTML); Slack dùng Block Kit (Slack không hiển thị HTML). Ở dev, email đi vào hộp thư Mailtrap (`MAIL_*` trong `.env`) để xem giao diện.
+- **Đơn hàng mới:** checkout ghi message `OrderPlacedMessage` vào Transactional Outbox cùng transaction với đơn, rồi gửi lên topic JMS `order.placed`; hai subscription độc lập gửi **email** và **Slack** cho admin (xem [Messaging](#messaging-jms--activemq-artemis)): kênh này lỗi chỉ kênh đó được thử lại, mỗi kênh gửi tối đa một lần cho mỗi đơn (bảng `notification_logs`). Email là HTML render bằng Thymeleaf từ `templates/mail/` (kèm bản chữ thuần cho client không hiển thị HTML); Slack dùng Block Kit (Slack không hiển thị HTML). Ở dev, email đi vào hộp thư Mailtrap (`MAIL_*` trong `.env`) để xem giao diện.
 - **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 00:05 ngày 1, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái của các đơn đặt trong tháng vừa kết thúc và email HTML (`templates/mail/monthly-statistics.html`) cho admin.
 
 ### Thread pool & chạy nhiều instance
@@ -214,13 +214,21 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 - **Job định kỳ chỉ chạy trên một instance:** mọi instance đều kích hoạt cron, nhưng ShedLock (`config/SchedulerLockConfig`, bảng `shedlock` trong MySQL dùng chung, thời gian theo đồng hồ DB) chỉ cho một instance chạy — không gửi trùng báo cáo tháng. Cột `locked_by` = `INSTANCE_ID` của instance đã chạy.
 - **Container cần đủ thời gian dừng:** service `app` của compose có `stop_grace_period: 60s` (mặc định của Docker là 10s rồi SIGKILL). Môi trường khác (Kubernetes `terminationGracePeriodSeconds`, ECS `stopTimeout`...) cũng đặt ≥ 60s.
 - **Connection DB:** mỗi instance dùng tối đa `maximum-pool-size` của Hikari (mặc định 10; dashboard chiếm tối đa 4). Tổng số instance × pool phải nhỏ hơn `max_connections` của MySQL (mặc định 151).
-- Thông báo đơn hàng nằm trên broker JMS (subscription bền), không còn trong hàng đợi bộ nhớ: app chết giữa chừng thì broker giao lại khi app chạy lại. Còn mất được nếu broker không nhận được message đúng lúc checkout — Transactional Outbox (issue 5.3) xử lý.
+- Thông báo đơn hàng không nằm trong hàng đợi bộ nhớ: message được ghi vào `outbox_messages` cùng transaction với đơn, rồi nằm trên broker JMS (subscription bền) — app hay broker chết giữa chừng đều được gửi lại (job outbox / broker giao lại). Job outbox **không** dùng ShedLock: mọi instance chạy và chia nhau bản ghi bằng `SKIP LOCKED`.
 
 ## Messaging (JMS — ActiveMQ Artemis)
 
 - **Broker:** dev/test dùng broker **embedded** trong JVM (`spring.artemis.mode=embedded`, chỉ nối in-VM, không lưu message ra đĩa). Container app của compose và prod nối broker riêng (`native`, service `artemis` — console http://localhost:8161). Kết nối có timeout (`connectTimeoutMillis=5000&callTimeout=10000` trong `broker-url`): broker chết thì gửi message báo lỗi sau vài giây, không treo thread.
 - **Message:** JSON trong `TextMessage`, kiểu payload ghi bằng alias trong property `_type` theo whitelist `service/messaging/MessageTypes` — alias lạ/tên class bị từ chối, không dùng `ObjectMessage` (Java deserialization). Tên destination: `service/messaging/Destinations`.
 - **Retry + DLQ cấu hình trên broker**, một file duy nhất [`src/main/resources/artemis/broker.properties`](src/main/resources/artemis/broker.properties) (cú pháp broker properties của Artemis): listener ném exception → rollback → broker giao lại sau 2s, 4s, 8s, 16s; quá 5 lần → queue `DLQ.order-placed`. Broker embedded nạp file qua `app.jms.embedded-broker-properties` (khoá sai → app không khởi động); compose mount file vào service `artemis` và nạp bằng `artemis run --properties` mỗi lần khởi động (sửa file thì `docker compose restart artemis`).
+- **Transactional Outbox** (không mất thông báo khi broker chết): checkout ghi message vào bảng `outbox_messages` trong **cùng transaction** với đơn hàng; sau commit app gửi ngay lên broker (thread `notify-*`, khách không phải chờ). Broker chết thì bản ghi ở `PENDING`, job `OutboxRelayJob` gửi lại mỗi `app.outbox.poll-interval` (1 phút) — broker sống lại thì thông báo đi trong ≤ 1 chu kỳ. Quá `app.outbox.max-attempts` (5) lần → `FAILED` + log ERROR. Mọi instance cùng chạy job, chia nhau bản ghi bằng `SELECT … FOR UPDATE SKIP LOCKED` (không gửi trùng). Bản ghi `SENT` bị xoá sau `app.outbox.retention` (7 ngày). Gửi lại bản ghi `FAILED` sau khi khắc phục broker (kênh nào đã gửi rồi sẽ không gửi lần hai):
+
+  ```sql
+  SELECT id, type, attempts, last_error, created_at FROM outbox_messages WHERE status = 'FAILED';
+  UPDATE outbox_messages SET status = 'PENDING', attempts = 0 WHERE status = 'FAILED';   -- hoặc WHERE id = ...
+  ```
+
+  Message vào `DLQ.order-placed` (kênh thông báo lỗi 5 lần, vd. webhook Slack sai) được ghi log ERROR kèm `orderId` rồi lấy khỏi DLQ; gửi lại bằng cách đặt bản ghi outbox tương ứng (`JSON_EXTRACT(payload, '$.orderId')`) về `PENDING` như trên.
 - **Broker prod** phải được khởi động với cùng file: `artemis run --properties <đường dẫn>/broker.properties` — broker gặp khoá sai chỉ ghi log rồi bỏ qua, nên sau khi triển khai kiểm tra trên console rằng address `order.placed` có dead-letter address `DLQ.order-placed` và queue `DLQ.order-placed` tồn tại.
 
 ## Xử Lý Lỗi

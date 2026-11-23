@@ -1,9 +1,11 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.JmsBrokerProperties;
+import com.huuhv.foodsndrinks.config.properties.OutboxProperties;
 import com.huuhv.foodsndrinks.service.messaging.MessageTypes;
 import jakarta.jms.ConnectionFactory;
 import org.springframework.boot.jms.ConnectionFactoryUnwrapper;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jms.autoconfigure.DefaultJmsListenerContainerFactoryConfigurer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -35,6 +37,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Configuration
 @EnableJms
+@EnableConfigurationProperties(OutboxProperties.class)
 public class JmsConfig {
 
     /** Tên bean: hằng số nằm ở {@link JmsBrokerProperties} để service dùng mà không import {@code config}. */
