@@ -11,7 +11,7 @@ import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
-import com.huuhv.foodsndrinks.service.notification.OrderPlacedEvent;
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -284,7 +284,7 @@ class OrderServiceTest {
             assertThat(cart.getShippingAddress()).isEqualTo("1 Lê Lợi");
             verify(orderRepository).save(cart);
 
-            ArgumentCaptor<OrderPlacedEvent> event = ArgumentCaptor.forClass(OrderPlacedEvent.class);
+            ArgumentCaptor<OrderPlacedMessage> event = ArgumentCaptor.forClass(OrderPlacedMessage.class);
             verify(eventPublisher).publishEvent(event.capture());
             assertThat(event.getValue().orderId()).isEqualTo(100L);
             assertThat(event.getValue().customerEmail()).isEqualTo("alice@example.com");

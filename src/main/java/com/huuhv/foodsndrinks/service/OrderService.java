@@ -12,7 +12,7 @@ import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
-import com.huuhv.foodsndrinks.service.notification.OrderPlacedEvent;
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
@@ -147,7 +147,7 @@ public class OrderService {
         cart.setOrderedAt(LocalDateTime.now());
         orderRepository.save(cart);
 
-        eventPublisher.publishEvent(buildOrderPlacedEvent(cart, user));
+        eventPublisher.publishEvent(buildOrderPlacedMessage(cart, user));
     }
 
     // -------------------------------------------------------
@@ -206,14 +206,14 @@ public class OrderService {
     }
 
     /** Flattens order + eagerly-loaded line items into an event snapshot (no lazy JPA access from the async listener). */
-    private OrderPlacedEvent buildOrderPlacedEvent(Order order, User user) {
-        List<OrderPlacedEvent.OrderLineItem> items = order.getOrderDetails().stream()
-                .map(od -> new OrderPlacedEvent.OrderLineItem(
+    private OrderPlacedMessage buildOrderPlacedMessage(Order order, User user) {
+        List<OrderPlacedMessage.OrderLineItem> items = order.getOrderDetails().stream()
+                .map(od -> new OrderPlacedMessage.OrderLineItem(
                         od.getProduct() != null ? od.getProduct().getName() : "N/A",
                         od.getQuantity(), od.getUnitPrice(), od.getSubtotal()))
                 .toList();
 
-        return new OrderPlacedEvent(order.getId(), user.getFullName(), user.getEmail(), user.getPhone(),
+        return new OrderPlacedMessage(order.getId(), user.getFullName(), user.getEmail(), user.getPhone(),
                 order.getShippingAddress(), order.getNote(), order.getTotalPrice(), order.getOrderedAt(), items);
     }
 

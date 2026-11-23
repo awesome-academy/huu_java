@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.notification;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 
 import java.math.BigDecimal;
@@ -24,7 +25,7 @@ final class OrderMessageFormatter {
         return NotificationFormat.INSTANCE.dateTime(dateTime);
     }
 
-    static String buildOrderSummary(OrderPlacedEvent event) {
+    static String buildOrderSummary(OrderPlacedMessage event) {
         StringBuilder sb = new StringBuilder();
         sb.append("Đơn hàng mới #").append(event.orderId()).append('\n');
         if (event.orderedAt() != null) {
@@ -41,7 +42,7 @@ final class OrderMessageFormatter {
             sb.append("Ghi chú: ").append(event.note()).append('\n');
         }
         sb.append("Chi tiết đơn hàng:\n");
-        for (OrderPlacedEvent.OrderLineItem item : event.items()) {
+        for (OrderPlacedMessage.OrderLineItem item : event.items()) {
             sb.append("  - ").append(item.productName())
                     .append(" x").append(item.quantity())
                     .append(" = ").append(formatMoney(item.subtotal())).append(" VND\n");

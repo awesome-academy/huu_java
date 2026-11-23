@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.config.properties.JmsBrokerProperties;
 import com.huuhv.foodsndrinks.service.messaging.MessageTypes;
 import jakarta.jms.ConnectionFactory;
 import org.springframework.boot.jms.ConnectionFactoryUnwrapper;
@@ -36,10 +37,9 @@ import tools.jackson.databind.json.JsonMapper;
 @EnableJms
 public class JmsConfig {
 
-    /** Listener factory cho topic: {@code @JmsListener(containerFactory = JmsConfig.TOPIC_FACTORY, subscription = ...)}. */
-    public static final String TOPIC_FACTORY = "topicListenerFactory";
-    /** Template gửi lên topic, inject bằng {@code @Qualifier(JmsConfig.TOPIC_JMS_TEMPLATE)}. */
-    public static final String TOPIC_JMS_TEMPLATE = "topicJmsTemplate";
+    /** Tên bean: hằng số nằm ở {@link JmsBrokerProperties} để service dùng mà không import {@code config}. */
+    public static final String TOPIC_FACTORY = JmsBrokerProperties.TOPIC_LISTENER_FACTORY;
+    public static final String TOPIC_JMS_TEMPLATE = JmsBrokerProperties.TOPIC_JMS_TEMPLATE;
 
     @Bean
     public MessageConverter jmsMessageConverter(JsonMapper jsonMapper) {

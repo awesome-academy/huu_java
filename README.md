@@ -205,16 +205,16 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 ## Notification & Batch Job
 
-- **Đơn hàng mới:** sau khi checkout commit thành công (`OrderPlacedEvent` + `@TransactionalEventListener`), hệ thống gửi **Slack** + **email** cho admin (chạy async qua thread pool `notify-*`). Email là HTML render bằng Thymeleaf từ `templates/mail/` (kèm bản chữ thuần cho client không hiển thị HTML); Slack dùng Block Kit (Slack không hiển thị HTML). Ở dev, email đi vào hộp thư Mailtrap (`MAIL_*` trong `.env`) để xem giao diện.
+- **Đơn hàng mới:** sau khi checkout commit thành công, app gửi message `OrderPlacedMessage` lên topic JMS `order.placed`; hai subscription độc lập gửi **email** và **Slack** cho admin (xem [Messaging](#messaging-jms--activemq-artemis)): kênh này lỗi chỉ kênh đó được thử lại, mỗi kênh gửi tối đa một lần cho mỗi đơn (bảng `notification_logs`). Email là HTML render bằng Thymeleaf từ `templates/mail/` (kèm bản chữ thuần cho client không hiển thị HTML); Slack dùng Block Kit (Slack không hiển thị HTML). Ở dev, email đi vào hộp thư Mailtrap (`MAIL_*` trong `.env`) để xem giao diện.
 - **Báo cáo tháng:** `OrderStatisticsScheduler` chạy theo cron (mặc định 00:05 ngày 1, theo múi giờ JVM — cùng múi giờ dùng để tính tháng) — tổng hợp doanh thu, số đơn theo trạng thái của các đơn đặt trong tháng vừa kết thúc và email HTML (`templates/mail/monthly-statistics.html`) cho admin.
 
 ### Thread pool & chạy nhiều instance
 
-- Thread pool (`config/AsyncConfig`, kích thước trong `app.async.*` của `application.yml`): `notify-*` (Slack/email), `dashboard-*` (truy vấn thống kê dashboard chạy song song, timeout `app.async.dashboard.timeout` — lỗi/quá giờ/pool đầy thì `/admin` trả 503), `sched-*` (`@Scheduled`, `spring.task.scheduling.pool.size`). Pool `notify-*` đầy thì task chạy trên thread gọi (`CallerRunsPolicy`), không mất thông báo; pool `dashboard-*` đầy thì từ chối (`AbortPolicy`) để truy vấn không chạy trên thread request ngoài timeout. Khi tắt app, Tomcat chờ request đang chạy và mỗi pool chờ task còn lại tối đa 30s.
+- Thread pool (`config/AsyncConfig`, kích thước trong `app.async.*` của `application.yml`): `notify-*` (executor `@Async` mặc định; Slack/email đơn hàng chạy trên listener JMS), `dashboard-*` (truy vấn thống kê dashboard chạy song song, timeout `app.async.dashboard.timeout` — lỗi/quá giờ/pool đầy thì `/admin` trả 503), `sched-*` (`@Scheduled`, `spring.task.scheduling.pool.size`). Pool `notify-*` đầy thì task chạy trên thread gọi (`CallerRunsPolicy`), không mất thông báo; pool `dashboard-*` đầy thì từ chối (`AbortPolicy`) để truy vấn không chạy trên thread request ngoài timeout. Khi tắt app, Tomcat chờ request đang chạy và mỗi pool chờ task còn lại tối đa 30s.
 - **Job định kỳ chỉ chạy trên một instance:** mọi instance đều kích hoạt cron, nhưng ShedLock (`config/SchedulerLockConfig`, bảng `shedlock` trong MySQL dùng chung, thời gian theo đồng hồ DB) chỉ cho một instance chạy — không gửi trùng báo cáo tháng. Cột `locked_by` = `INSTANCE_ID` của instance đã chạy.
 - **Container cần đủ thời gian dừng:** service `app` của compose có `stop_grace_period: 60s` (mặc định của Docker là 10s rồi SIGKILL). Môi trường khác (Kubernetes `terminationGracePeriodSeconds`, ECS `stopTimeout`...) cũng đặt ≥ 60s.
 - **Connection DB:** mỗi instance dùng tối đa `maximum-pool-size` của Hikari (mặc định 10; dashboard chiếm tối đa 4). Tổng số instance × pool phải nhỏ hơn `max_connections` của MySQL (mặc định 151).
-- Task trong hàng đợi bộ nhớ (thông báo chưa gửi) vẫn mất nếu process bị kill đột ngột — giai đoạn 5 (JMS + Outbox) xử lý.
+- Thông báo đơn hàng nằm trên broker JMS (subscription bền), không còn trong hàng đợi bộ nhớ: app chết giữa chừng thì broker giao lại khi app chạy lại. Còn mất được nếu broker không nhận được message đúng lúc checkout — Transactional Outbox (issue 5.3) xử lý.
 
 ## Messaging (JMS — ActiveMQ Artemis)
 

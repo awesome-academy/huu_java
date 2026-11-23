@@ -1,13 +1,14 @@
 package com.huuhv.foodsndrinks.service.notification;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.NotificationDeliveryException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.thymeleaf.ITemplateEngine;
 import org.thymeleaf.context.Context;
@@ -39,11 +40,18 @@ public class EmailNotificationService {
     @Value("${app.notification.mail.enabled:true}")
     private boolean enabled;
 
-    @Async("taskExecutor")
-    public void sendNewOrderEmail(OrderPlacedEvent event) {
-        if (isDisabled()) {
-            return;
-        }
+    /** Tắt ({@code MAIL_NOTIFY_ENABLED=false}) hoặc thiếu email admin → consumer bỏ qua message, không thử lại. */
+    public boolean isEnabled() {
+        return enabled && adminEmail != null && !adminEmail.isBlank();
+    }
+
+    /**
+     * Email "Đơn hàng mới" cho admin. Gọi đồng bộ từ consumer JMS ({@code OrderPlacedEmailConsumer}): lỗi được ném ra để
+     * broker giao lại message, không nuốt lỗi ở đây. SMTP có timeout ({@code spring.mail.properties.mail.smtp.*timeout}).
+     *
+     * @throws NotificationDeliveryException render hoặc gửi SMTP lỗi
+     */
+    public void sendNewOrderEmail(OrderPlacedMessage event) {
         try {
             Context context = newContext();
             context.setVariable("event", event);
@@ -52,8 +60,8 @@ public class EmailNotificationService {
             send("[F&B Store] Đơn hàng mới #" + event.orderId(),
                     OrderMessageFormatter.buildOrderSummary(event),
                     templateEngine.process(ORDER_PLACED_TEMPLATE, context));
-        } catch (Exception e) {
-            log.error("Failed to send admin email for order #{}", event.orderId(), e);
+        } catch (Exception ex) {
+            throw new NotificationDeliveryException("Admin email for order #" + event.orderId() + " failed", ex);
         }
     }
 

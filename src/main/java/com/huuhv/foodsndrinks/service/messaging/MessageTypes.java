@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+
 import java.util.Map;
 
 /**
@@ -16,8 +18,12 @@ public final class MessageTypes {
     /** Tên property JMS chứa alias của kiểu payload. */
     public static final String TYPE_ID_PROPERTY = "_type";
 
+    /** {@link OrderPlacedMessage} trên topic {@code order.placed}. */
+    public static final String ORDER_PLACED = "orderPlaced";
+
     /** alias → class payload. */
-    public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of();
+    public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of(
+            ORDER_PLACED, OrderPlacedMessage.class);
 
     private MessageTypes() {
     }

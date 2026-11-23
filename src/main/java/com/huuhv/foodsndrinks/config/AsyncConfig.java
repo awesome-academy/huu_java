@@ -51,7 +51,11 @@ public class AsyncConfig implements AsyncConfigurer {
         return new MdcTaskDecorator();
     }
 
-    /** Pool chạy thông báo Slack/email ({@code @Async("taskExecutor")}); cũng là executor mặc định của {@code @Async}. */
+    /**
+     * Executor mặc định của {@code @Async} ({@code notify-*}), cho việc nền gắn với thông báo. Slack/email của đơn hàng
+     * không còn chạy ở đây: chúng là consumer JMS của topic {@code order.placed} (thread của listener container, retry do
+     * broker quản lý).
+     */
     @Bean(name = "taskExecutor")
     public ThreadPoolTaskExecutor taskExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
         return build(builder, properties.notification(), "notify-", new ThreadPoolExecutor.CallerRunsPolicy());

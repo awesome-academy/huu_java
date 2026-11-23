@@ -13,6 +13,13 @@ public final class Destinations {
     /** Queue (anycast) nhận message của {@link #ORDER_PLACED} đã hết số lần giao lại. */
     public static final String ORDER_PLACED_DLQ = "DLQ.order-placed";
 
+    /**
+     * Shared durable subscription của {@link #ORDER_PLACED} — mỗi kênh thông báo một subscription (một hàng đợi riêng trên
+     * broker, tên = tên subscription). Không đổi tên: subscription cũ cùng message trong đó bị bỏ lại trên broker.
+     */
+    public static final String ORDER_PLACED_EMAIL_SUBSCRIPTION = "order-placed-email";
+    public static final String ORDER_PLACED_SLACK_SUBSCRIPTION = "order-placed-slack";
+
     private Destinations() {
     }
 }

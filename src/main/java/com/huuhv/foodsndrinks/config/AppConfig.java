@@ -20,9 +20,16 @@ public class AppConfig {
         return new BCryptPasswordEncoder();
     }
 
+    /**
+     * Client gửi webhook Slack, gọi trên thread listener JMS: không có timeout thì webhook treo giữ thread (và connection
+     * DB của {@code NotificationLogService}) vô thời hạn. Timeout → lỗi → broker giao lại message sau.
+     */
     @Bean
     public RestClient restClient() {
-        return RestClient.create();
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofSeconds(2));
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        return RestClient.builder().requestFactory(requestFactory).build();
     }
 
     /**

@@ -13,7 +13,8 @@ import java.time.Duration;
  * Kích thước các thread pool của {@link com.huuhv.foodsndrinks.config.AsyncConfig}. Thời gian chờ task khi tắt app không nằm ở đây mà ở
  * {@code spring.task.execution.shutdown.*} — {@code ThreadPoolTaskExecutorBuilder} áp cho mọi executor.
  *
- * @param notification pool {@code notify-*} gửi Slack/email (executor mặc định của {@code @Async})
+ * @param notification pool {@code notify-*} (executor mặc định của {@code @Async}; Slack/email đơn hàng đã chuyển sang
+ *                     consumer JMS)
  * @param dashboard    pool {@code dashboard-*} chạy song song các truy vấn thống kê của dashboard admin
  */
 @Validated
