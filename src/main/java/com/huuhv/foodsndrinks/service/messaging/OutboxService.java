@@ -6,6 +6,7 @@ import com.huuhv.foodsndrinks.repository.OutboxMessageRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
@@ -51,7 +52,7 @@ public class OutboxService {
      *
      * @return {@code false} nếu bản ghi không ở SENT/DEAD_LETTERED (đã bị xoá hoặc đã đặt lại về PENDING) — giữ nguyên
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public boolean markDeadLettered(long outboxId) {
         return repository.markDeadLettered(outboxId) == 1
                 || repository.findStatusById(outboxId).filter(OutboxStatus.DEAD_LETTERED::equals).isPresent();
@@ -60,10 +61,16 @@ public class OutboxService {
     /**
      * Xoá tối đa {@code limit} bản ghi SENT cũ hơn {@code retention} ({@link OutboxRelayJob}). Bản ghi
      * {@code DEAD_LETTERED}/{@code FAILED} không bị xoá — còn để gửi lại bằng tay.
+     * <p>
+     * READ COMMITTED như {@link OutboxPublisher}: ở REPEATABLE READ (mặc định MySQL) câu DELETE quét theo khoảng trên index
+     * {@code (status, sent_at)} giữ next-key/gap lock tới commit — kể cả khi không xoá dòng nào — và bản ghi mới
+     * ({@code PENDING}) rơi đúng vào khoảng đó, nên INSERT outbox của checkout phải chờ. Mọi instance đều chạy job này mỗi
+     * chu kỳ, nên khoá theo khoảng sẽ chặn checkout lặp lại. READ COMMITTED chỉ khoá dòng bị xoá (dòng SENT cũ, không ai
+     * khác ghi); hai instance cùng xoá thì instance sau chờ khoá dòng rồi bỏ qua dòng đã bị xoá.
      *
      * @return số bản ghi đã xoá
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public int purgeSent(Duration retention, int limit) {
         return repository.deleteSentBefore(retention.toSeconds(), limit);
     }

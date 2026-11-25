@@ -47,9 +47,11 @@ import java.util.function.Supplier;
  *       kế tiếp, một bản ghi hỏng không chặn các bản ghi khác.</li>
  * </ul>
  * Gửi thành công mà commit DB lỗi (hiếm) thì bản ghi còn PENDING và được gửi lại — consumer idempotent
- * ({@code notification_logs}) nên không gửi thông báo lần hai. Giới hạn đã biết: broker chặn producer (đĩa đầy,
- * address {@code BLOCK}) thì client Artemis chờ credit không giới hạn thời gian — thread gửi đứng tới khi broker nhận
- * lại; bản ghi vẫn PENDING, không mất.
+ * ({@code notification_logs}) nên không gửi thông báo lần hai. Broker chặn producer (đĩa đầy, address {@code BLOCK})
+ * thì client Artemis chờ credit không giới hạn thời gian — vì vậy {@code artemis/broker.properties} đặt
+ * {@code addressFullMessagePolicy=FAIL} cho address của outbox: address đầy → gửi lỗi ngay
+ * ({@code ActiveMQAddressFullException}, lỗi của broker), bản ghi giữ PENDING. Destination mới gửi qua outbox cũng
+ * phải đặt như vậy.
  * <p>
  * Payload gửi nguyên văn (đã serialize lúc ghi outbox, cột {@code MEDIUMTEXT} giữ đúng từng byte) trong
  * {@code TextMessage}, kiểu ghi bằng alias ở property {@value MessageTypes#TYPE_ID_PROPERTY} — consumer đọc qua

@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.service.messaging.MessageTypes;
 import jakarta.jms.JMSException;
+import jakarta.jms.MessageFormatException;
 import jakarta.jms.Session;
 import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.Test;
@@ -88,6 +89,21 @@ class AliasOnlyJsonMessageConverterTest {
                 .isInstanceOf(MessageConversionException.class)
                 .hasMessageNotContaining("SECRET-PAYLOAD")
                 .hasMessageNotContaining("INJECTED")
+                .hasNoCause();
+    }
+
+    @Test
+    void typePropertyOfWrongType_isConversionError_notJmsException() throws JMSException {
+        // Bên gửi đặt _type kiểu bytes: client JMS ném MessageFormatException (checked). Để thoát nguyên dạng thì Spring
+        // bọc thành "Failed to extract payload from [<message kèm mọi property>]" và DLQ listener giao lại mãi
+        TextMessage message = textMessage("ignored", "{}");
+        when(message.getStringProperty(MessageTypes.TYPE_ID_PROPERTY))
+                .thenThrow(new MessageFormatException("Invalid conversion SECRET-PROPERTY"));
+
+        assertThatThrownBy(() -> converter.fromMessage(message))
+                .isInstanceOf(MessageConversionException.class)
+                .hasMessageContaining("MessageFormatException")
+                .hasMessageNotContaining("SECRET-PROPERTY")
                 .hasNoCause();
     }
 

@@ -24,7 +24,8 @@ import java.util.Map;
  *   <li>Ghi: class chưa có alias → lỗi ngay phía gửi, không ghi tên class đầy đủ vào message.</li>
  *   <li>Lỗi đọc ném ra không chứa dữ liệu bên gửi: thông điệp gốc của Jackson/Spring nối nguyên alias hoặc một đoạn
  *       JSON (kể cả CR/LF) và được container in ra log. Exception mới chỉ giữ tên loại lỗi + {@code JMSMessageID} đã làm
- *       sạch, bỏ cả cause.</li>
+ *       sạch, bỏ cả cause. Lỗi JMS khi đọc message (property sai kiểu…) cũng ra cùng loại exception này — đọc
+ *       message không bao giờ ném {@code JMSException}.</li>
  * </ul>
  */
 public class AliasOnlyJsonMessageConverter extends JacksonJsonMessageConverter {
@@ -80,8 +81,11 @@ public class AliasOnlyJsonMessageConverter extends JacksonJsonMessageConverter {
             return super.fromMessage(message);
         } catch (SanitizedConversionException ex) {
             throw ex;
-        } catch (RuntimeException ex) {
-            // MessageConversionException của Spring và JacksonException (unchecked ở Jackson 3) đều có thể chứa payload
+        } catch (JMSException | RuntimeException ex) {
+            // MessageConversionException của Spring và JacksonException (unchecked ở Jackson 3) đều có thể chứa payload.
+            // JMSException (vd. MessageFormatException khi property _type không phải chuỗi) cũng phải thành lỗi chuyển
+            // đổi: để thoát nguyên dạng thì Spring bọc nó thành "Failed to extract payload from [<message>]" — in toàn bộ
+            // property bên gửi đặt ra log — và DLQ listener coi là lỗi tạm thời, giao lại message mãi.
             throw new SanitizedConversionException("Cannot convert JMS message " + describe(message) + " ("
                     + ex.getClass().getSimpleName() + ")");
         }

@@ -19,7 +19,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * commit. Gửi lỗi → rollback, dòng biến mất, exception thoát ra để broker giao lại. Lần giao song song cùng khoá chờ
  * khoá unique của lần trước: lần trước commit thì nhận 0 (bỏ qua), rollback thì nhận 1 (tự gửi). Commit DB xong rồi
  * mới ack JMS (listener container ack sau khi method trả về), nên app chết giữa hai bước chỉ dẫn tới một lần giao lại bị
- * bỏ qua. Còn sót đúng một trường hợp gửi lặp: gửi xong nhưng commit DB lỗi (rất hiếm).
+ * bỏ qua.
+ * <p>
+ * Bảo đảm là <b>at-least-once</b> chứ không phải exactly-once: bên nhận có thể đã nhận thông báo trong khi app coi lần
+ * gửi là lỗi, và lần giao lại gửi thêm một bản. Hai trường hợp:
+ * <ul>
+ *   <li>Slack/SMTP đã nhận nhưng trả lời chậm hơn read timeout ({@code AppConfig.restClient},
+ *       {@code spring.mail.properties.mail.smtp.timeout}) → exception → rollback → gửi lại. Có thể xảy ra khi bên nhận
+ *       chậm; tăng timeout giảm khả năng này nhưng giữ connection DB lâu hơn (xem đánh đổi bên dưới).</li>
+ *   <li>Gửi xong nhưng commit DB lỗi (rất hiếm).</li>
+ * </ul>
  * <p>
  * Đánh đổi: giữ một connection DB trong lúc gọi Slack/SMTP — vì vậy cả hai đều có timeout ngắn ({@code AppConfig},
  * {@code spring.mail.properties.mail.smtp.*timeout}), listener topic chạy một thread mỗi subscription

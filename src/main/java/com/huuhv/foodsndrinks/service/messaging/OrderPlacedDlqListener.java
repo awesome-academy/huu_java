@@ -4,7 +4,6 @@ import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.logging.LogSanitizer;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
-import jakarta.jms.MessageFormatException;
 import jakarta.jms.TextMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +20,9 @@ import org.springframework.stereotype.Component;
  * <p>
  * Nhận {@link Message} thô, tự chuyển đổi: message có thể vào DLQ chính vì payload không đọc được (alias lạ, JSON hỏng)
  * — chuyển đổi ở tham số method sẽ lỗi lại mãi. Payload không đọc được thì chỉ log định danh (đã làm sạch), độ dài
- * body, thời điểm gửi; không log nội dung.
+ * body, thời điểm gửi; không log nội dung. Mọi lỗi khi đọc message (kể cả {@code JMSException} vì property sai kiểu)
+ * đều đi nhánh này, không ném ra: DLQ thử lại không giới hạn nên ném vì lỗi của chính message là lặp vô hạn. Chỉ lỗi
+ * ghi DB mới được ném để broker giao lại.
  * <p>
  * Gửi lại sau khi khắc phục: đặt bản ghi {@code DEAD_LETTERED} về {@code PENDING} (README); kênh đã gửi thành công không
  * gửi lần hai ({@code notification_logs}).
@@ -39,17 +40,17 @@ public class OrderPlacedDlqListener {
 
     // Một thread là đủ, không chiếm thêm chỗ trong ngân sách connection (ConnectionBudgetCheck)
     @JmsListener(destination = Destinations.ORDER_PLACED_DLQ, concurrency = "1")
-    public void onDeadLetter(Message message) throws JMSException {
-        String subscription = LogSanitizer.sanitize(message.getStringProperty(ORIGINAL_QUEUE_PROPERTY));
+    public void onDeadLetter(Message message) {
+        String subscription = originalQueueOf(message);
         Long outboxId = outboxIdOf(message);
         Object payload;
         try {
             payload = messageConverter.fromMessage(message);
-        } catch (MessageConversionException ex) {
-            // Thông điệp đã được AliasOnlyJsonMessageConverter làm sạch (không chứa payload/alias)
+        } catch (JMSException | RuntimeException ex) {
+            // Mọi lỗi đọc message đều là lỗi của chính message: ném ra thì broker giao lại mãi (maxDeliveryAttempts=-1)
             log.error("Unreadable {} message dead-lettered from subscription {}: {} (sent at {}, body length {}, "
-                            + "outbox {})", Destinations.ORDER_PLACED, subscription, ex.getMessage(),
-                    message.getJMSTimestamp(), bodyLength(message), describe(outboxId));
+                            + "outbox {})", Destinations.ORDER_PLACED, subscription, describeError(ex),
+                    timestampOf(message), bodyLength(message), describe(outboxId));
             keepOutboxRecord(outboxId);
             return;
         }
@@ -74,16 +75,41 @@ public class OrderPlacedDlqListener {
         return outboxId == null ? "none" : "#" + outboxId;
     }
 
-    /** {@code null} nếu message không đi qua outbox (gửi thẳng) hoặc property không hợp lệ. */
-    private static Long outboxIdOf(Message message) throws JMSException {
-        if (!message.propertyExists(MessageTypes.OUTBOX_ID_PROPERTY)) {
-            return null;
-        }
+    /**
+     * Thông điệp lỗi chuyển đổi đã được {@code AliasOnlyJsonMessageConverter} làm sạch (không chứa payload/alias); lỗi
+     * khác chỉ ghi tên loại lỗi — thông điệp của client JMS có thể nối nguyên dữ liệu của message.
+     */
+    private static String describeError(Exception ex) {
+        return ex instanceof MessageConversionException ? ex.getMessage() : ex.getClass().getSimpleName();
+    }
+
+    /** Subscription gốc (broker tự đặt) đã làm sạch; {@code "?"} nếu thiếu hoặc không đọc được. */
+    private static String originalQueueOf(Message message) {
         try {
+            return LogSanitizer.sanitize(message.getStringProperty(ORIGINAL_QUEUE_PROPERTY));
+        } catch (JMSException | RuntimeException ex) {
+            return "?";
+        }
+    }
+
+    /** {@code null} nếu message không đi qua outbox (gửi thẳng) hoặc property không hợp lệ/không đọc được. */
+    private static Long outboxIdOf(Message message) {
+        try {
+            if (!message.propertyExists(MessageTypes.OUTBOX_ID_PROPERTY)) {
+                return null;
+            }
             long id = message.getLongProperty(MessageTypes.OUTBOX_ID_PROPERTY);
             return id > 0 ? id : null;
-        } catch (MessageFormatException ex) {
+        } catch (JMSException | RuntimeException ex) {
             return null;
+        }
+    }
+
+    private static String timestampOf(Message message) {
+        try {
+            return String.valueOf(message.getJMSTimestamp());
+        } catch (JMSException | RuntimeException ex) {
+            return "?";
         }
     }
 
@@ -91,7 +117,7 @@ public class OrderPlacedDlqListener {
         try {
             return message instanceof TextMessage text && text.getText() != null
                     ? String.valueOf(text.getText().length()) : "?";
-        } catch (JMSException ex) {
+        } catch (JMSException | RuntimeException ex) {
             return "?";
         }
     }

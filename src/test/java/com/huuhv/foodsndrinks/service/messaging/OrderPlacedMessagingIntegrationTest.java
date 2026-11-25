@@ -2,7 +2,6 @@ package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.enums.NotificationChannel;
 import com.huuhv.foodsndrinks.exception.NotificationDeliveryException;
-import com.huuhv.foodsndrinks.repository.NotificationLogRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -25,7 +24,6 @@ import static org.mockito.Mockito.when;
  */
 class OrderPlacedMessagingIntegrationTest extends AbstractMessagingIntegrationTest {
 
-    @Autowired private NotificationLogRepository notificationLogRepository;
     @Autowired private OutboxPublisher outboxPublisher;
 
     @Test
@@ -37,8 +35,8 @@ class OrderPlacedMessagingIntegrationTest extends AbstractMessagingIntegrationTe
         verify(slackNotificationService, timeout(WAIT.toMillis())).sendOrderPlaced(order(orderId));
         verify(emailNotificationService, timeout(WAIT.toMillis())).sendNewOrderEmail(order(orderId));
         await().atMost(WAIT).untilAsserted(() -> {
-            assertThat(notificationLogRepository.countByOrderIdAndChannel(orderId, NotificationChannel.SLACK)).isEqualTo(1);
-            assertThat(notificationLogRepository.countByOrderIdAndChannel(orderId, NotificationChannel.EMAIL)).isEqualTo(1);
+            assertThat(notificationsLogged(orderId, NotificationChannel.SLACK)).isEqualTo(1);
+            assertThat(notificationsLogged(orderId, NotificationChannel.EMAIL)).isEqualTo(1);
         });
     }
 
@@ -64,7 +62,7 @@ class OrderPlacedMessagingIntegrationTest extends AbstractMessagingIntegrationTe
         verify(slackNotificationService, timeout(WAIT.toMillis()).times(2)).sendOrderPlaced(order(orderId));
         verify(emailNotificationService, after(1000).times(1)).sendNewOrderEmail(order(orderId));
         await().atMost(WAIT).until(() ->
-                notificationLogRepository.countByOrderIdAndChannel(orderId, NotificationChannel.SLACK) == 1);
+                notificationsLogged(orderId, NotificationChannel.SLACK) == 1);
     }
 
     @Test
@@ -81,7 +79,7 @@ class OrderPlacedMessagingIntegrationTest extends AbstractMessagingIntegrationTe
         verify(slackNotificationService, after(500).times(5)).sendOrderPlaced(order(orderId));
         verify(emailNotificationService, timeout(WAIT.toMillis()).times(1)).sendNewOrderEmail(order(orderId));
         // Lần gửi lỗi đã rollback: không có bản ghi, gửi lại sau khi sửa sẽ gửi được
-        assertThat(notificationLogRepository.countByOrderIdAndChannel(orderId, NotificationChannel.SLACK)).isZero();
+        assertThat(notificationsLogged(orderId, NotificationChannel.SLACK)).isZero();
         // Bản ghi outbox được giữ lại (job chỉ xoá SENT) để gửi lại bằng tay
         await().atMost(WAIT).until(() -> "DEAD_LETTERED".equals(outboxStatusOf(orderId)));
 

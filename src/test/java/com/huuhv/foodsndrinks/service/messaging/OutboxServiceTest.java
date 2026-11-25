@@ -11,8 +11,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
@@ -94,6 +97,17 @@ class OutboxServiceTest {
         when(repository.deleteSentBefore(604_800L, 1000)).thenReturn(3);
 
         assertThat(service.purgeSent(Duration.ofDays(7), 1000)).isEqualTo(3);
+    }
+
+    @Test
+    void purgeAndDeadLetterMarking_runAtReadCommitted_soTheyTakeNoGapLocksThatBlockCheckout() throws Exception {
+        // REPEATABLE READ: DELETE/UPDATE theo khoảng trên (status, sent_at) giữ gap lock, chặn INSERT outbox của checkout
+        for (Method method : List.of(
+                OutboxService.class.getMethod("purgeSent", Duration.class, int.class),
+                OutboxService.class.getMethod("markDeadLettered", long.class))) {
+            assertThat(method.getAnnotation(Transactional.class).isolation())
+                    .as(method.getName()).isEqualTo(Isolation.READ_COMMITTED);
+        }
     }
 
     @Test

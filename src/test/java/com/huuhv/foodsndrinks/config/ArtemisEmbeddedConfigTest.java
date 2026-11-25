@@ -5,6 +5,7 @@ import com.huuhv.foodsndrinks.service.messaging.Destinations;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.config.CoreAddressConfiguration;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
+import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -45,6 +46,15 @@ class ArtemisEmbeddedConfigTest {
         assertThat(topic.getRedeliveryMultiplier()).isEqualTo(2.0);
         assertThat(topic.getMaxRedeliveryDelay()).isEqualTo(30000);
         assertThat(topic.getDeadLetterAddress().toString()).isEqualTo(Destinations.ORDER_PLACED_DLQ);
+    }
+
+    @Test
+    void productionFile_rejectsSendsWhenOrderPlacedIsFull_insteadOfBlockingTheProducer() {
+        // BLOCK/PAGE khi đĩa đầy: client Artemis chờ credit không có timeout → thread outbox-*/sched-* treo, giữ
+        // connection DB. FAIL: gửi lỗi ngay (ActiveMQAddressFullException) → OutboxPublisher giữ bản ghi PENDING
+        AddressSettings topic = apply(PRODUCTION_FILE).getAddressSettings().get(Destinations.ORDER_PLACED);
+
+        assertThat(topic.getAddressFullMessagePolicy()).isEqualTo(AddressFullMessagePolicy.FAIL);
     }
 
     @Test

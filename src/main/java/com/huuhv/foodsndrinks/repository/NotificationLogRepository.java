@@ -1,7 +1,6 @@
 package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.NotificationLog;
-import com.huuhv.foodsndrinks.enums.NotificationChannel;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -21,6 +20,4 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     @Query(value = "INSERT IGNORE INTO notification_logs (order_id, channel) VALUES (:orderId, :channel)",
             nativeQuery = true)
     int insertIfAbsent(@Param("orderId") long orderId, @Param("channel") String channel);
-
-    long countByOrderIdAndChannel(Long orderId, NotificationChannel channel);
 }

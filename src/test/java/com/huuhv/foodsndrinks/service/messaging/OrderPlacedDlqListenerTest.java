@@ -1,11 +1,14 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import jakarta.jms.JMSException;
+import jakarta.jms.MessageFormatException;
 import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jms.support.converter.MessageConversionException;
 import org.springframework.jms.support.converter.MessageConverter;
 
@@ -13,6 +16,8 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -101,6 +106,49 @@ class OrderPlacedDlqListenerTest {
                 .doesNotContain("PAYLOAD")
                 // tên subscription lấy từ message → đã làm sạch, không giả được dòng log mới
                 .doesNotContain("\nFAKE LOG LINE");
+    }
+
+    @Test
+    void jmsErrorWhileReadingMessage_isLoggedAsUnreadable_insteadOfRedeliveredForever(CapturedOutput output)
+            throws Exception {
+        // DLQ thử lại không giới hạn: ném ra vì lỗi của chính message thì message không bao giờ rời DLQ
+        TextMessage message = deadLetter("order-placed-email", "{}");
+        withOutboxId(message, 9L);
+        when(outboxService.markDeadLettered(9L)).thenReturn(true);
+        when(message.getStringProperty(OrderPlacedDlqListener.ORIGINAL_QUEUE_PROPERTY))
+                .thenThrow(new MessageFormatException("bad queue property"));
+        when(message.getJMSTimestamp()).thenThrow(new JMSException("bad timestamp"));
+        when(converter.fromMessage(message)).thenThrow(new MessageFormatException("Invalid conversion SECRET-PROPERTY"));
+
+        assertThatCode(() -> listener.onDeadLetter(message)).doesNotThrowAnyException();
+
+        verify(outboxService).markDeadLettered(9L);
+        assertThat(output).contains("ERROR")
+                .contains("Unreadable order.placed message dead-lettered from subscription ?: MessageFormatException")
+                .doesNotContain("SECRET-PROPERTY");
+    }
+
+    @Test
+    void unreadableOutboxIdProperty_isTreatedAsNoOutboxRecord() throws Exception {
+        TextMessage message = deadLetter("order-placed-email", "{}");
+        when(message.propertyExists(MessageTypes.OUTBOX_ID_PROPERTY)).thenReturn(true);
+        when(message.getLongProperty(MessageTypes.OUTBOX_ID_PROPERTY)).thenThrow(new MessageFormatException("bytes"));
+        when(converter.fromMessage(message)).thenReturn(new OrderPlacedMessage(42L, "A", "a@example.com", null, "HN",
+                null, BigDecimal.TEN, null, List.of()));
+
+        listener.onDeadLetter(message);
+
+        verifyNoInteractions(outboxService);
+    }
+
+    @Test
+    void databaseErrorWhileMarkingOutboxRecord_isRethrown_forRedelivery() throws Exception {
+        TextMessage message = deadLetter("order-placed-email", "{}");
+        withOutboxId(message, 9L);
+        when(converter.fromMessage(message)).thenThrow(new MessageConversionException("Unknown alias"));
+        when(outboxService.markDeadLettered(9L)).thenThrow(new QueryTimeoutException("db down"));
+
+        assertThatThrownBy(() -> listener.onDeadLetter(message)).isInstanceOf(QueryTimeoutException.class);
     }
 
     private static TextMessage deadLetter(String originalQueue, String body) throws Exception {

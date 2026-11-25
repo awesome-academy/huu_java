@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.config.properties.JmsBrokerProperties;
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.enums.NotificationChannel;
 import com.huuhv.foodsndrinks.service.notification.EmailNotificationService;
 import com.huuhv.foodsndrinks.service.notification.SlackNotificationService;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
@@ -98,6 +99,12 @@ abstract class AbstractMessagingIntegrationTest {
         return jdbcTemplate.queryForList(
                 "SELECT status FROM outbox_messages WHERE JSON_EXTRACT(payload, '$.orderId') = ?", String.class, orderId)
                 .stream().findFirst().orElse(null);
+    }
+
+    /** Số dòng {@code notification_logs} của (đơn, kênh) — đếm bằng SQL, code chính không cần truy vấn này. */
+    protected long notificationsLogged(long orderId, NotificationChannel channel) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM notification_logs WHERE order_id = ? AND channel = ?",
+                Long.class, orderId, channel.name());
     }
 
     protected static OrderPlacedMessage message(long orderId) {
