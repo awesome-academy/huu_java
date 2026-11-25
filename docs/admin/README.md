@@ -20,6 +20,9 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 | Method | Path | Mô tả |
 |---|---|---|
 | GET | `/admin`, `/admin/dashboard` | Dashboard thống kê tổng quan |
+| GET | `/admin/dashboard/charts` | JSON dữ liệu 2 biểu đồ (`DashboardChartResDto`: doanh thu 6 tháng, số đơn theo trạng thái) cho `static/js/admin/dashboard.js` — thay cho script inline (CSP) |
+
+JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua thuộc tính `data-confirm="..."` trên `<form>`/`<button>`, kiểm tra kích thước file qua `data-max-file-size`), `dashboard.js` (Chart.js). Không viết `onclick`/`onsubmit` hay `<script>` inline — CSP chặn.
 
 ### Quản lý sản phẩm — `ProductAdminController` (`/admin/products`)
 
@@ -27,12 +30,12 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 |---|---|---|
 | GET | `/admin/products` | Danh sách phân trang, filter theo tên / danh mục / loại / trạng thái bán |
 | GET | `/admin/products/add` | Form thêm sản phẩm |
-| POST | `/admin/products/add` | Tạo sản phẩm, upload nhiều ảnh (`newImages`, tối đa 10MB/file) |
+| POST | `/admin/products/add` | Tạo sản phẩm, upload nhiều ảnh (`newImages`, tối đa 5MB/file, 25MB/lần gửi) |
 | GET | `/admin/products/edit/{id}` | Form sửa sản phẩm |
 | POST | `/admin/products/edit/{id}` | Cập nhật (thêm/xóa ảnh, chọn ảnh đại diện) |
 | POST | `/admin/products/{id}/delete` | Xóa sản phẩm |
 
-Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`).
+Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`). Chỉ nhận PNG, JPEG — nội dung file (magic bytes) phải khớp đuôi file, `Content-Type` do trình duyệt gửi không được dùng. Ảnh được decode rồi encode lại (bỏ EXIF/GPS và dữ liệu thừa, áp hướng xoay EXIF, từ chối ảnh trên 40 triệu pixel, thu nhỏ cạnh dài về 2048px); tên file lưu là UUID. GIF/WEBP không được nhận vì JDK không có codec WebP và encode lại GIF làm mất animation.
 
 ### Quản lý danh mục — `CategoryAdminController` (`/admin/categories`)
 
@@ -56,7 +59,7 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 | Method | Path | Mô tả |
 |---|---|---|
 | GET | `/admin/users` | Danh sách phân trang, filter theo keyword / role / trạng thái active |
-| GET / POST | `/admin/users/{id}/edit` | Sửa thông tin người dùng |
+| GET / POST | `/admin/users/{id}/edit` | Sửa thông tin người dùng; ô mật khẩu mới để trống = giữ nguyên, nếu nhập thì theo chính sách mật khẩu 8–64 ký tự (xem [docs/web](../web/README.md#form-login--đăng-ký--authcontroller)) |
 | POST | `/admin/users/{id}/toggle-active` | Khóa / mở khóa tài khoản |
 
 ### Quản lý góp ý — `SuggestionAdminController` (`/admin/suggestions`)

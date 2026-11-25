@@ -11,10 +11,7 @@ spring:
 #    properties:
 #      hibernate:
 #        format_sql: true
-  servlet:
-    multipart:
-      max-file-size: 10MB
-      max-request-size: 50MB
+  # Giới hạn upload (spring.servlet.multipart.*) khai báo chung trong application.yml
 
 # Customize logging for Dev environment (console output)
 logging:
@@ -33,6 +30,11 @@ management:
 app:
   security:
     remember-me-key: ${REMEMBER_ME_KEY:${random.value}${random.value}}
+    attempt-limits:
+      # Khoá HMAC băm key của bộ đếm chống brute-force (bảng attempt_limits). Không đặt thì sinh ngẫu nhiên 256 bit mỗi
+      # khi context khởi động → bộ đếm/khoá cũ không còn khớp sau restart (dev chấp nhận được; test mỗi lần chạy có bộ
+      # đếm riêng). Prod bắt buộc đặt và mọi instance dùng chung.
+      key-secret: ${ATTEMPT_LIMITS_KEY_SECRET:${random.value}${random.value}}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
 jwt:

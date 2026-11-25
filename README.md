@@ -11,7 +11,7 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 ## Tech Stack
 
 - **Ngôn ngữ:** Java 25
-- **Framework:** Spring Boot 4.x (`spring-boot-starter-parent` 4.0.7)
+- **Framework:** Spring Boot 4.x (`spring-boot-starter-parent` 4.0.10)
 - **Build tool:** Maven (Maven Wrapper đi kèm)
 - **Database:** MySQL 8 + Spring Data JPA / Hibernate
 - **Migration:** Flyway (`src/main/resources/db/migration`)
@@ -71,12 +71,13 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 **Build & test:**
 
 ```bash
-# Trong Docker (container JDK 25, dùng MySQL của compose — không cần JDK local)
-docker compose run --rm maven test                          # Toàn bộ test
-docker compose run --rm maven test -Dtest=AuthProductApiTest # Chạy 1 class test
-docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
+# Trong Docker (container JDK 25 — không cần JDK local)
+docker compose run --rm maven-docker test                           # Toàn bộ test (mount Docker socket, xem cảnh báo bên dưới)
+docker compose run --rm maven-docker test -Dtest=AuthProductApiTest # Chạy 1 class test
+docker compose run --rm maven test -DexcludedGroups=integration # Chỉ test không cần Docker (không mount socket)
+docker compose run --rm maven clean package -DskipTests             # Build file JAR vào target/
 
-# Hoặc bằng JDK local (cần MySQL: compose ở Cách B hoặc MySQL trên máy)
+# Hoặc bằng JDK local (cần Docker đang chạy, không cần MySQL)
 ./mvnw test
 ./mvnw clean package -DskipTests
 
@@ -84,7 +85,19 @@ docker compose up -d --build app     # Build lại image và chạy app sau khi 
 docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
 
-Test hiện tại là `@SpringBootTest` chạy trên database `foodsndrinks` (của compose hoặc của máy) và rollback sau mỗi test.
+**Các loại test:**
+
+| Loại | Ví dụ | Cần |
+|---|---|---|
+| Unit test Mockito (`@ExtendWith(MockitoExtension.class)`) | `OrderServiceTest`, `UserServiceTest` | — |
+| Test slice `@WebMvcTest` + 3 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Integration test `@IntegrationTest` (= `@SpringBootTest` + Testcontainers + profile `test`, tag `integration`) | `AuthProductApiTest`, `FoodsndrinksApplicationTests` | Docker |
+
+Integration test chạy trên **MySQL 8.4 do Testcontainers tạo** (`TestcontainersConfiguration`, `@ServiceConnection`) — không đụng database dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Test chỉ chạy với profile `test` (không bật `dev`), nên không dùng datasource, `JWT_SECRET` hay `REMEMBER_ME_KEY` trong `.env`. Không dùng `@SpringBootTest` trần (`IntegrationTestConventionTest` fail). Một container dùng chung cho cả lần chạy, bị xoá khi test kết thúc; mỗi test vẫn rollback bằng `@Transactional`. Lần chạy đầu tải image `mysql:8.4`.
+
+> ⚠ **`maven-docker` mount Docker socket của máy host** để Testcontainers tạo container: mọi code chạy trong build (dependency, plugin, test) đều có quyền tương đương root trên máy. Chỉ dùng trên máy dev với code đã review; service `maven` (không có socket) vẫn dùng cho build/quét dependency.
+
+**Coverage (JaCoCo):** `./mvnw test` (hoặc `maven-docker test`) sinh báo cáo `target/site/jacoco/index.html` (kèm `jacoco.xml`, `jacoco.csv`). Chưa đặt ngưỡng chặn build.
 
 ## Project Structure
 
@@ -147,7 +160,13 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `HOST_UID` / `HOST_GID` | Linux/WSL2 nếu khác 1000 | UID/GID user máy host (`id -u` / `id -g`): container app chạy bằng user này để ghi được `uploads/`, `logs/` mà file vẫn thuộc user máy host (mặc định 1000). Container maven tự chạy bằng chủ sở hữu thư mục project (`docker/maven-entrypoint.sh`), không dùng biến này |
 | `DB_FOODSNDRINKS_URL` | Prod | JDBC URL (dev mặc định `jdbc:mysql://localhost:3306/foodsndrinks`) |
 | `JWT_SECRET` | Prod | Secret ký JWT, ≥ 32 byte / 256 bit (dev không đặt thì tự sinh khoá random 256 bit mỗi khi context khởi động — token cũ hết hiệu lực sau restart, kể cả hot restart của devtools) |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | — | Claim `iss` / `aud` của JWT, bắt buộc khớp khi kiểm tra token (mặc định `foodsndrinks` / `foodsndrinks-api`; đổi thì token cũ hết hiệu lực) |
+| `CORS_ALLOWED_ORIGINS` | Khi SPA khác origin gọi API | Origin được gọi `/api/**` từ trình duyệt, cách nhau bởi dấu phẩy (vd. `https://app.example.com`). Rỗng = chỉ same-origin. Phải đúng dạng `scheme://host[:port]` (không `/` cuối), không `*`, không `null`; `http` chỉ cho localhost — sai thì app không khởi động |
 | `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random 256 bit) |
+| `ATTEMPT_LIMITS_KEY_SECRET` | Prod | Khoá HMAC (≥ 32 ký tự) băm IP/tên đăng nhập trước khi lưu bộ đếm chống brute-force và giới hạn đăng ký vào bảng `attempt_limits` (dùng chung giữa các instance, không mất khi restart). Mọi instance phải dùng chung một giá trị; đổi giá trị thì mọi bộ đếm/khoá về 0. Dev không đặt thì tự sinh random 256 bit mỗi lần khởi động |
+| `SESSION_COOKIE_SECURE` | — | Cờ `Secure` của cookie session (`JSESSIONID`, chỉ gửi qua HTTPS). Mặc định `false` ở dev (http://localhost), `true` ở prod |
+| `NVD_API_KEY` | Khi chạy Dependency-Check | API key của NVD cho `dependency-check:check` (xem [Quét lỗ hổng thư viện](#quét-lỗ-hổng-thư-viện-owasp-dependency-check)); không dùng khi chạy app |
+| `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Khi dùng login Google | OAuth2 credentials từ Google Console |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Khi dùng login Facebook | OAuth2 credentials |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Khi dùng login Twitter/X | OAuth2 credentials |
@@ -194,14 +213,14 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 
 - Mỗi dòng log có `[instance] [requestId] [user]` (`instance` = `INSTANCE_ID`, bắt buộc ở prod, dev mặc định hostname — phân biệt instance khi chạy nhiều instance sau load balancer). `requestId` luôn do server sinh (UUID), được trả lại trong response header `X-Request-Id` và được mang sang thread `@Async`. Khi người dùng báo lỗi, lấy `X-Request-Id` của response để `grep` toàn bộ log của request đó. Nếu client gửi header `X-Request-Id` hợp lệ (chữ/số/`-`, ≤ 64 ký tự), giá trị đó chỉ được ghi kèm thành `[<requestId> cid=<id của client>]`, không dùng làm requestId (tránh giả mạo id của request khác).
 - Chống log injection: ký tự ngắt dòng (CR, LF, U+0085, U+2028, U+2029) và ký tự điều khiển/vô hình trong message, message của exception và giá trị audit bị thay bằng `_`. Hệ quả: message nhiều dòng hợp lệ (vd. báo cáo của devtools) cũng bị gộp thành 1 dòng.
-- Profile `dev` và `prod` ghi thêm file trong `logs/` (đổi thư mục bằng `LOGGING_FILE_PATH`); riêng `prod` ghi vào thư mục con `logs/<INSTANCE_ID>/` để nhiều instance dùng chung thư mục log (vd. cùng bind mount `./logs`) không ghi đè/xoay vòng/xoá file của nhau. File xoay vòng theo ngày hoặc khi vượt 10MB, nén `.gz`. `foodsndrinks.log` được ghi bất đồng bộ (`AsyncAppender`, không bỏ log nào); `audit.log` chỉ có ở `prod` và ghi đồng bộ. Khi chạy test luôn có thêm profile `test` (`src/test/resources/config/application.yml`) nên log của test chỉ ra console.
+- Profile `dev` và `prod` ghi thêm file trong `logs/` (đổi thư mục bằng `LOGGING_FILE_PATH`); riêng `prod` ghi vào thư mục con `logs/<INSTANCE_ID>/` để nhiều instance dùng chung thư mục log (vd. cùng bind mount `./logs`) không ghi đè/xoay vòng/xoá file của nhau. File xoay vòng theo ngày hoặc khi vượt 10MB, nén `.gz`. `foodsndrinks.log` được ghi bất đồng bộ (`AsyncAppender`, không bỏ log nào); `audit.log` chỉ có ở `prod` và ghi đồng bộ. Khi chạy test chỉ bật profile `test` (không bật `dev`; `src/test/resources/config/application.yml`) nên log của test chỉ ra console.
 
   | File | Nội dung | Định dạng | Giữ lại |
   |---|---|---|---|
   | `logs/foodsndrinks.log` (prod: `logs/<INSTANCE_ID>/foodsndrinks.log`) | Toàn bộ log của app (kể cả audit) | Text | 30 ngày, tối đa 1GB / instance |
   | `logs/<INSTANCE_ID>/audit.log` (chỉ prod) | Chỉ logger `AUDIT` (sự kiện bảo mật); có `service.node.name` = `INSTANCE_ID` | JSON 1 dòng/sự kiện ([ECS](https://www.elastic.co/guide/en/ecs/current/index.html)) | 90 ngày, tối đa 500MB |
 
-- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
+- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), session bị huỷ (`SESSION_REVOKED`, `event.reason` = `DISABLED`, `ROLE_CHANGED`, `ACCOUNT_NOT_FOUND` — tài khoản bị khoá/đổi role/xoá sau khi đăng nhập: session bị huỷ ở request kế tiếp), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
 
   ```
   Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS auth.method=FORM username=alice source.ip=127.0.0.1
@@ -213,6 +232,23 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
   ```json
   {"@timestamp":"…","log":{"level":"WARN","logger":"AUDIT"},"message":"Login failed","requestId":"…","event":{"action":"LOGIN_FAILURE","outcome":"failure","reason":"BAD_CREDENTIALS"},"auth":{"method":"FORM"},"username":"alice","source":{"ip":"127.0.0.1"},"ecs":{"version":"8.11"}}
   ```
+
+## Quét Lỗ Hổng Thư Viện (OWASP Dependency-Check)
+
+Quét CVE của mọi dependency (kể cả thư viện front-end trong WebJars) — chạy **trước khi tạo PR có thêm/đổi dependency**. Không gắn vào `./mvnw test`/`package`, phải gọi riêng:
+
+```bash
+# Cần NVD API key (miễn phí): https://nvd.nist.gov/developers/request-an-api-key → NVD_API_KEY trong .env
+docker compose run --rm --no-deps maven dependency-check:check
+
+# JDK local: Maven không đọc .env → đặt biến trong shell trước
+export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
+./mvnw dependency-check:check
+```
+
+- Lần đầu tải toàn bộ dữ liệu NVD (vài phút đến vài chục phút), các lần sau chỉ cập nhật phần thay đổi — cache ở `~/.m2/repository/org/owasp/dependency-check-data` (với Docker là volume `maven-repo`).
+- Build **fail khi có lỗ hổng CVSS ≥ 7**. Báo cáo: `target/dependency-check-report.html` (và `.json`).
+- Xử lý: ưu tiên nâng version (Spring Boot patch mới nhất, hoặc property version của BOM / WebJar trong `pom.xml`). Lỗ hổng chắc chắn không áp dụng thì thêm vào `dependency-check-suppressions.xml` kèm `<notes>` giải thích và hạn xem lại `until`.
 
 ## Monitoring
 

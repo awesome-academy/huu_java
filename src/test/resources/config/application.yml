@@ -1,6 +1,61 @@
 # Chỉ nằm trên classpath khi chạy test (Maven, IDE, container maven). Spring Boot nạp file này BỔ SUNG cho
-# classpath:/application.yml (classpath:/config/ có độ ưu tiên cao hơn), không thay thế nó — profile dev vẫn bật như cũ.
+# classpath:/application.yml, không thay thế nó, và giá trị ở đây thắng classpath:/application.yml.
+# Các giá trị này CHỈ có hiệu lực khi profile dev KHÔNG bật: classpath:/ và classpath:/config/ cùng một nhóm vị trí,
+# trong nhóm thì file theo profile (application-dev.yml) luôn thắng file không theo profile (file này). Vì vậy test
+# chạy chỉ với profile "test": @IntegrationTest có @ActiveProfiles("test"), và surefire đặt system property
+# spring.profiles.active=test (pom.xml). Cả hai đều thắng SPRING_PROFILES_ACTIVE của môi trường/.env.
+# TestEnvironmentIsolationTest kiểm tra.
 spring:
   profiles:
-    # Thêm profile "test": logback-spring.xml chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
+    # Profile "test" cũng bật khi chạy test trong IDE mà không qua @IntegrationTest (vd. @WebMvcTest): logback-spring.xml
+    # chỉ ghi console, không ghi log của test vào logs/foodsndrinks.log
     include: test
+  datasource:
+    # Test KHÔNG BAO GIỜ dùng database dev. @IntegrationTest lấy kết nối từ MySQL của Testcontainers
+    # (TestcontainersConfiguration → @ServiceConnection thay các giá trị này). Context không có container thì nối tới host
+    # không tồn tại (.invalid) và lỗi ngay, thay vì âm thầm ghi vào DB dev. Không cần DB_USERNAME/DB_PASSWORD.
+    url: jdbc:mysql://testcontainers-required.invalid:3306/foodsndrinks
+    username: ""
+    password: ""
+  security:
+    oauth2:
+      client:
+        registration:
+          # Client giả: test không bao giờ dùng client id/secret thật trong .env (không gọi provider thật)
+          google:
+            client-id: test-google-client-id
+            client-secret: test-google-client-secret
+          facebook:
+            client-id: test-facebook-client-id
+            client-secret: test-facebook-client-secret
+          twitter:
+            client-id: test-twitter-client-id
+            client-secret: test-twitter-client-secret
+
+# Khoá ký ngẫu nhiên cho mỗi lần chạy (SecureRandom), không lấy JWT_SECRET/REMEMBER_ME_KEY trong .env. Biến môi trường
+# JWT_SECRET (compose: env_file .env) vẫn thắng file này qua relaxed binding → @IntegrationTest khai báo lại bằng
+# @TestPropertySource (thắng biến môi trường).
+# Profile dev không bật nên thời hạn token cũng khai báo ở đây (cùng giá trị với dev/prod: 1 giờ).
+jwt:
+  secret: ${random.value}${random.value}
+  expiration: 3600000
+
+app:
+  security:
+    remember-me-key: ${random.value}${random.value}
+    # Mọi request của MockMvc đều đến từ 127.0.0.1 và bộ đếm dùng chung trong cả Spring context: nới giới hạn theo IP để
+    # các test không chặn nhau. Test của giới hạn theo IP tự đặt remoteAddr riêng hoặc dùng unit test.
+    login-attempts:
+      max-failures-per-ip: 10000
+    registration:
+      max-per-ip: 10000
+    password:
+      # Không gọi dịch vụ Pwned Passwords bên ngoài khi chạy test (chậm, phụ thuộc mạng)
+      breach-check-enabled: false
+  notification:
+    # Không gửi mail/Slack thật khi test checkout (listener vẫn chạy, service bỏ qua khi tắt)
+    slack:
+      enabled: false
+      webhook-url: ""
+    mail:
+      enabled: false

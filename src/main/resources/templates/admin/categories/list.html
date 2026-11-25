@@ -120,7 +120,7 @@
                         </a>
                         <form th:action="@{/admin/categories/{id}/delete(id=${cat.id})}"
                               method="post" class="d-inline"
-                              onsubmit="return confirm('Bạn có chắc chắn muốn xóa danh mục này? Các sản phẩm thuộc danh mục sẽ bị ảnh hưởng.');">
+                              data-confirm="Bạn có chắc chắn muốn xóa danh mục này? Các sản phẩm thuộc danh mục sẽ bị ảnh hưởng.">
                             <input th:if="${_csrf != null}" type="hidden"
                                    th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                             <button type="submit" class="btn btn-sm btn-outline-danger ms-1">

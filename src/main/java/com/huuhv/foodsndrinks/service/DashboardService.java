@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
+import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
 import com.huuhv.foodsndrinks.dto.response.DashboardResDto;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
@@ -41,6 +42,18 @@ public class DashboardService {
                 .recentOrders(buildRecentOrders())
                 .topProducts(buildTopProducts())
                 .build();
+    }
+
+    /** Chỉ dữ liệu biểu đồ (2 query) — cho dashboard.js và cập nhật realtime, không tính lại KPI/bảng. */
+    @Transactional(readOnly = true)
+    public DashboardChartResDto getChartData() {
+        List<DashboardResDto.MonthlyRevenueDto> monthly = buildMonthlyRevenue();
+        Map<String, Long> statusCounts = buildStatusCounts();
+        return new DashboardChartResDto(
+                monthly.stream().map(DashboardResDto.MonthlyRevenueDto::getLabel).toList(),
+                monthly.stream().map(DashboardResDto.MonthlyRevenueDto::getRevenue).toList(),
+                List.copyOf(statusCounts.keySet()),
+                List.copyOf(statusCounts.values()));
     }
 
     // -------------------------------------------------------

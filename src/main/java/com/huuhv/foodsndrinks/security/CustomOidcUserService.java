@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.security;
 
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
+import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
@@ -19,8 +20,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Google sign-in (OIDC). Google reliably verifies the account's email, so it is used (after the provider id) as the
- * account-matching key in {@code UserService.provisionOAuthUser}.
+ * Google sign-in (OIDC). The email is used (after the provider id) as the account-matching key in
+ * {@code UserService.provisionOAuthUser} only when the ID token says {@code email_verified=true}.
  * <p>
  * Like {@link CustomOAuth2UserService}, the principal's name is the resolved local username (a synthetic
  * {@value #NAME_ATTRIBUTE_KEY} claim), not the email: {@code Authentication#getName()} — used by audit log, MDC
@@ -40,15 +41,26 @@ public class CustomOidcUserService extends OidcUserService {
         return toLocalUser(super.loadUser(userRequest));
     }
 
-    /** Resolves (or creates) the local account behind a Google identity and builds the principal for it. */
+    /**
+     * Resolves (or creates) the local account behind a Google identity and builds the principal for it.
+     *
+     * @throws DisabledOAuth2AccountException if the local account has been locked by an admin
+     */
     OidcUser toLocalUser(OidcUser oidcUser) {
-        User localUser = userService.provisionOAuthUser(
-                AuthProvider.GOOGLE,
-                oidcUser.getSubject(),
-                oidcUser.getEmail(),
-                oidcUser.getFullName(),
-                oidcUser.getPicture()
-        );
+        User localUser;
+        try {
+            localUser = userService.provisionOAuthUser(
+                    AuthProvider.GOOGLE,
+                    oidcUser.getSubject(),
+                    oidcUser.getEmail(),
+                    Boolean.TRUE.equals(oidcUser.getEmailVerified()),
+                    oidcUser.getFullName(),
+                    oidcUser.getPicture()
+            );
+        } catch (OAuthEmailConflictException ex) {
+            throw new OAuth2EmailConflictException(ex);
+        }
+        DisabledOAuth2AccountException.rejectIfDisabled(localUser);
 
         // DefaultOidcUser merges userinfo claims with ID token claims (ID token wins), so the synthetic claim goes into
         // userinfo; Google's ID token does not carry it.

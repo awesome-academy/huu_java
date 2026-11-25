@@ -7,6 +7,11 @@ spring:
     # Secret cho môi trường local nằm trong file .env (git-ignore, mẫu ở .env.example) ở thư mục chạy app.
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
+  servlet:
+    multipart:
+      # Áp dụng mọi profile (prod trước đây dùng mặc định của Spring). Ảnh sản phẩm/avatar: tối đa 5MB/file, 25MB/request
+      max-file-size: 5MB
+      max-request-size: 25MB
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
@@ -64,13 +69,59 @@ spring:
 
 server:
   port: 8080 # Default port
+  servlet:
+    session:
+      timeout: 30m # Session không hoạt động quá 30 phút thì hết hạn (remember-me vẫn đăng nhập lại được)
+      cookie:
+        http-only: true   # JS không đọc được JSESSIONID
+        same-site: lax    # Không gửi kèm request POST/iframe từ site khác (thêm một lớp ngoài CSRF token)
+        # Chỉ gửi qua HTTPS. Dev (http://localhost) để false; prod mặc định true (application-prod.yml)
+        secure: ${SESSION_COOKIE_SECURE:false}
+
+# Secret/thời hạn đặt theo profile (application-dev.yml / application-prod.yml). iss/aud không phải secret: token chỉ
+# hợp lệ khi khớp cả hai — đổi giá trị làm mọi token đã cấp hết hiệu lực.
+jwt:
+  issuer: ${JWT_ISSUER:foodsndrinks}
+  audience: ${JWT_AUDIENCE:foodsndrinks-api}
+
+logging:
+  level:
+    # Cảnh báo "Global AuthenticationManager configured with an AuthenticationProvider bean" là chủ ý: bean
+    # LoginAttemptAwareAuthenticationProvider (SecurityConfig) thay provider Spring tự tạo để chống brute-force
+    # Ngoặc vuông: tên logger có '$', không bọc thì Spring Boot bỏ ký tự này khi bind key của map
+    "[org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer$InitializeUserDetailsManagerConfigurer]": ERROR
 
 app:
+  cors:
+    # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
+    # Không chấp nhận '*' (app không khởi động).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   # Định danh instance khi chạy nhiều instance sau load balancer: in trong mỗi dòng log, là field service.node.name
   # của audit.log, và (profile prod) là tên thư mục log riêng logs/<instance-id>/ để các instance không ghi chung file.
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
   # (application-prod.yml + config/InstanceIdCheck), vì hostname của container đổi mỗi lần tạo lại.
   instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
+  security:
+    # Chống brute-force (form + API). Bộ đếm nằm trong bảng attempt_limits (dùng chung giữa các instance, key băm HMAC
+    # bằng app.security.attempt-limits.key-secret — đặt theo profile). Trong window (tính từ lần thử đầu tiên, >= 1s),
+    # vượt ngưỡng phạm vi nào thì khoá phạm vi đó lock-duration (>= 1s):
+    # - max-failures: cặp (IP, tên đăng nhập); cũng là số lần sai mật khẩu hiện tại khi đổi mật khẩu (→ đăng xuất)
+    # - max-failures-per-ip: mọi tên đăng nhập từ một IP (IPv6: mạng /64) — chặn password spraying
+    # - max-failures-per-account: một tài khoản từ mọi IP — chặn tấn công phân tán (cao để khó khoá tài khoản người khác)
+    login-attempts:
+      max-failures: 5
+      max-failures-per-ip: 20
+      max-failures-per-account: 50
+      window: 15m
+      lock-duration: 15m
+    # Số lần gửi form đăng ký (POST /register) tối đa từ một IP trong window
+    registration:
+      max-per-ip: 10
+      window: 1h
+    password:
+      # Từ chối mật khẩu mới nằm trong danh sách bị lộ (Pwned Passwords, chỉ gửi 5 ký tự đầu SHA-1);
+      # dịch vụ lỗi/timeout thì cho qua và ghi WARN
+      breach-check-enabled: ${PASSWORD_BREACH_CHECK_ENABLED:true}
   notification:
     admin-email: ${ADMIN_NOTIFY_EMAIL:admin@example.com}
     slack:

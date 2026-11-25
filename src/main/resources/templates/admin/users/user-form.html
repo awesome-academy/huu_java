@@ -100,7 +100,7 @@
                             <label class="form-label fw-medium">Mật khẩu mới</label>
                             <input type="password" class="form-control" th:field="*{newPassword}"
                                    placeholder="Để trống nếu không muốn đổi mật khẩu">
-                            <div class="form-text">Tối thiểu 6 ký tự. Để trống = giữ nguyên mật khẩu cũ.</div>
+                            <div class="form-text">Từ 8 đến 64 ký tự. Để trống = giữ nguyên mật khẩu cũ.</div>
                             <div class="text-danger small mt-1"
                                  th:if="${#fields.hasErrors('newPassword')}" th:errors="*{newPassword}"></div>
                         </div>

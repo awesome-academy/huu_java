@@ -1,5 +1,10 @@
 server:
   port: ${SERVER_PORT:8080} # Allow override; avoid privileged port binding by default
+  servlet:
+    session:
+      cookie:
+        # Prod chạy HTTPS: cookie session chỉ gửi qua HTTPS. Chỉ đặt false khi prod thật sự không có HTTPS
+        secure: ${SESSION_COOKIE_SECURE:true}
   # Chạy sau load balancer/reverse proxy: lấy IP client thật (request.getRemoteAddr(), dùng cho source.ip của audit log)
   # và scheme https từ X-Forwarded-For / X-Forwarded-Proto qua RemoteIpValve của Tomcat.
   forward-headers-strategy: native
@@ -43,6 +48,8 @@ app:
   instance-id: ${INSTANCE_ID:}
   security:
     remember-me-key: ${REMEMBER_ME_KEY}
+    attempt-limits:
+      key-secret: ${ATTEMPT_LIMITS_KEY_SECRET}  # >= 32 chars, giống nhau ở mọi instance
 jwt:
   secret: ${JWT_SECRET}  # >= 32 chars
   expiration: 3600000 # 1 hour

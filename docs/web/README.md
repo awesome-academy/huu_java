@@ -26,12 +26,22 @@ Trang bán hàng cho người dùng cuối, render phía server bằng Thymeleaf
 
 Sau khi login: `ADMIN` → `/admin`, `USER` → `/` (hoặc quay lại trang yêu cầu trước đó).
 
+- **Đăng nhập sai:** mọi lỗi → `/login?error=true` với một thông báo chung (không phân biệt sai username/email hay sai mật khẩu).
+- **Giới hạn đăng nhập sai:** sai 5 lần trong 15 phút với cùng username/email từ cùng IP (hoặc 20 lần từ một IP với mọi tên, hoặc 50 lần với một tài khoản từ mọi IP) → khoá 15 phút → `/login?locked=true` (thông báo chung, áp dụng cả với tên không tồn tại). Bộ đếm dùng chung với API login — chi tiết ở [docs/api](../api/README.md#giới-hạn-đăng-nhập-sai). OAuth2 login không bị ảnh hưởng.
+- **Đổi mật khẩu ở hồ sơ:** sai mật khẩu hiện tại 5 lần trong 15 phút → đăng xuất (huỷ session + cookie remember-me) → `/login?reauth=true`; đổi mật khẩu bị khoá 15 phút. Audit `PASSWORD_CHANGE_LOCKOUT`.
+- **Giới hạn đăng ký:** tối đa 10 lần gửi form `POST /register` mỗi giờ từ một IP (`app.security.registration.{max-per-ip,window}`); vượt → `/register?throttled=true`, audit `REGISTRATION_THROTTLED`.
+- **Chính sách mật khẩu** (đăng ký, đổi mật khẩu ở hồ sơ, admin đặt lại mật khẩu — `@ValidPassword` + `@NotCompromisedPassword` / `PasswordPolicy`): 8–64 ký tự, không giới hạn loại ký tự, tối đa 72 byte UTF-8 (giới hạn của BCrypt — chỉ ảnh hưởng mật khẩu dài nhiều ký tự có dấu), và không nằm trong danh sách mật khẩu bị lộ (Pwned Passwords, chỉ gửi 5 ký tự đầu SHA-1; chỉ gọi khi mọi field khác của form đã hợp lệ; cache theo prefix 10 phút; dịch vụ lỗi/timeout thì cho qua và ghi WARN; tắt bằng `PASSWORD_BREACH_CHECK_ENABLED=false`).
+- **Social login trùng email:** Google/Facebook chỉ tự gắn vào tài khoản có sẵn cùng email khi provider đã xác minh email VÀ tài khoản đó không có mật khẩu (được tạo bằng social login). Email trùng tài khoản đăng ký bằng mật khẩu → `/login?oauthEmailExists=true` (đăng nhập bằng mật khẩu), audit `LOGIN_FAILURE reason=EMAIL_CONFLICT`. Email chưa xác minh không được lưu cho tài khoản mới.
+
 ### Social login (OAuth2)
 
 Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong `application.yml`, cần set env `*_CLIENT_ID` / `*_CLIENT_SECRET` tương ứng:
 
 - PKCE được bật cho mọi provider (`pkceAuthorizationRequestResolver`).
-- Google dùng `email` làm principal key (map tài khoản theo email đã verify); xử lý ở `CustomOidcUserService`.
+- Google map tài khoản theo provider id, sau đó theo email đã verify; xử lý ở `CustomOidcUserService`.
+- Mọi provider đều dùng username nội bộ làm principal key (claim/attribute tổng hợp `local_username`), nên `Authentication#getName()` (audit log, MDC `user.name`) giống nhau dù đăng nhập bằng form, API, Google, Facebook hay X.
+- Tài khoản local đã bị admin khoá không đăng nhập được bằng bất kỳ provider nào (giống form/API): cả hai service ném `DisabledOAuth2AccountException` → `/login?error=true` với thông báo chung, audit ghi `LOGIN_FAILURE reason=DISABLED auth.method=OAUTH2:<provider>` kèm username.
+- Người dùng đang đăng nhập (mọi cách: form, remember-me, OAuth2) mà bị admin khoá hoặc đổi role thì session bị huỷ ở request kế tiếp (`AccountStatusFilter`): cookie remember-me bị xoá, trang public hiển thị như khách, trang cần đăng nhập chuyển về `/login`; audit ghi `SESSION_REVOKED`. Đổi role (kể cả nâng quyền) cũng phải đăng nhập lại để nhận quyền mới.
 - Facebook/Twitter xử lý ở `CustomOAuth2UserService`; Twitter là provider cấu hình thủ công (không nằm trong `CommonOAuth2Provider`).
 - Provider của tài khoản lưu ở enum `AuthProvider`.
 
@@ -97,4 +107,5 @@ Dưới mỗi sản phẩm có nút chia sẻ mạng xã hội (client-side, tro
 
 - Layout chung `web/layout/base.html` (Thymeleaf Layout Dialect) — trang con chỉ định nghĩa fragment content.
 - **Không hardcode domain** hay đường dẫn tuyệt đối — dùng cú pháp context-path của Thymeleaf `@{/duong-dan}`.
-- Static assets: `/css`, `/js`, `/images` (trong `src/main/resources/static`), ảnh sản phẩm upload serve qua `/uploads/**`.
+- Static assets: `/css`, `/js`, `/images` (trong `src/main/resources/static`), ảnh sản phẩm upload serve qua `/uploads/**`. Bootstrap/Font Awesome/Chart.js tự host qua WebJars: `@{/webjars/bootstrap/css/bootstrap.min.css}` (không ghi version, không dùng CDN).
+- **Content-Security-Policy** (`SecurityConfig.CONTENT_SECURITY_POLICY`): `script-src 'self'` — không `<script>` inline, không thuộc tính `onclick`/`onsubmit`/`th:on*`, không `javascript:`. JS đặt trong `static/js/**`, gắn sự kiện bằng `addEventListener` (thường là delegate trên `document` + `data-action="..."`), dữ liệu từ server qua `data-*` hoặc endpoint JSON. Thuộc tính `style="..."` vẫn được phép, thẻ `<style>` thì không. Ảnh ngoài chỉ từ host avatar OAuth2 (Google/Facebook/Twitter). Test `TemplateCspComplianceTest` quét toàn bộ template.

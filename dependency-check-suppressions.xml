@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Lỗ hổng đã xem xét và KHÔNG áp dụng cho app (OWASP Dependency-Check, xem plugin trong pom.xml).
+    Ưu tiên sửa bằng cách nâng version (Spring Boot BOM / property version) — chỉ suppress khi chắc chắn không áp dụng.
+    Mỗi mục bắt buộc:
+      - <notes>: lý do cụ thể vì sao không áp dụng (đoạn code/tính năng không dùng, điều kiện khai thác không có...)
+      - until="yyyy-MM-ddZ": hạn xem lại; quá hạn thì mục bị bỏ qua và lỗ hổng xuất hiện lại trong báo cáo
+      - khớp hẹp nhất có thể: packageUrl của đúng thư viện + cve cụ thể (không suppress cả thư viện)
+    Ví dụ:
+    <suppress until="2027-05-31Z">
+        <notes>CVE-XXXX-YYYY chỉ ảnh hưởng tính năng Z, app không dùng (lý do...).</notes>
+        <packageUrl regex="true">^pkg:maven/org\.example/library@.*$</packageUrl>
+        <cve>CVE-XXXX-YYYY</cve>
+    </suppress>
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <suppress until="2027-05-31Z">
+        <notes>False positive: CVE-2022-31691 thuộc Spring Tools 4 for Eclipse / VSCode extension Spring Boot Tools
+            (YAML editor dùng SnakeYAML), không phải thư viện spring-boot-devtools — CPE vmware:spring_tools /
+            spring_boot_tools khớp nhầm theo tên. devtools là dependency optional, chỉ chạy ở dev và bị loại khỏi jar prod.</notes>
+        <packageUrl regex="true">^pkg:maven/org\.springframework\.boot/spring-boot-devtools@.*$</packageUrl>
+        <cve>CVE-2022-31691</cve>
+    </suppress>
+</suppressions>

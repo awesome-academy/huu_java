@@ -1,6 +1,7 @@
 # Chạy toàn bộ trong Docker, không cần JDK/Maven/MySQL trên máy:
 #   docker compose up -d --build                 # MySQL + Artemis + app (http://localhost:8080)
-#   docker compose run --rm maven test           # Chạy lệnh Maven bất kỳ trong container JDK 25
+#   docker compose run --rm maven-docker test    # Toàn bộ test (Testcontainers, mount Docker socket — xem cảnh báo)
+#   docker compose run --rm maven <goal>         # Lệnh Maven bất kỳ trong container JDK 25 (không có Docker socket)
 #   docker compose up -d mysql artemis           # Chỉ hạ tầng, app chạy bằng JDK local
 # Biến môi trường lấy từ file .env (copy từ .env.example). Compose này chỉ dành cho môi trường LOCAL:
 # mọi port chỉ bind 127.0.0.1.
@@ -85,10 +86,11 @@ services:
       artemis:
         condition: service_started
 
-  # Container JDK 25 để chạy lệnh Maven (compile, package, test...) mà không cần cài JDK local.
+  # Container JDK 25 để chạy lệnh Maven (compile, package, dependency-check...) mà không cần cài JDK local.
   # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
-  # Test hiện tại (@SpringBootTest) dùng database của service mysql và rollback sau mỗi test.
-  # Không mount Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host.
+  # Không mount Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host. Vì vậy
+  # service này chỉ chạy được test không cần Docker (unit test, @WebMvcTest: test -DexcludedGroups=integration); toàn bộ test
+  # (@IntegrationTest dùng MySQL của Testcontainers) chạy bằng service maven-docker bên dưới hoặc ./mvnw test trên máy.
   # Chạy Maven bằng đúng chủ sở hữu thư mục project (tự nhận diện, không cần HOST_UID) — xem docker/maven-entrypoint.sh:
   # Linux/WSL2 thì target/ và mọi file test ghi ra thuộc user máy host ngay từ đầu, không cần chown sau khi chạy.
   # UID của user máy host không có trong /etc/passwd của image nên đặt HOME, MAVEN_USER_HOME (mvnw tải Maven vào
@@ -109,9 +111,21 @@ services:
     volumes:
       - .:/workspace
       - maven-repo:/m2
-    depends_on:
-      mysql:
-        condition: service_healthy
+
+  # Như service maven + Docker socket của host, để Testcontainers tạo container MySQL cho integration test:
+  #   docker compose run --rm maven-docker test
+  #   docker compose run --rm maven-docker test -Dtest=AuthProductApiTest
+  # ⚠ RỦI RO: ai điều khiển được Docker socket thì có quyền root trên máy host. Mọi code chạy trong build (dependency,
+  # plugin Maven, test) đều dùng được socket này — chỉ chạy trên máy dev với dependency đã tin cậy, KHÔNG dùng cho code
+  # chưa review (vd. PR lạ) hay trên CI dùng chung. Có JDK 25 + Docker trên máy thì dùng ./mvnw test thay thế.
+  # Testcontainers tự nhận ra đang chạy trong container và nối tới cổng MySQL qua gateway của mạng Docker. Entrypoint
+  # (Linux/WSL2) giữ group sở hữu socket khi hạ quyền về user máy host — xem docker/maven-entrypoint.sh.
+  maven-docker:
+    extends:
+      service: maven
+    command: ["test"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   mysql-data:

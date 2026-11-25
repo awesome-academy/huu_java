@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-F&B Store ("foodsndrinks") — một ứng dụng Spring Boot 4.0.7 / Java 25 phục vụ ba phần: trang quản trị SSR (`/admin/**`), storefront SSR cho khách hàng (`/`, `/menu`, `/cart`, ...) và REST API dùng JWT (`/api/v1/**`). Tài liệu riêng cho từng phần nằm ở [docs/admin](docs/admin/README.md), [docs/web](docs/web/README.md), [docs/api](docs/api/README.md) — cập nhật các file này khi thêm endpoint/trang mới.
+F&B Store ("foodsndrinks") — một ứng dụng Spring Boot 4.0.10 / Java 25 phục vụ ba phần: trang quản trị SSR (`/admin/**`), storefront SSR cho khách hàng (`/`, `/menu`, `/cart`, ...) và REST API dùng JWT (`/api/v1/**`). Tài liệu riêng cho từng phần nằm ở [docs/admin](docs/admin/README.md), [docs/web](docs/web/README.md), [docs/api](docs/api/README.md) — cập nhật các file này khi thêm endpoint/trang mới.
 
 Đây là mock project đã hoàn thành phần cơ bản; giai đoạn hiện tại là **khóa Advance**: bổ sung các công nghệ ở mục [Lộ trình Advance](#lộ-trình-advance) và mọi code mới phải tuân thủ [OWASP Secure Coding Practices](#owasp-secure-coding--quy-tắc-bắt-buộc).
 
@@ -16,6 +16,7 @@ Dùng Maven Wrapper (`mvnw.cmd` trên Windows, `./mvnw` trên Mac/Linux). Bắt 
 ./mvnw test                                  # chạy toàn bộ test
 ./mvnw test -Dtest=AuthProductApiTest        # chạy 1 class test
 ./mvnw test -Dtest=AuthProductApiTest#login_withValidCredentials_returnsToken   # chạy 1 method test
+./mvnw dependency-check:check                # quét CVE dependency (cần NVD_API_KEY trong môi trường; chạy trước PR đổi dependency)
 ```
 
 Docker (không cần JDK/MySQL local; cần file `.env` copy từ `.env.example`):
@@ -23,28 +24,30 @@ Docker (không cần JDK/MySQL local; cần file `.env` copy từ `.env.example`
 ```bash
 docker compose up -d --build                                 # MySQL 8.4 + ActiveMQ Artemis + app (profile dev)
 docker compose up -d mysql artemis                           # chỉ hạ tầng, app chạy bằng JDK local
-docker compose run --rm maven test                           # chạy Maven trong container JDK 25
-docker compose run --rm maven test -Dtest=AuthProductApiTest
+docker compose run --rm maven-docker test                    # chạy toàn bộ test trong container JDK 25 (mount Docker socket cho Testcontainers)
+docker compose run --rm maven-docker test -Dtest=AuthProductApiTest
+docker compose run --rm maven test -DexcludedGroups=integration   # service maven: không có Docker socket, bỏ qua @IntegrationTest
+docker compose run --rm --no-deps maven dependency-check:check   # quét CVE (NVD_API_KEY lấy từ .env)
 docker compose up -d --build app                             # build lại app sau khi sửa code
 docker compose down                                          # thêm -v để xoá dữ liệu MySQL/Artemis
 ```
 
 - Secret local nằm trong `.env` (git-ignore). Compose dùng nó để thay biến và truyền vào container (`env_file`); app chạy bằng JDK local đọc nó qua `spring.config.import: optional:file:.env[.properties]`, biến môi trường hệ điều hành vẫn được ưu tiên. Thêm biến cấu hình mới thì cập nhật cả `.env.example` và bảng biến môi trường trong README. Trong `.env`, dòng `KEY=` rỗng ghi đè default trong yml thành rỗng — biến không dùng phải để comment.
-- Trong compose, app nối DB qua `jdbc:mysql://mysql:3306/...` (ghi đè `DB_FOODSNDRINKS_URL`), đặt `TZ` từ `APP_TZ` trong `.env` (mặc định `Asia/Ho_Chi_Minh`, cũng là `ENV` mặc định trong `Dockerfile`; mọi instance phải chung một giá trị, để `@CreationTimestamp`/`LocalDateTime.now()` giống khi chạy local), `./uploads` và `./logs` được mount vào `/app`. Service `app` chạy bằng `HOST_UID`/`HOST_GID` (mặc định 1000) để ghi được bind mount trên Linux/WSL2 mà file vẫn thuộc user máy host. Service `maven` dùng `docker/maven-entrypoint.sh`: khởi động bằng root, Docker Desktop (project hiện là root) thì chạy Maven bằng root — chạy bằng UID khác sẽ lỗi `utime` trên `target/`; Linux/WSL2 thì chown volume `maven-repo` (`/m2`, chứa `HOME`/`MAVEN_USER_HOME`/`maven.repo.local`) rồi `setpriv` về chủ sở hữu thư mục project — giữ nguyên cơ chế này khi sửa compose. MySQL mở ra host ở `127.0.0.1:33070` và được cố định `--default-time-zone=+00:00` cho khớp `serverTimezone=UTC` (DB lưu thời gian theo UTC; không đặt `TZ` cho service `mysql`). Artemis đã có trong compose (`ARTEMIS_HOST`/`ARTEMIS_PORT` đã được truyền vào app) nhưng app chưa kết nối.
+- Trong compose, app nối DB qua `jdbc:mysql://mysql:3306/...` (ghi đè `DB_FOODSNDRINKS_URL`), đặt `TZ` từ `APP_TZ` trong `.env` (mặc định `Asia/Ho_Chi_Minh`, cũng là `ENV` mặc định trong `Dockerfile`; mọi instance phải chung một giá trị, để `@CreationTimestamp`/`LocalDateTime.now()` giống khi chạy local), `./uploads` và `./logs` được mount vào `/app`. Service `app` chạy bằng `HOST_UID`/`HOST_GID` (mặc định 1000) để ghi được bind mount trên Linux/WSL2 mà file vẫn thuộc user máy host. Service `maven` dùng `docker/maven-entrypoint.sh`: khởi động bằng root, Docker Desktop (project hiện là root) thì chạy Maven bằng root — chạy bằng UID khác sẽ lỗi `utime` trên `target/`; Linux/WSL2 thì chown volume `maven-repo` (`/m2`, chứa `HOME`/`MAVEN_USER_HOME`/`maven.repo.local`) rồi `setpriv` về chủ sở hữu thư mục project (nếu có Docker socket — service `maven-docker` — thì giữ GID của socket làm group phụ) — giữ nguyên cơ chế này khi sửa compose. `maven-docker` = `maven` + mount `/var/run/docker.sock` (chỉ để chạy test bằng Testcontainers; ai dùng được socket là root trên host, nên `maven` thường không mount). MySQL mở ra host ở `127.0.0.1:33070` và được cố định `--default-time-zone=+00:00` cho khớp `serverTimezone=UTC` (DB lưu thời gian theo UTC; không đặt `TZ` cho service `mysql`). Artemis đã có trong compose (`ARTEMIS_HOST`/`ARTEMIS_PORT` đã được truyền vào app) nhưng app chưa kết nối.
 - Migration không có dữ liệu mẫu: tạo admin bằng cách đăng ký tại `/register` rồi `UPDATE users SET role = 'ROLE_ADMIN'` (lệnh cụ thể trong README).
-- Cả **chạy app lẫn chạy test** đều cần MySQL (của compose hoặc của máy). `src/test/resources` chỉ có `config/application.yml` (thêm profile `test` để log của test chỉ ra console, không lẫn vào `logs/foodsndrinks.log`), không có DB riêng cho test: test là `@SpringBootTest` chạy thẳng vào DB `foodsndrinks` và dựa vào `@Transactional` để rollback — test mới có đụng tới DB phải giữ `@Transactional` (cho tới khi chuyển sang Testcontainers, xem mục Testing bên dưới).
+- Chạy app cần MySQL (của compose hoặc của máy); chạy test cần **Docker** thay vì MySQL: `@SpringBootTest` dùng MySQL do Testcontainers tạo (`TestcontainersConfiguration`, xem mục Testing bên dưới), không đụng DB dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Unit test Mockito và `@WebMvcTest` không cần gì. `src/test/resources` chỉ có `config/application.yml` (thêm profile `test` để log của test chỉ ra console; datasource giả, JWT/remember-me key ngẫu nhiên, OAuth client giả, tắt mail/Slack/Pwned Passwords). File này chỉ thắng `application.yml`, **không** thắng `application-dev.yml` (file theo profile luôn thắng file không theo profile trong cùng nhóm `classpath:/;classpath:/config/`), nên test không bao giờ bật profile `dev`: `@IntegrationTest` có `@ActiveProfiles("test")`, surefire đặt system property `spring.profiles.active=test`. Biến môi trường còn thắng mọi file yml (`JWT_SECRET` của `env_file` được map thẳng sang `jwt.secret`), nên `@IntegrationTest` khai báo lại datasource giả và khoá ký bằng `@TestPropertySource` (`TestEnvironmentIsolationTest` kiểm tra). Test có đụng tới DB vẫn giữ `@Transactional` để rollback.
 - Flyway tự chạy migration khi khởi động. Hibernate `ddl-auto` không được cấu hình, nên schema chỉ đến từ Flyway.
 - URL ở dev: storefront `http://localhost:8080`, admin `/admin` (cần `ROLE_ADMIN`), Swagger UI `/api-docs/swagger`, OpenAPI JSON `/api/v1/api-docs`. Swagger bị tắt ở prod.
 - Chưa cấu hình linter/formatter nào.
 
 ## Kiến trúc
 
-Package gốc `com.huuhv.foodsndrinks`, tuân thủ nghiêm 3 lớp: controller → service → repository. Controller không bao giờ gọi repository; toàn bộ business logic nằm ở `service/`. Dữ liệu vào/ra luôn đi qua `dto/request` (`*ReqDto`) và `dto/response` (`*ResDto`) — không bao giờ bind entity từ view/API. Việc map DTO được viết tay trong service (ModelMapper và Caffeine có trong classpath nhưng chưa được dùng).
+Package gốc `com.huuhv.foodsndrinks`, tuân thủ nghiêm 3 lớp: controller → service → repository. Controller không bao giờ gọi repository; toàn bộ business logic nằm ở `service/`. Dữ liệu vào/ra luôn đi qua `dto/request` (`*ReqDto`) và `dto/response` (`*ResDto`) — không bao giờ bind entity từ view/API. Việc map DTO được viết tay trong service (ModelMapper có trong classpath nhưng chưa được dùng; Caffeine chỉ dùng làm cache của `PwnedPasswordsChecker`).
 
 ### Security: ba filter chain có thứ tự (`config/SecurityConfig.java`)
 1. `@Order(1)` `/actuator/**` — stateless; `/actuator/health` public, còn lại cần `ROLE_ADMIN`.
 2. `@Order(2)` `/api/**`, `/api-docs/**` — stateless, tắt CSRF, dùng `JwtAuthenticationFilter` (JWT qua `security/JwtUtil`, HS256, hết hạn sau 1 giờ). Thiếu/sai token → 401 qua `HttpStatusEntryPoint`. `/api/v1/auth/**` là public; GET sản phẩm cần `USER`/`ADMIN`. `JwtAuthenticationFilter` là một `@Component` nhưng việc tự đăng ký servlet filter của nó đã bị tắt tường minh để nó chỉ chạy trong chain này — giữ nguyên như vậy.
-3. `@Order(3)` mọi request còn lại — form login dùng session + OAuth2 login (Google qua OIDC → `CustomOidcUserService`; Facebook/Twitter → `CustomOAuth2UserService`, class này bóc object `data` trong response của Twitter). PKCE được bật bắt buộc cho mọi provider. Cả hai OAuth service đều gọi `UserService.provisionOAuthUser(...)` để tìm hoặc tạo `User` local. CSRF bật mặc định (form dùng `th:action` tự có token; `fetch()` lấy token qua `getCsrfHeaders()` trong `static/js/web/main.js`). Có bật remember-me. Success handler ưu tiên quay lại request đã lưu, nếu không thì đưa admin về `/admin` và user về `/`.
+3. `@Order(3)` mọi request còn lại — form login dùng session + OAuth2 login (Google qua OIDC → `CustomOidcUserService`; Facebook/Twitter → `CustomOAuth2UserService`, class này bóc object `data` trong response của Twitter). PKCE được bật bắt buộc cho mọi provider. Cả hai OAuth service đều gọi `UserService.provisionOAuthUser(...)` để tìm hoặc tạo `User` local, dùng username local làm principal name (`local_username`), và từ chối tài khoản bị khoá bằng `DisabledOAuth2AccountException` (OAuth2 không đi qua `CustomUserDetailsService` nên phải tự kiểm `isActive`). CSRF bật mặc định (form dùng `th:action` tự có token; `fetch()` lấy token qua `getCsrfHeaders()` trong `static/js/web/main.js`). Có bật remember-me. Success handler ưu tiên quay lại request đã lưu, nếu không thì đưa admin về `/admin` và user về `/`.
 
 URL pattern mới phải được thêm vào danh sách matcher của đúng chain (lưu ý `/products/*/rate` được khai báo trước rule public `/products/**` — thứ tự có ý nghĩa). Endpoint kiểu mới (SOAP `/ws/**`, WebSocket `/ws-stomp/**`) cần chain hoặc matcher riêng — xem mục Lộ trình. Role là các giá trị của enum `Role` (`ROLE_ADMIN`, `ROLE_USER`); controller lấy user hiện tại bằng `userService.getCurrentUser(principal.getName())` (nhận cả username lẫn email).
 
@@ -53,17 +56,21 @@ URL pattern mới phải được thêm vào danh sách matcher của đúng cha
 - `controller/GlobalErrorController` (`/error`) chỉ xử lý lỗi dispatch cấp servlet và exception đã thoát khỏi mọi advice; nó chọn trả JSON, template `error/admin/*` hay `error/*` dựa theo prefix của URI.
 - Mỗi phần có một advice inject model attribute dùng chung cho layout: `AdminLayoutModelAdvice` (`currentPath` và mảng giá trị của tất cả enum cho dropdown) và `WebLayoutModelAdvice` (`cartItemCount` cho badge trên navbar).
 - Các exception nghiệp vụ dùng chung giữa các service: `ResourceNotFoundException` (404), `DuplicateResourceException` (409), `IllegalArgumentException` (400).
+- Exception mà service ném hoặc exception handler bắt đặt ở `exception/` (kể cả loại kế thừa exception của Spring Security như `LoginThrottledException`), không đặt ở `security/` — `security` đã phụ thuộc `service.security`/`exception`, đặt ngược lại sẽ tạo vòng phụ thuộc giữa package.
 
 ### Ghi chú nghiệp vụ
 - **Giỏ hàng là một `Order` có status `CART`** (xem `OrderStatus`). Thêm/sửa/xóa thao tác trên các `OrderDetail` của order đó (service luôn kiểm tra quyền sở hữu qua `requireOwnedCartItem`); `OrderService.checkout` chuyển nó sang `PENDING`. Các query admin/thống kê đều loại trừ order `CART`. Các endpoint thay đổi giỏ hàng trong `CartController` được gọi qua `fetch()` từ `static/js/web/cart.js` và trả JSON (`CartPayloadResDto`), không redirect.
 - **Thông báo:** `checkout` publish `OrderPlacedEvent`; `service/notification/OrderNotificationListener` bắt event bằng `@TransactionalEventListener(AFTER_COMMIT)` và gọi `SlackNotificationService` (webhook qua `RestClient`) + `EmailNotificationService`, cả hai đều `@Async("taskExecutor")` chạy trên thread pool `notify-*` (`config/AsyncConfig`). `OrderStatisticsScheduler` gửi email báo cáo tháng theo `app.notification.statistics.cron`, chạy theo múi giờ JVM (cố ý không khai báo `zone` để cron cùng múi giờ với `LocalDate.now()` dùng tính tháng). Bật/tắt bằng `SLACK_NOTIFY_ENABLED` / `MAIL_NOTIFY_ENABLED`.
-- **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), đặt tên file bằng UUID, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`.
-- **Dashboard admin** đã dùng Chart.js 4.4.0 (CDN jsDelivr) với dữ liệu inline qua `th:inline="javascript"` trong `admin/dashboard.html`.
+- **Upload:** `FileStorageService` ghi ảnh vào `app.upload.dir` (mặc định `./uploads`, thư mục con `products/`, `avatars/`), chỉ nhận PNG/JPEG khi đuôi file khớp magic bytes (`service/ImageFormat`, không tin `Content-Type`), decode rồi encode lại bằng ImageIO (`service/ImageSanitizer`: bỏ EXIF/payload thừa, áp Orientation, chặn > 40M pixel, cạnh dài ≤ 2048px — không bao giờ lưu byte gốc), đặt tên file bằng UUID + đuôi chuẩn hoá, chặn path traversal, và trả về đường dẫn URL `/uploads/...`; `WebMvcConfig` phục vụ thư mục đó tại `/uploads/**`. Giới hạn 5MB/file, 25MB/request (`spring.servlet.multipart.*` trong `application.yml`, mọi profile).
+- **Thư viện front-end** (Bootstrap, Font Awesome, Chart.js) tự host qua **WebJars** (dependency Maven, version trong `<properties>` của `pom.xml`), link bằng URL không chứa version: `@{/webjars/bootstrap/css/bootstrap.min.css}` (`webjars-locator-lite`). Không thêm thẻ CDN mới.
+- **Dashboard admin** đã dùng Chart.js 4.4.0 (WebJar); `static/js/admin/dashboard.js` lấy dữ liệu từ `GET /admin/dashboard/charts` (`DashboardService.getChartData`, URL trong `data-charts-url`).
 - Slug được sinh bằng `utils/SlugUtils`; trang chi tiết sản phẩm ở storefront tìm sản phẩm theo slug.
 - **Logging/audit:** sẵn sàng cho nhiều instance sau load balancer: `app.instance-id` (`INSTANCE_ID`; bắt buộc và cố định ở prod — `config/InstanceIdCheck`, vì hostname container đổi mỗi lần tạo lại; dev mặc định hostname) được in trong mỗi dòng log, là `service.node.name` của `audit.log`, và ở prod mỗi instance ghi file vào thư mục riêng `logs/<instance-id>/` (không bao giờ để nhiều JVM ghi/xoay vòng chung một file); prod bật `server.forward-headers-strategy=native` + `server.tomcat.remoteip.internal-proxies` (`TRUSTED_PROXIES`) để `getRemoteAddr()`/`source.ip` là IP client thật. `logging/RequestIdFilter` (servlet filter chạy đầu tiên, cả dispatch ERROR/ASYNC) đặt MDC `requestId` — luôn là UUID do server sinh, trả lại trong response header `X-Request-Id`; header `X-Request-Id` hợp lệ của client chỉ vào MDC `clientRequestId` (in thành `cid=`), không bao giờ dùng làm requestId. `logging/MdcUserFilter` (ngay sau `springSecurityFilterChain`) đặt MDC `user.name` (tên theo ECS: trong `audit.log` thành object `"user":{"name":...}`; key phẳng `user` xung đột với mapping ECS); bean `TaskDecorator` (`MdcTaskDecorator`, khai báo trong `AsyncConfig`) mang MDC sang thread `@Async`. Sự kiện bảo mật đi qua `service/audit/AuditLogService`: logger `AUDIT`, message ngắn + trường gắn bằng SLF4J fluent API `addKeyValue` (không tự ghép chuỗi `key=value`); tên trường dùng dấu chấm (`event.action`, `target.id`...) và **không được trùng key MDC** (`requestId`, `clientRequestId`, `user.name`) — trùng thì encoder ECS của `audit.log` báo lỗi. Username nhập khi đăng nhập sai chỉ ghi nếu tài khoản tồn tại. Thay đổi dữ liệu chỉ ghi sau commit nên test `@Transactional` không thấy được — test bằng unit test như `AuthenticationAuditTest`. Đăng nhập được audit tự động qua event của `ProviderManager` (`AuthenticationAuditListener`: form, API, remember-me, OAuth2 thành công); các lỗi không sinh event được ghi riêng: lỗi OAuth2 trong `security/OAuth2LoginFailureHandler`, cookie remember-me bị từ chối trong `security/AuditingRememberMeServices` (bean `rememberMeServices` trong `SecurityConfig`). User hiện tại lấy qua `utils/SecurityUtils.currentUsername()`. Thao tác nhạy cảm mới (vd. import Excel) thì thêm method vào `AuditLogService`, không tự tạo logger `AUDIT` ở chỗ khác.
 
 ### Cấu hình
 `application.yml` (dùng chung: mail, OAuth2 client, Slack, cron) + `application-dev.yml` (datasource local, log DEBUG, bật Swagger, giá trị fallback cho JWT/remember-me) / `application-prod.yml` (mọi thứ lấy từ biến môi trường, log level WARN/INFO, tắt Swagger, actuator chỉ expose `health`). Appender/pattern log nằm ở `logback-spring.xml` (`dev`/`prod`: console + `foodsndrinks.log` text qua `AsyncAppender`, 30 ngày; `prod` thêm `audit.log` JSON ECS ghi đồng bộ, 90 ngày; thư mục `logs/` ở dev, `logs/<app.instance-id>/` ở prod; có profile `test` hoặc không bật dev/prod: chỉ console) — không đặt `logging.file.name` trong yml. Chọn profile qua `SPRING_PROFILES_ACTIVE` (mặc định `dev`). Bảng đầy đủ các biến môi trường nằm trong [README.md](README.md).
+
+Record `@ConfigurationProperties` đặt ở `config/properties/` (đăng ký bằng `@EnableConfigurationProperties` trong class config) để service đọc được mà không import `config` — tránh vòng `config ↔ service`.
 
 ## Quy ước
 
@@ -83,15 +90,15 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | Công nghệ | Hiện trạng | Việc cần làm |
 |---|---|---|
 | Spring Security + OAuth2 Login + CSRF | ✅ | Bổ sung hardening theo mục OWASP (lockout, password policy, security headers, session cookie). |
-| MySQL | ✅ | Thêm DB cho test (Testcontainers). |
+| MySQL | ✅ | Test chạy trên MySQL của Testcontainers. |
 | Messaging: JMS (ActiveMQ Artemis) | ❌ | Chuyển thông báo đơn hàng sang JMS (xem bên dưới). |
 | WebSocket + STOMP | ❌ | Realtime đơn mới cho admin, trạng thái đơn cho user. |
 | `@Scheduled` + `@Async` | ✅ | Cấu hình scheduler pool, tách executor theo loại việc. |
 | `ThreadPoolTaskExecutor` | 🟡 | Đã có `TaskDecorator` truyền MDC; thiếu rejection policy, graceful shutdown. |
 | Apache POI (Excel import/export) | ❌ | Export đơn hàng/sản phẩm, import sản phẩm. |
 | SOAP (Spring-WS) | ❌ | Expose web service contract-first. |
-| Chart (Chart.js) | 🟡 | Đã có 2 chart; cần SRI/self-host, thêm chart, cập nhật realtime. |
-| JUnit 5 + Mockito + MockMvc | 🟡 | Chỉ có 2 integration test; thiếu unit test Mockito và test slice `@WebMvcTest`. |
+| Chart (Chart.js) | 🟡 | Đã có 2 chart (WebJar, dữ liệu qua JSON); cần thêm chart, cập nhật realtime. |
+| JUnit 5 + Mockito + MockMvc | ✅ | Unit test Mockito, `@WebMvcTest` với security thật, integration test trên Testcontainers, coverage JaCoCo. |
 | Swagger / OpenAPI | ✅ | Bổ sung `@Operation`/`@ApiResponse` cho endpoint mới. |
 | SLF4J + Logback | ✅ | `logback-spring.xml`, MDC `requestId`/`user.name`, logger `AUDIT` (`audit.log` JSON ECS ở prod). |
 | Thymeleaf | ✅ | — |
@@ -103,7 +110,7 @@ Thứ tự thực hiện. Tên giai đoạn trùng với dropdown "Roadmap phase
 - [x] 0. Hạ tầng (Docker)
 - [x] 1. Logging (Logback, MDC, audit log)
 - [ ] 2. Security hardening (OWASP)
-- [ ] 3. Testing (Mockito, WebMvcTest, Testcontainers)
+- [x] 3. Testing (Mockito, WebMvcTest, Testcontainers)
 - [ ] 4. Scheduler & Multithread
 - [ ] 5. JMS (ActiveMQ Artemis)
 - [ ] 6. WebSocket + STOMP + Chart
@@ -180,19 +187,19 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 - Lỗi nghiệp vụ map sang SOAP Fault qua `SoapFaultMappingExceptionResolver`/`@SoapFault`, không lộ stack trace.
 - **Client** (issue 8.3): `WebServiceTemplate` trong `service/soap/`, URL + tài khoản lấy từ cấu hình (env), có connect/read timeout; lỗi hoặc timeout thì trả kết quả rỗng và ghi log, không làm hỏng trang gọi nó. Demo bằng cách gọi chính endpoint SOAP của app (hoặc endpoint mock), hiển thị kết quả trên dashboard admin.
 
-**OWASP Dependency-Check** (issue 2.5). Plugin `org.owasp:dependency-check-maven` chạy riêng bằng `./mvnw dependency-check:check` (hoặc `docker compose run --rm maven dependency-check:check`), không gắn vào build mặc định để test vẫn nhanh. NVD API key đọc từ biến môi trường `NVD_API_KEY` (khai báo trong `.env`, không ghi vào `pom.xml`). Fail khi có lỗ hổng CVSS ≥ 7; lỗ hổng không áp dụng thì ghi vào file suppression kèm lý do; ưu tiên sửa bằng cách nâng version qua Spring Boot BOM. Chạy trước khi tạo PR có thêm/đổi dependency.
+**OWASP Dependency-Check** (issue 2.5, đã cấu hình). Plugin `org.owasp:dependency-check-maven` (version ở property `dependency-check.version`, không có `<executions>`) chạy riêng bằng `./mvnw dependency-check:check` (hoặc `docker compose run --rm --no-deps maven dependency-check:check`), không gắn vào build mặc định để test vẫn nhanh. NVD API key (bắt buộc từ bản 12+) đọc từ biến môi trường `NVD_API_KEY` (khai báo trong `.env`, không ghi vào `pom.xml`; `./mvnw` không tự đọc `.env`). Fail khi có lỗ hổng CVSS ≥ 7; lỗ hổng không áp dụng thì ghi vào `dependency-check-suppressions.xml` kèm `<notes>` lý do + `until`; ưu tiên sửa bằng cách nâng version qua Spring Boot BOM. OSS Index tắt (cần tài khoản), RetireJS bật (quét JS trong WebJars). Chạy trước khi tạo PR có thêm/đổi dependency.
 
-**Chart.** Giữ Chart.js (không cần thêm ECharts). Thêm chart (top sản phẩm bán chạy, số đơn theo ngày), dữ liệu tính trong `DashboardService`. Self-host file Chart.js trong `static/` (hoặc thêm `integrity` + `crossorigin` cho thẻ CDN). Muốn bật CSP chặt thì chuyển script inline sang file JS + lấy dữ liệu qua endpoint JSON admin. Cập nhật realtime qua STOMP `/topic/admin/orders`.
+**Chart.** Giữ Chart.js (không cần thêm ECharts). Thêm chart (top sản phẩm bán chạy, số đơn theo ngày), dữ liệu tính trong `DashboardService`. Chart.js đã tự host qua WebJar và dashboard đã lấy dữ liệu qua endpoint JSON `GET /admin/dashboard/charts` (CSP chặt) — chart mới mở rộng `DashboardChartResDto` + `dashboard.js`. Cập nhật realtime qua STOMP `/topic/admin/orders` (gọi lại endpoint JSON hoặc nhận số liệu trong message).
 
-**Testing.** JUnit 5 + Mockito + MockMvc (đã có `spring-boot-starter-test`, `spring-boot-webmvc-test`, `spring-security-test`).
+**Testing.** JUnit 5 + Mockito + MockMvc (đã có `spring-boot-starter-test`, `spring-boot-webmvc-test`, `spring-security-test`, `spring-boot-security-test` — module cuối bắt buộc ở Boot 4 để `@WithMockUser` có tác dụng với MockMvc tự cấu hình).
 - Unit test service: `@ExtendWith(MockitoExtension.class)`, `@Mock` repository, `@InjectMocks` service — không khởi động Spring.
-- Test controller: `@WebMvcTest(XxxController.class)` + `@MockitoBean` cho service (Boot 4 đã bỏ `@MockBean`), `@WithMockUser(roles = "ADMIN")`, request POST phải có `.with(csrf())`. Luôn có case 401/403 cho endpoint được bảo vệ.
-- Integration test: chuyển sang Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:mysql`, `@ServiceConnection`) để không đụng DB dev (cần Docker trên máy). JMS test dùng Artemis embedded, không cần container.
-- JaCoCo sinh báo cáo coverage khi `./mvnw test` (issue 3.2); chưa đặt ngưỡng chặn build.
+- Test controller (đã làm cho `CartController`, `OrderAdminController`, `ProductApiController`, `AuthController`): dùng `@SecuredWebMvcTest(XxxController.class)` (`src/test/java/.../support`) = `@WebMvcTest` + `@Import(SecurityConfig.class)` (3 filter chain thật) + mock mọi bean security/`UserService`/`OrderService`; service riêng của controller khai báo `@MockitoBean` trong test (Boot 4 đã bỏ `@MockBean`), mock có sẵn thì `@Autowired` để stub (khai báo lại bị trùng). `@WithMockUser(roles = "ADMIN")`, POST phải có `.with(csrf())`. Luôn có case 401/403 (và POST thiếu CSRF → 403) cho endpoint được bảo vệ; chưa đăng nhập ở chain web → redirect tương đối `/login`. Mặc định của mock: `AccountStatusService` trả `Optional.empty()` (session hợp lệ), `JwtUtil.validUsername` trả rỗng (token sai), `RegistrationRateLimitService.tryAcquire` trả `false` (stub `true` khi test `/register`). Trong `@SpringBootTest`, user của `@WithMockUser` phải tồn tại trong DB với đúng role (`AccountStatusFilter` tra DB mỗi request, xem `DashboardChartsTest`), nếu không session bị huỷ → 302 `/login`.
+- Integration test (đã làm): dùng `@IntegrationTest` (`src/test/java/.../support`, có `webEnvironment`) = `@SpringBootTest` + `@Import(TestcontainersConfiguration.class)` + `@ActiveProfiles("test")` + `@Tag("integration")`, không dùng `@SpringBootTest` trần (`IntegrationTestConventionTest` fail). MySQL 8.4 của Testcontainers (`spring-boot-testcontainers`, `org.testcontainers:testcontainers-mysql` theo BOM, `@ServiceConnection`, URL có `serverTimezone=UTC` như dev), một container dùng chung cho mọi Spring context trong JVM; `spring.datasource.url` trong `src/test/resources/config/application.yml` trỏ tới host `.invalid` để không bao giờ rơi về DB dev. Bỏ qua integration test bằng `-DexcludedGroups=integration`. Vẫn giữ `@Transactional` để rollback (các class dùng chung DB). Cần Docker: `./mvnw test` trên máy, hoặc `docker compose run --rm maven-docker test` (mount Docker socket — rủi ro ghi trong compose). JMS test dùng Artemis embedded, không cần container.
+- JaCoCo (`jacoco-maven-plugin`, version ở property `jacoco.version` vì không có trong BOM) sinh `target/site/jacoco/index.html` khi `./mvnw test`; chưa đặt ngưỡng chặn build.
 
 **Logging (SLF4J + Logback)** — đã làm ở issue 1.1 (xem "Logging/audit" trong Ghi chú nghiệp vụ).
 - `logback-spring.xml` với `<springProfile>`: `dev`/`prod` ghi console + file `SizeAndTimeBasedRollingPolicy` (qua `AsyncAppender`), `prod` thêm `audit.log` dạng JSON (`StructuredLogEncoder`, format `ecs`). Pattern text dùng converter riêng trong package `logging` thay cho `%msg`/`%wEx`: `%safeMsg` (thay mọi ký tự ngắt dòng, kể cả Unicode, bằng `_`), `%safeEx` (làm sạch message của exception), `%safeKvp` (in key-value audit kiểu logfmt, có quote/escape). `LogbackConfigTest` nạp file thật để kiểm tra — sửa pattern/appender thì chạy lại test này.
-- Logger `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại (kể cả cookie remember-me bị từ chối), khóa/mở khóa user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu, đổi trạng thái đơn; import Excel (giai đoạn 7) thêm vào `AuditLogService`.
+- Logger `AUDIT` cho sự kiện bảo mật: đăng nhập thành công/thất bại (kể cả cookie remember-me bị từ chối), khóa/mở khóa user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu, session bị huỷ vì tài khoản bị khoá/đổi role, đổi trạng thái đơn; import Excel (giai đoạn 7) thêm vào `AuditLogService`.
 - Luôn dùng placeholder `log.info("... {}", x)`, không nối chuỗi.
 
 ## OWASP Secure Coding — quy tắc bắt buộc
@@ -205,16 +212,18 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Output encoding (XSS)**
 - Thymeleaf dùng `th:text` (tự escape). Không dùng `th:utext` với dữ liệu người dùng (hiện không có chỗ nào dùng — giữ vậy).
-- JS: đặt dữ liệu bằng `textContent`; nếu phải build HTML thì escape qua helper như `escapeHtml` trong `cart.js`. Dữ liệu từ server vào script dùng `th:inline="javascript"` (tự escape), không nối chuỗi.
+- JS: đặt dữ liệu bằng `textContent`; nếu phải build HTML thì escape qua helper như `escapeHtml` trong `cart.js`. Dữ liệu từ server cho JS truyền qua thuộc tính `data-*` (Thymeleaf tự escape) hoặc endpoint JSON — không dùng `th:inline="javascript"` (CSP cấm script inline).
+- **CSP** (đã bật ở chain web, `SecurityConfig.CONTENT_SECURITY_POLICY`): `script-src 'self'` — mọi JS nằm trong `static/js/**` hoặc WebJars, gắn sự kiện bằng `addEventListener`; không `<script>` inline, không `on*`/`th:on*`, không `javascript:`, không thêm host ngoài (`TemplateCspComplianceTest` fail nếu vi phạm). Hộp xác nhận ở admin dùng `data-confirm="..."` (`static/js/admin/main.js`). JS mới ở giai đoạn 6 (STOMP, chart realtime) theo cùng quy tắc; WebSocket same-origin đã nằm trong `connect-src 'self'`.
 
 **Authentication & password**
 - Mật khẩu lưu bằng `PasswordEncoder` (BCrypt), không bao giờ log hay trả về.
-- Chính sách mật khẩu theo OWASP/NIST: tối thiểu 8 ký tự (khuyến nghị 12), cho phép ít nhất 64 ký tự, không giới hạn ký tự đặc biệt. Có thể kiểm tra mật khẩu bị lộ bằng `CompromisedPasswordChecker` của Spring Security.
-- Chống brute-force cho cả form login và `/api/v1/auth/login`: đếm lần thất bại (lắng nghe `AuthenticationFailureBadCredentialsEvent`, lưu đếm bằng Caffeine) và khóa tạm hoặc rate limit. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu".
-- JWT: secret ≥ 256 bit từ env, kiểm tra hạn, nên thêm và kiểm tra `iss`/`aud`; không đặt dữ liệu nhạy cảm vào claims.
+- Chính sách mật khẩu (đã làm): mật khẩu mới luôn khai báo `@ValidPassword` + `@NotCompromisedPassword(groups = PasswordBreachCheck.class)` trên field và `@GroupSequence({TheDto.class, PasswordBreachCheck.class})` trên DTO (`PasswordConstraintConventionTest` kiểm tra) — nguồn duy nhất là `service/security/PasswordPolicy`: 8–64 ký tự, ≤ 72 byte UTF-8 vì BCrypt; kiểm tra bị lộ qua `CompromisedPasswordChecker` = `security/PwnedPasswordsChecker` (cache theo prefix) chỉ chạy khi mọi ràng buộc khác đã đạt. Không tự viết `@Size` cho mật khẩu. `POST /register` giới hạn theo IP (`security/RegistrationRateLimitFilter`).
+- Chống brute-force (đã làm): `security/LoginAttemptAwareAuthenticationProvider` (bean `AuthenticationProvider` duy nhất, dùng chung form + API) đếm qua `service/security/LoginAttemptService` ở 3 phạm vi: cặp (IP, tên nhập), IP (IPv6 gộp /64), tài khoản (tên nhập + username thật sau khi tra DB); key tên được chuẩn hoá như collation MySQL (NFKD, bỏ dấu, viết thường). Bộ đếm/khoá nằm trong bảng `attempt_limits` (`AttemptLimiter` → `repository/JdbcAttemptLimitRepository`: câu SQL nguyên tử, chạy ngoài transaction của người gọi để lần sai không bị rollback; key băm HMAC bằng `ATTEMPT_LIMITS_KEY_SECRET`; `AttemptLimitCleanupJob` xoá bản ghi hết hạn) nên dùng chung giữa các instance và không mất khi restart; `window`/`lock-duration` ≥ 1 giây (`@DurationMin`). Unit test dùng `InMemoryAttemptLimitRepository` (thư mục test) có cùng ngữ nghĩa. Lần thử được giữ chỗ TRƯỚC khi so BCrypt (`AttemptLimiter`) để request song song không vượt ngưỡng; đăng nhập đúng không xoá bộ đếm theo IP. Trạng thái tài khoản kiểm tra SAU mật khẩu. Thông báo lỗi đăng nhập chung chung, không phân biệt "sai username" với "sai mật khẩu". Ô "mật khẩu hiện tại" khi đổi mật khẩu cũng bị giới hạn (vượt → đăng xuất). Thao tác mới có so mật khẩu thì dùng lại `LoginAttemptService`.
+- OAuth2 chỉ tự liên kết theo email khi provider xác minh email và tài khoản có sẵn không có mật khẩu (`UserService.provisionOAuthUser`, chống chiếm trước tài khoản).
+- JWT: secret ≥ 256 bit từ env, HS256 cố định, kiểm tra hạn + `iss`/`aud` (`jwt.issuer`/`jwt.audience`, đã làm trong `JwtUtil`); không đặt dữ liệu nhạy cảm vào claims. Filter kiểm tra token trước khi tra DB.
 
 **Session management**
-- Cookie session: `HttpOnly`, `Secure` (prod), `SameSite=Lax` qua `server.servlet.session.cookie.*`; đặt `server.servlet.session.timeout`. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm).
+- Cookie session (đã làm): `HttpOnly`, `SameSite=Lax`, `Secure` (`SESSION_COOKIE_SECURE`, prod mặc định `true`) qua `server.servlet.session.cookie.*`; timeout 30 phút. Giữ session fixation protection mặc định. Logout phải xóa session và cookie remember-me (đã làm). Tài khoản bị khoá, bị xoá/đổi username hoặc đổi role sau khi đăng nhập thì session bị huỷ ở request kế tiếp (đã làm: `security/AccountStatusFilter` ở chain web, trước `AnonymousAuthenticationFilter`, gọi `service/security/AccountStatusService` — 1 query/request đã đăng nhập, bỏ qua file tĩnh; audit `SESSION_REVOKED`). Chưa huỷ session khi đổi/đặt lại mật khẩu (issue #37).
 
 **Access control**
 - Phân quyền theo URL trong `SecurityConfig` và thêm `@PreAuthorize` ở service/controller cho thao tác nhạy cảm. Mặc định deny (`anyRequest().authenticated()`).
@@ -222,7 +231,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **CSRF & CORS**
 - Không tắt CSRF ở chain web. Chỉ tắt cho chain stateless dùng Bearer token/HTTP Basic (`/api/**`, `/ws/**`). STOMP CONNECT phải mang CSRF token.
-- Hiện chưa cấu hình CORS (API chỉ same-origin). Khi cần thì khai báo allowlist origin tường minh cho `/api/**`; không dùng `*` kèm credentials.
+- CORS chỉ mở cho `/api/**` qua bean `corsConfigurationSource` (`SecurityConfig`) với allowlist `app.cors.allowed-origins` (`CORS_ALLOWED_ORIGINS`, rỗng = same-origin; mỗi giá trị phải đúng `scheme://host[:port]`, `*`/`null`/có path/`http` ngoài localhost làm app không khởi động — `config/properties/CorsProperties`), `allowCredentials=false`. Không mở CORS cho chain web.
 
 **Cryptography & secrets**
 - Không commit secret thật vào repo, kể cả làm giá trị mặc định `${VAR:default}` trong `application*.yml`. Default không được là khoá/secret mà app vẫn dùng được (kể cả chuỗi `changeme-*` — repo public nên ai cũng biết): khoá ký/mã hoá ở dev dùng `${VAR:${random.value}${random.value}}` — mỗi `random.value` là 16 byte từ `SecureRandom`, ghép lại đủ 256 bit (như `jwt.secret`, `app.security.remember-me-key`; không dùng `random.uuid`, chỉ có 122 bit ngẫu nhiên), còn lại để trống để app báo lỗi khi thiếu. Secret thật đặt ở biến môi trường hoặc file local đã nằm trong `.gitignore`. Secret nào lỡ bị push thì phải rotate.
@@ -235,26 +244,28 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
 
 **Data protection & communication**
 - Response API/SOAP chỉ chứa field cần thiết (DTO), không lộ password hash, provider id, dữ liệu nội bộ.
-- Prod chạy HTTPS (HSTS). Thêm security headers trong `SecurityConfig`: Content-Security-Policy, Referrer-Policy, Permissions-Policy (Spring Security đã có sẵn X-Content-Type-Options, X-Frame-Options, Cache-Control). Thư viện từ CDN phải có SRI hoặc self-host.
+- Prod chạy HTTPS (HSTS — Spring Security chỉ gửi trên request HTTPS). Security headers khai báo ở `SecurityConfig.securityHeaders` (dùng cho cả 3 chain): Referrer-Policy, Permissions-Policy, cùng các header mặc định X-Content-Type-Options, X-Frame-Options, Cache-Control. Chain mới cũng phải gọi `.headers(SecurityConfig::securityHeaders)`. Thư viện front-end tự host qua WebJars, không dùng CDN.
 
 **Database**
 - Chỉ dùng JPQL/native query có tham số (`:param`), không nối chuỗi SQL (code hiện tại đều đúng). Tài khoản DB của app không cần quyền DDL ngoài Flyway.
 
 **File management (upload ảnh, import Excel)**
-- Giới hạn kích thước (`spring.servlet.multipart.*` — hiện chỉ cấu hình ở dev; cần khai báo cả prod). Kiểm tra cả extension lẫn magic bytes, vì `Content-Type` do client gửi lên không đáng tin (hiện `FileStorageService` mới kiểm tra content-type + extension).
+- Giới hạn kích thước (`spring.servlet.multipart.*` trong `application.yml`, mọi profile). Kiểm tra cả extension lẫn magic bytes, vì `Content-Type` do client gửi lên không đáng tin (`FileStorageService` + `ImageFormat` đã làm). Lưu ý: request vượt giới hạn khiến Tomcat không parse được multipart nên `CsrfFilter` không đọc được `_csrf` → 403; form upload nên kiểm tra kích thước phía client để báo lỗi dễ hiểu.
 - Tên file lưu luôn là UUID, đường dẫn phải nằm trong thư mục gốc (đã làm).
 - Excel: giới hạn số dòng/sheet; giữ cấu hình chống zip bomb mặc định của POI (`ZipSecureFile`). Khi export, ô bắt đầu bằng `=`, `+`, `-`, `@` phải thêm tiền tố `'` để chống formula injection.
 - XML/SOAP: không tự tạo `DocumentBuilderFactory`/`TransformerFactory` với cấu hình mặc định; nếu bắt buộc thì tắt DTD và external entity (chống XXE).
 
 **System configuration & dependencies**
 - Actuator: prod chỉ expose `health` (đã làm). Swagger tắt ở prod (đã làm).
-- Thêm plugin `org.owasp:dependency-check-maven` để quét thư viện có CVE; ưu tiên version do Spring Boot BOM quản lý.
+- OWASP Dependency-Check đã cấu hình (xem mục Lộ trình) — chạy trước PR có thêm/đổi dependency; ưu tiên version do Spring Boot BOM quản lý. Thư viện front-end thêm qua WebJars (Maven) để được quét cùng.
 
 ### Lỗ hổng đã biết cần xử lý
-- [ ] Chưa chống brute-force đăng nhập (form + API).
-- [ ] `RegisterReqDto` giới hạn mật khẩu 6–32 ký tự → nâng lên tối thiểu 8, tối đa ≥ 64.
-- [ ] `FileStorageService` chưa kiểm tra magic bytes.
-- [ ] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI.
-- [ ] Chưa cấu hình cờ cookie session và timeout tường minh.
+- [x] Chưa chống brute-force đăng nhập (form + API).
+- [x] `RegisterReqDto` giới hạn mật khẩu 6–32 ký tự → nâng lên tối thiểu 8, tối đa ≥ 64.
+- [x] `FileStorageService` chưa kiểm tra magic bytes.
+- [x] Chưa có Content-Security-Policy / Referrer-Policy; script CDN (Bootstrap, Font Awesome, Chart.js) chưa có SRI. (Đã bật CSP + Referrer-Policy; thư viện chuyển sang WebJars tự host.)
+- [x] Chưa cấu hình cờ cookie session và timeout tường minh.
 - [x] Chưa có audit log và `logback-spring.xml`.
 - [ ] Chưa quét dependency (OWASP Dependency-Check) — issue 2.5.
+- [x] Tài khoản bị admin khoá vẫn đăng nhập được bằng Google/Facebook/X (review PR #35).
+- [x] Session đang đăng nhập vẫn dùng được (với quyền cũ) sau khi tài khoản bị khoá hoặc bị đổi role.
