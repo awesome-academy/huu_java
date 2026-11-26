@@ -169,6 +169,12 @@ public class OrderService {
         return buildOrderResDto(order, order.getOrderDetails());
     }
 
+    /** Số đơn chờ xác nhận ({@code PENDING}) — badge của admin, luôn đọc từ DB (đúng cả khi nhiều admin/instance). */
+    @Transactional(readOnly = true)
+    public long countPendingOrders() {
+        return orderRepository.countByStatus(OrderStatus.PENDING);
+    }
+
     @Transactional
     public void updateStatus(Long id, OrderStatus newStatus) {
         Order order = orderRepository.findById(id)

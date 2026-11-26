@@ -11,7 +11,7 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 | Controllers | `com.huuhv.foodsndrinks.controller.admin` |
 | Templates | `src/main/resources/templates/admin/` (layout: `admin/layout/base.html`, dùng Thymeleaf Layout Dialect) |
 | Xử lý lỗi | `AdminExceptionHandler` (`@ControllerAdvice` scoped package admin) + view `error/admin/{404,403,405,409,500}` |
-| Model advice | `AdminLayoutModelAdvice` — inject `currentPath` và các enum (categoryTypes, productTypes, orderStatuses, roles, suggestionStatuses) vào mọi view admin |
+| Model advice | `AdminLayoutModelAdvice` — inject `currentPath` và các enum (categoryTypes, productTypes, orderStatuses, roles, suggestionStatuses) vào mọi view admin; `PendingOrderCountInterceptor` thêm `pendingOrderCount` (badge "đơn chờ xác nhận" ở sidebar) — chỉ khi render view, không chạy cho endpoint JSON/redirect |
 
 ## Chức Năng & Routes
 
@@ -22,7 +22,7 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 | GET | `/admin`, `/admin/dashboard` | Dashboard thống kê tổng quan. Các truy vấn thống kê chạy song song trên pool `dashboard-*` (`DashboardService`); một truy vấn lỗi, quá `app.async.dashboard.timeout` (mặc định 10s) hoặc pool đầy (nhiều admin cùng tải) → 503, trang lỗi admin với thông báo chung |
 | GET | `/admin/dashboard/charts` | JSON dữ liệu 2 biểu đồ (`DashboardChartResDto`: doanh thu 6 tháng, số đơn theo trạng thái) cho `static/js/admin/dashboard.js` — thay cho script inline (CSP) |
 
-JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua thuộc tính `data-confirm="..."` trên `<form>`/`<button>`, kiểm tra kích thước file qua `data-max-file-size`), `dashboard.js` (Chart.js). Không viết `onclick`/`onsubmit` hay `<script>` inline — CSP chặn.
+JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua thuộc tính `data-confirm="..."` trên `<form>`/`<button>`, kiểm tra kích thước file qua `data-max-file-size`), `realtime.js` (đơn mới realtime — xem [Thông báo realtime](#thông-báo-realtime-websocket--stomp)), `dashboard.js` (Chart.js). Không viết `onclick`/`onsubmit` hay `<script>` inline — CSP chặn.
 
 ### Quản lý sản phẩm — `ProductAdminController` (`/admin/products`)
 
@@ -53,6 +53,7 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 | GET | `/admin/orders` | Danh sách phân trang, filter theo trạng thái / keyword / mã đơn |
 | GET | `/admin/orders/{id}` | Chi tiết đơn hàng |
 | POST | `/admin/orders/{id}/status` | Cập nhật trạng thái đơn (`OrderStatus`) |
+| GET | `/admin/orders/pending-count` | JSON `{"pendingCount": n}` — số đơn chờ xác nhận; `static/js/admin/realtime.js` gọi sau khi kết nối WebSocket lại (bù sự kiện lỡ) và để biết session còn sống |
 
 ### Quản lý người dùng — `UserAdminController` (`/admin/users`)
 
@@ -79,6 +80,29 @@ Admin nhận thông báo tự động (không cần thao tác trên UI):
 - **Báo cáo doanh thu tháng:** `OrderStatisticsScheduler` chạy cron `ORDER_STATS_CRON` (mặc định 00:05 ngày 1, giờ VN) — email báo cáo tháng vừa kết thúc: tổng doanh thu, số đơn hoàn thành, số đơn theo từng trạng thái (cùng phạm vi: đơn đặt trong tháng đó).
 
 Bật/tắt qua `SLACK_NOTIFY_ENABLED`, `MAIL_NOTIFY_ENABLED`. Xem package `service/notification/`.
+
+### Thông báo realtime (WebSocket + STOMP)
+
+Admin đang mở **bất kỳ trang `/admin/**`** thấy đơn mới ngay, không cần tải lại trang:
+
+- Toast "Đơn mới #id" (số món, tổng tiền, link tới chi tiết đơn) ở góc phải dưới.
+- Badge số đơn **chờ xác nhận** (`PENDING`) cạnh mục "Manage Orders" của sidebar — số luôn tính lại từ DB lúc gửi, nên đúng cả khi nhiều admin cùng xử lý đơn.
+
+Luồng: checkout → outbox → topic JMS `order.placed` → `OrderPlacedWebSocketConsumer` (mỗi instance một subscription non-durable) → `AdminOrderNotifier` → STOMP `/topic/admin/orders` (payload `AdminOrderEventResDto`: `type`, `orderId`, `itemCount`, `totalPrice`, `pendingCount` — không có tên/email/SĐT/địa chỉ khách). Client: `static/js/realtime.js` (kết nối dùng chung) + `static/js/admin/realtime.js`, nạp ở `admin/layout/base.html`; script của từng trang nghe `CustomEvent` `admin:orders-changed` (mỗi sự kiện) và `admin:realtime-resync` (sau mỗi lần kết nối lại).
+
+Bảo mật (chi tiết: [README — Realtime](../../README.md#realtime-websocket--stomp)):
+
+| Tình huống | Kết quả |
+|---|---|
+| Chưa đăng nhập mở `/ws-stomp` | Chuyển hướng `/login`, không upgrade được |
+| `ROLE_USER` SUBSCRIBE `/topic/admin/orders` | Frame ERROR `Access denied`, kết nối bị đóng, audit `WEBSOCKET_ACCESS_DENIED` |
+| Frame CONNECT thiếu/sai token CSRF | Frame ERROR `Access denied` (không lặp lại token) |
+| Handshake từ origin khác | 403 |
+| Client SEND vào `/topic/**`, `/queue/**`, `/app/**` | Bị từ chối (không giả được sự kiện cho admin khác) |
+| Admin bị khoá/hạ quyền khi đang mở trang | Socket bị đóng trong ≤ `WEBSOCKET_REVALIDATE_INTERVAL` (60s), audit `SESSION_REVOKED` (`session.type=websocket`) |
+| Logout / session hết hạn | Socket bị đóng; logout thì trang không kết nối lại được (handshake bị chuyển hướng `/login`) |
+
+Frame WebSocket không gia hạn session HTTP: trang để yên quá 30 phút (timeout session) thì socket bị đóng; trang tự kết nối lại được nếu còn cookie remember-me (đăng nhập lại tự động), không thì realtime dừng — tải lại trang để đăng nhập.
 
 ## Xử Lý Lỗi
 

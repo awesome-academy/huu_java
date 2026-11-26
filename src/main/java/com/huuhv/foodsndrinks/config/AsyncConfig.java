@@ -7,6 +7,7 @@ import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
+import org.springframework.boot.task.ThreadPoolTaskSchedulerBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
@@ -15,6 +16,7 @@ import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.RejectedExecutionHandler;
@@ -31,8 +33,9 @@ import java.util.concurrent.ThreadPoolExecutor;
  * ({@code CallerRunsPolicy}); việc phục vụ request đang chờ có timeout (dashboard) bị từ chối ({@code AbortPolicy}) để
  * báo lỗi nhanh thay vì chạy trên thread request.
  * <p>
- * Pool của {@code @Scheduled} do Spring Boot tạo theo {@code spring.task.scheduling.*}. Chạy nhiều instance: job
- * {@code @Scheduled} phải có {@code @SchedulerLock} ({@link SchedulerLockConfig}).
+ * Pool của {@code @Scheduled} ({@link #taskScheduler}) tạo từ builder của Spring Boot theo {@code spring.task.scheduling.*}.
+ * Chạy nhiều instance: job {@code @Scheduled} phải có {@code @SchedulerLock} ({@link SchedulerLockConfig}), trừ job chỉ
+ * xử lý trạng thái cục bộ của instance (vd. thu hồi kết nối WebSocket của chính nó).
  */
 @Slf4j
 @Configuration
@@ -42,6 +45,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class AsyncConfig implements AsyncConfigurer {
 
     public static final String DASHBOARD_EXECUTOR = "dashboardExecutor";
+    /** Tên bean scheduler của {@code @Scheduled} (cùng tên Spring Boot dùng). */
+    public static final String TASK_SCHEDULER = "taskScheduler";
     /** Hằng số ở {@link AsyncProperties} để service ({@code service.messaging}) dùng mà không import {@code config}. */
     public static final String OUTBOX_EXECUTOR = AsyncProperties.OUTBOX_EXECUTOR;
     static final String HIKARI_MAX_POOL_SIZE = "spring.datasource.hikari.maximum-pool-size";
@@ -51,6 +56,19 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean
     public TaskDecorator mdcTaskDecorator() {
         return new MdcTaskDecorator();
+    }
+
+    /**
+     * Pool của {@code @Scheduled} ({@code sched-*}, cấu hình {@code spring.task.scheduling.*}), khai báo tường minh thay
+     * vì để Spring Boot tự tạo: Boot chỉ tạo khi chưa có bean {@code TaskScheduler} nào, mà
+     * {@code @EnableWebSocketMessageBroker} ({@link WebSocketConfig}) đã đăng ký {@code messageBrokerTaskScheduler} → job
+     * sẽ lặng lẽ chạy trên pool heartbeat của broker STOMP. Có từ 2 bean {@code TaskScheduler}, {@code @Scheduled} chọn
+     * bean tên {@value #TASK_SCHEDULER}. Không {@code @Primary}: cấu hình WebSocket lấy scheduler của nó theo tên. Inject
+     * {@code TaskScheduler} ở chỗ khác phải có {@code @Qualifier}.
+     */
+    @Bean(name = TASK_SCHEDULER)
+    public ThreadPoolTaskScheduler taskScheduler(ThreadPoolTaskSchedulerBuilder builder) {
+        return builder.build();
     }
 
     /**

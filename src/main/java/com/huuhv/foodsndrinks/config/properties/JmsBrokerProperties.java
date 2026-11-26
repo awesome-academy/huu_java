@@ -26,6 +26,11 @@ public record JmsBrokerProperties(@NotEmpty List<String> embeddedBrokerPropertie
 
     /** Listener factory cho topic: {@code @JmsListener(containerFactory = TOPIC_LISTENER_FACTORY, subscription = ...)}. */
     public static final String TOPIC_LISTENER_FACTORY = "topicListenerFactory";
+    /**
+     * Listener factory cho topic với subscription non-durable, không shared: MỖI instance nhận một bản của mọi message
+     * (fan-out sự kiện realtime tới WebSocket của từng instance). Không khai báo {@code subscription}.
+     */
+    public static final String TOPIC_BROADCAST_LISTENER_FACTORY = "topicBroadcastListenerFactory";
     /** Template gửi lên topic, inject bằng {@code @Qualifier(TOPIC_JMS_TEMPLATE)}. */
     public static final String TOPIC_JMS_TEMPLATE = "topicJmsTemplate";
 }

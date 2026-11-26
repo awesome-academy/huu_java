@@ -115,6 +115,35 @@ public class AuditLogService {
                 .with("username", username));
     }
 
+    /**
+     * Kết nối WebSocket đang mở bị đóng vì tài khoản đã đổi trạng thái kể từ lúc handshake (job kiểm tra định kỳ, không
+     * có request HTTP nên không có {@code source.ip}).
+     *
+     * @param reason như {@link #sessionRevoked}
+     */
+    public void webSocketSessionRevoked(String username, String reason) {
+        write(event(Level.WARN, "WebSocket session revoked", "SESSION_REVOKED", "success")
+                .with("event.reason", reason)
+                .with("session.type", "websocket")
+                .with("username", username));
+    }
+
+    /**
+     * Frame STOMP bị từ chối: phân quyền destination (vd. user thường SUBSCRIBE kênh admin, client SEND vào broker) hoặc
+     * thiếu/sai token CSRF ở frame CONNECT. Thread xử lý frame không có MDC {@code user.name} nên username ghi tường minh.
+     *
+     * @param command     lệnh STOMP (CONNECT, SUBSCRIBE, SEND...)
+     * @param destination đích của frame (đã cắt ngắn, bỏ ký tự ngắt dòng), {@code -} nếu không có
+     * @param reason      mã lỗi, vd. ACCESS_DENIED, INVALID_CSRF_TOKEN, MISSING_CSRF_TOKEN
+     */
+    public void webSocketAccessDenied(String username, String command, String destination, String reason) {
+        write(event(Level.WARN, "WebSocket frame denied", "WEBSOCKET_ACCESS_DENIED", "failure")
+                .with("event.reason", reason)
+                .with("stomp.command", command)
+                .with("stomp.destination", destination)
+                .with("username", username));
+    }
+
     // -------------------------------------------------------
     // Account changes (admin or the user themself)
     // -------------------------------------------------------

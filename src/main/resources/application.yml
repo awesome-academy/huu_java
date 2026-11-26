@@ -8,12 +8,12 @@ spring:
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
   # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
-  # (2) + listener JMS (3) + sched-* (2) = 11 — không được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không
-  # khởi động), nửa còn lại cho request web. Nhiều instance: số instance × maximum-pool-size < max_connections của MySQL
-  # (mặc định 151). minimum-idle: không giữ sẵn cả 24 connection khi rảnh.
+  # (2) + listener JMS (4: email, Slack, DLQ, WebSocket) + sched-* (2) = 12 — không được quá nửa pool
+  # (config/ConnectionBudgetCheck, vượt thì app không khởi động), nửa còn lại cho request web. Nhiều instance: số
+  # instance × maximum-pool-size < max_connections của MySQL (mặc định 151). minimum-idle: không giữ sẵn cả pool khi rảnh.
   datasource:
     hikari:
-      maximum-pool-size: 24
+      maximum-pool-size: 28
       minimum-idle: 5
   servlet:
     multipart:
@@ -154,6 +154,15 @@ app:
     # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
     # Không chấp nhận '*' (app không khởi động).
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  # WebSocket/STOMP (config/WebSocketConfig, config/properties/WebSocketProperties)
+  websocket:
+    # Origin (scheme://host[:port], cách nhau bởi dấu phẩy) được mở WebSocket /ws-stomp. Rỗng = chỉ same-origin.
+    # Prod bắt buộc khai báo origin public (config/WebSocketOriginCheck). Không chấp nhận '*'.
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
+    # Chu kỳ đóng các kết nối đang mở của tài khoản bị khoá/đổi role hoặc session HTTP đã kết thúc
+    revalidate-interval: ${WEBSOCKET_REVALIDATE_INTERVAL:60s}
+    # Heartbeat STOMP hai chiều — idle timeout của load balancer phải > 2 lần giá trị này
+    heartbeat: 10s
   # Định danh instance khi chạy nhiều instance sau load balancer: in trong mỗi dòng log, là field service.node.name
   # của audit.log, và (profile prod) là tên thư mục log riêng logs/<instance-id>/ để các instance không ghi chung file.
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance

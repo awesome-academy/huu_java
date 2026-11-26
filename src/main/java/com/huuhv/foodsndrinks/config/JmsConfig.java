@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.config.properties.JmsBrokerProperties;
 import com.huuhv.foodsndrinks.config.properties.OutboxProperties;
 import com.huuhv.foodsndrinks.service.messaging.MessageTypes;
 import jakarta.jms.ConnectionFactory;
+import jakarta.jms.Session;
 import org.springframework.boot.jms.ConnectionFactoryUnwrapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jms.autoconfigure.DefaultJmsListenerContainerFactoryConfigurer;
@@ -30,6 +31,8 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>{@link #TOPIC_FACTORY}: topic, shared durable subscription — mỗi {@code subscription} là một hàng đợi riêng trên
  *       broker (consumer này lỗi không làm consumer khác nhận lại), nhận cả message gửi lúc app đang tắt, và nhiều
  *       instance cùng subscription chia nhau message (không cần clientId).</li>
+ *   <li>{@link #TOPIC_BROADCAST_FACTORY}: topic, subscription non-durable không shared — mỗi instance nhận mọi message
+ *       (sự kiện realtime cho WebSocket), không giao lại khi lỗi.</li>
  *   <li>Hai {@link JmsTemplate}: Boot chỉ tạo template khi chưa có bean {@code JmsOperations} nào, nên khai báo cả
  *       {@code jmsTemplate} (queue, {@code @Primary}) lẫn {@link #TOPIC_JMS_TEMPLATE}. {@code spring.jms.template.*}
  *       không có tác dụng.</li>
@@ -43,6 +46,7 @@ public class JmsConfig {
     /** Tên bean: hằng số nằm ở {@link JmsBrokerProperties} để service dùng mà không import {@code config}. */
     public static final String TOPIC_FACTORY = JmsBrokerProperties.TOPIC_LISTENER_FACTORY;
     public static final String TOPIC_JMS_TEMPLATE = JmsBrokerProperties.TOPIC_JMS_TEMPLATE;
+    public static final String TOPIC_BROADCAST_FACTORY = JmsBrokerProperties.TOPIC_BROADCAST_LISTENER_FACTORY;
 
     @Bean
     public MessageConverter jmsMessageConverter(JsonMapper jsonMapper) {
@@ -74,6 +78,29 @@ public class JmsConfig {
         // Một thread mỗi subscription (ghi đè spring.jms.listener.*-concurrency): consumer thông báo giữ một connection DB
         // suốt lúc gọi Slack/SMTP (NotificationLogService) — thông báo admin không cần song song, mỗi thread thêm là một
         // connection Hikari bị chiếm khi SMTP chậm (ConnectionBudgetCheck). Nhiều instance vẫn chia nhau message.
+        factory.setConcurrency("1");
+        return factory;
+    }
+
+    /**
+     * Topic với subscription <b>non-durable, không shared</b>: mỗi instance nhận một bản của mọi message — dùng cho sự kiện
+     * realtime mà instance nào cũng phải đẩy tới client WebSocket đang nối vào nó (simple broker STOMP nằm trong bộ nhớ
+     * từng instance). Instance tắt thì subscription (queue tạm trên broker) biến mất, không dồn message cũ.
+     * <p>
+     * Không transacted, {@code AUTO_ACKNOWLEDGE}: với {@code DefaultMessageListenerContainer} message được ack trước khi
+     * listener chạy — lỗi không làm broker giao lại/đẩy vào DLQ: đây chỉ là tín hiệu làm mới, client bù bằng cách tải
+     * lại dữ liệu khi kết nối lại. Một thread (subscription không shared: thêm consumer trong cùng instance là nhận trùng).
+     */
+    @Bean(name = TOPIC_BROADCAST_FACTORY)
+    public DefaultJmsListenerContainerFactory topicBroadcastListenerFactory(
+            DefaultJmsListenerContainerFactoryConfigurer configurer, ConnectionFactory connectionFactory,
+            JmsListenerErrorHandler errorHandler) {
+        DefaultJmsListenerContainerFactory factory = listenerFactory(configurer, connectionFactory, errorHandler);
+        factory.setPubSubDomain(true);
+        factory.setSubscriptionDurable(false);
+        factory.setSubscriptionShared(false);
+        factory.setSessionTransacted(false);
+        factory.setSessionAcknowledgeMode(Session.AUTO_ACKNOWLEDGE);
         factory.setConcurrency("1");
         return factory;
     }

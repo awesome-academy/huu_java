@@ -1,0 +1,154 @@
+package com.huuhv.foodsndrinks.service.websocket;
+
+import com.huuhv.foodsndrinks.entity.User;
+import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
+import com.huuhv.foodsndrinks.service.messaging.Destinations;
+import com.huuhv.foodsndrinks.support.BrowserSession;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.stomp.StompHeaders;
+
+import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * WebSocket/STOMP end-to-end trên Tomcat thật: admin nhận đơn mới qua topic JMS → STOMP; các lớp bảo mật (đăng nhập,
+ * phân quyền destination, CSRF ở CONNECT, origin, chặn SEND) và thu hồi kết nối (logout, khoá tài khoản).
+ */
+class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
+
+    @Autowired private WebSocketSessionRevalidationJob revalidationJob;
+
+    @Test
+    void admin_receivesNewOrder_withPendingCount_andNoCustomerData() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        BrowserSession.Stomp stomp = track(login(admin).connect());
+        BlockingQueue<Map<String, Object>> events = stomp.subscribe(StompDestinations.ADMIN_ORDERS);
+        awaitSubscribed(userRegistry, admin.getUsername(), StompDestinations.ADMIN_ORDERS);
+        long orderId = newOrderId();
+
+        topicJmsTemplate.convertAndSend(Destinations.ORDER_PLACED, orderPlaced(orderId));
+
+        Map<String, Object> event = events.poll(BrowserSession.WAIT.toSeconds(), TimeUnit.SECONDS);
+        assertThat(event).isNotNull();
+        assertThat(event).containsEntry("type", "ORDER_PLACED")
+                .containsEntry("itemCount", 3)
+                .containsKey("pendingCount");
+        assertThat(longValue(event, "orderId")).isEqualTo(orderId);
+        assertThat(event.toString()).doesNotContain("Nguyễn Văn A", "a@example.com", "0901234567", "Lê Lợi");
+    }
+
+    @Test
+    void user_cannotSubscribeToAdminTopic() throws Exception {
+        User user = createUser(Role.ROLE_USER);
+        BrowserSession.Stomp stomp = track(login(user).connect());
+        stomp.session();
+
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            stomp.subscribe(StompDestinations.ADMIN_ORDERS);
+
+            StompHeaders error = stomp.nextError();
+            assertThat(error).isNotNull();
+            assertThat(error.getFirst("message")).isEqualTo("Access denied");
+            assertThat(stomp.awaitClosed()).isTrue();
+            assertThat(audit.lines()).anySatisfy(line -> assertThat(line)
+                    .contains("event.action=WEBSOCKET_ACCESS_DENIED", "stomp.command=SUBSCRIBE",
+                            "stomp.destination=" + StompDestinations.ADMIN_ORDERS, "username=" + user.getUsername()));
+        }
+        assertThat(userRegistry.findSubscriptions(subscription ->
+                user.getUsername().equals(subscription.getSession().getUser().getName()))).isEmpty();
+    }
+
+    @Test
+    void anonymous_cannotOpenWebSocket() throws Exception {
+        Throwable failure = track(BrowserSession.anonymous(port).connect()).failure();
+
+        // Chain web chuyển hướng tới /login như mọi trang cần đăng nhập (client theo redirect, nhận trang login) →
+        // không upgrade được
+        assertThat(failure).isNotNull();
+        assertThat(failure).hasStackTraceContaining("did not permit the HTTP upgrade");
+    }
+
+    @Test
+    void connectWithoutOrWithWrongCsrfToken_isRejected_withoutEchoingToken() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        BrowserSession browser = login(admin);
+
+        BrowserSession.Stomp missing = track(browser.connect(null, null));
+        assertThat(missing.nextError().getFirst("message")).isEqualTo("Access denied");
+        assertThat(missing.failure()).isNotNull();
+
+        BrowserSession.Stomp wrong = track(browser.connect("forged-token-value", null));
+        StompHeaders error = wrong.nextError();
+        assertThat(error.getFirst("message")).isEqualTo("Access denied");
+        assertThat(error.toString()).doesNotContain("forged-token-value", browser.csrfToken());
+        assertThat(wrong.failure()).isNotNull();
+    }
+
+    @Test
+    void handshakeFromForeignOrigin_isRejected() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        BrowserSession browser = login(admin);
+
+        Throwable failure = track(browser.connect(browser.csrfToken(), "https://evil.example.com")).failure();
+        assertThat(failure).isNotNull();
+        assertThat(failure).hasStackTraceContaining("403");
+
+        BrowserSession.Stomp sameOrigin = track(browser.connect(browser.csrfToken(), "http://localhost:" + port));
+        assertThat(sameOrigin.session().isConnected()).isTrue();
+    }
+
+    @Test
+    void clientCannotPublishFakeEvents() throws Exception {
+        User listener = createUser(Role.ROLE_ADMIN);
+        User attacker = createUser(Role.ROLE_ADMIN);
+        BrowserSession.Stomp listenerStomp = track(login(listener).connect());
+        BlockingQueue<Map<String, Object>> events = listenerStomp.subscribe(StompDestinations.ADMIN_ORDERS);
+        awaitSubscribed(userRegistry, listener.getUsername(), StompDestinations.ADMIN_ORDERS);
+        BrowserSession.Stomp attackerStomp = track(login(attacker).connect());
+
+        attackerStomp.session().send(StompDestinations.ADMIN_ORDERS,
+                Map.of("type", "ORDER_PLACED", "orderId", 1, "pendingCount", 999));
+
+        assertThat(attackerStomp.nextError().getFirst("message")).isEqualTo("Access denied");
+        assertThat(events.poll(1, TimeUnit.SECONDS)).isNull();
+    }
+
+    @Test
+    void logout_closesOpenWebSocket() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        BrowserSession browser = login(admin);
+        BrowserSession.Stomp stomp = track(browser.connect());
+        stomp.session();
+
+        browser.logout();
+
+        assertThat(stomp.awaitClosed()).isTrue();
+    }
+
+    @Test
+    void lockedOrDemotedAccount_isDisconnectedByRevalidationJob() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        User other = createUser(Role.ROLE_ADMIN);
+        BrowserSession.Stomp demoted = track(login(admin).connect());
+        BrowserSession.Stomp untouched = track(login(other).connect());
+        demoted.session();
+        untouched.session();
+
+        admin.setRole(Role.ROLE_USER);
+        userRepository.saveAndFlush(admin);
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            revalidationJob.revalidateOpenSessions();
+
+            assertThat(demoted.awaitClosed()).isTrue();
+            assertThat(audit.lines()).anySatisfy(line -> assertThat(line)
+                    .contains("event.action=SESSION_REVOKED", "event.reason=ROLE_CHANGED", "session.type=websocket",
+                            "username=" + admin.getUsername()));
+        }
+        assertThat(untouched.isConnected()).isTrue();
+    }
+}

@@ -32,6 +32,7 @@
 		<bootstrap.version>5.3.2</bootstrap.version>
 		<font-awesome.version>6.4.2</font-awesome.version>
 		<chartjs.version>4.4.0</chartjs.version>
+		<stompjs.version>7.1.1</stompjs.version>
 		<dependency-check.version>13.0.0</dependency-check.version>
 		<!-- Không có trong Spring Boot BOM. 0.8.14 là bản đầu tiên hỗ trợ chính thức class file Java 25 -->
 		<jacoco.version>0.8.14</jacoco.version>
@@ -86,6 +87,17 @@
             <groupId>org.apache.artemis</groupId>
             <artifactId>artemis-jakarta-server</artifactId>
             <version>${artemis.version}</version>
+        </dependency>
+        <!-- WebSocket + STOMP (config/WebSocketConfig): simple broker trong bộ nhớ từng instance, sự kiện giữa các instance đi
+             qua topic JMS. spring-security-messaging: phân quyền frame STOMP + CSRF ở frame CONNECT
+             (config/WebSocketSecurityConfig, @EnableWebSocketSecurity) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-messaging</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -221,6 +233,13 @@
                     <artifactId>kurkle__color</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <!-- Client STOMP cho trình duyệt (static/js/realtime.js): bundles/stomp.umd.min.js, không dùng eval → CSP giữ
+             script-src 'self'. Chỉ WebSocket thuần, không SockJS -->
+        <dependency>
+            <groupId>org.webjars.npm</groupId>
+            <artifactId>stomp__stompjs</artifactId>
+            <version>${stompjs.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -20,6 +20,7 @@ import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
+import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -333,6 +334,12 @@ public class SecurityConfig {
                         .requestMatchers("/admin", "/admin/**").hasRole("ADMIN")
 
                         .requestMatchers("/profile", "/cart/**", "/orders/**", "/suggest").hasAnyRole("USER", "ADMIN")
+                        // Handshake WebSocket/STOMP (config/WebSocketConfig): xác thực bằng session; phân quyền từng
+                        // frame STOMP ở config/WebSocketSecurityConfig. Chưa đăng nhập → redirect /login như mọi trang
+                        // (không upgrade được, client JS thấy socket đóng và kiểm tra session); request cache mặc định
+                        // không lưu request có "Upgrade: websocket" nên đăng nhập xong không bị đưa về /ws-stomp
+                        .requestMatchers(StompDestinations.ENDPOINT, StompDestinations.ENDPOINT_PATTERN)
+                        .hasAnyRole("USER", "ADMIN")
                         // Anything else requires the user to be logged in
                         .anyRequest().authenticated()
                 )

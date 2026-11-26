@@ -106,6 +106,41 @@ class JmsConfigTest {
     }
 
     @Test
+    void broadcastTopic_everyInstanceGetsACopy_andFailuresAreNotRedelivered() {
+        // Hai listener trên factory broadcast = hai instance của app: subscription non-durable không shared mỗi bên
+        runner.withUserConfiguration(BroadcastListeners.class).run(context -> {
+            BroadcastListeners listeners = context.getBean(BroadcastListeners.class);
+            awaitSubscriptionsRegistered(context);
+
+            context.getBean(JmsConfig.TOPIC_JMS_TEMPLATE, JmsTemplate.class)
+                    .send(Destinations.ORDER_PLACED, session -> session.createTextMessage("order-2"));
+
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+                assertThat(listeners.instanceA).containsExactly("order-2");
+                assertThat(listeners.instanceB).containsExactly("order-2");
+                assertThat(listeners.failingAttempts).hasValue(1);
+            });
+            // Không transacted: lỗi không làm broker giao lại (redelivery delay của test là 100ms)
+            Thread.sleep(500);
+            assertThat(listeners.failingAttempts).hasValue(1);
+        });
+    }
+
+    @Test
+    void broadcastFactory_isNonDurableNonSharedAndNotTransacted() {
+        runner.withUserConfiguration(BroadcastListeners.class).run(context -> {
+            awaitSubscriptionsRegistered(context);
+            DefaultMessageListenerContainer container = (DefaultMessageListenerContainer) context
+                    .getBean(JmsListenerEndpointRegistry.class).getListenerContainer(BroadcastListeners.INSTANCE_A);
+            assertThat(container.isPubSubDomain()).isTrue();
+            assertThat(container.isSubscriptionDurable()).isFalse();
+            assertThat(container.isSubscriptionShared()).isFalse();
+            assertThat(container.isSessionTransacted()).isFalse();
+            assertThat(container.getMaxConcurrentConsumers()).isEqualTo(1);
+        });
+    }
+
+    @Test
     void nativeMode_withEmbeddedBrokerStillEnabled_failsStartup() {
         runner.withPropertyValues("spring.artemis.mode=native").run(context -> {
             assertThat(context).hasFailed();
@@ -154,6 +189,33 @@ class JmsConfigTest {
                 containerFactory = JmsConfig.TOPIC_FACTORY)
         void ok(TextMessage message) throws JMSException {
             received.add(message.getText());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class BroadcastListeners {
+
+        static final String INSTANCE_A = "broadcast-a";
+
+        final List<String> instanceA = new CopyOnWriteArrayList<>();
+        final List<String> instanceB = new CopyOnWriteArrayList<>();
+        final AtomicInteger failingAttempts = new AtomicInteger();
+
+        @JmsListener(id = INSTANCE_A, destination = Destinations.ORDER_PLACED,
+                containerFactory = JmsConfig.TOPIC_BROADCAST_FACTORY)
+        void a(TextMessage message) throws JMSException {
+            instanceA.add(message.getText());
+        }
+
+        @JmsListener(destination = Destinations.ORDER_PLACED, containerFactory = JmsConfig.TOPIC_BROADCAST_FACTORY)
+        void b(TextMessage message) throws JMSException {
+            instanceB.add(message.getText());
+        }
+
+        @JmsListener(destination = Destinations.ORDER_PLACED, containerFactory = JmsConfig.TOPIC_BROADCAST_FACTORY)
+        void failing(Message message) {
+            failingAttempts.incrementAndGet();
+            throw new IllegalStateException("simulated failure");
         }
     }
 }

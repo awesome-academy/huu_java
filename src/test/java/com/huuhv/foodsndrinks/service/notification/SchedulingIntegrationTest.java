@@ -7,11 +7,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,6 +47,7 @@ class SchedulingIntegrationTest {
     @Autowired @Qualifier("taskExecutor") private ThreadPoolTaskExecutor notifyExecutor;
     @Autowired @Qualifier(AsyncConfig.DASHBOARD_EXECUTOR) private ThreadPoolTaskExecutor dashboardExecutor;
     @Autowired private ThreadPoolTaskScheduler taskScheduler;
+    @Autowired private ApplicationContext applicationContext;
     @Value("${app.instance-id}") private String instanceId;
 
     @MockitoBean private EmailNotificationService emailNotificationService;
@@ -67,6 +75,21 @@ class SchedulingIntegrationTest {
             assertThat(ReflectionTestUtils.getField(executor, "waitForTasksToCompleteOnShutdown")).isEqualTo(true);
             assertThat(ReflectionTestUtils.getField(executor, "awaitTerminationMillis")).isEqualTo(30_000L);
         }
+    }
+
+    @Test
+    void scheduledJobs_runOnSchedPool_notOnWebSocketBrokerScheduler() throws Exception {
+        // @EnableWebSocketMessageBroker đăng ký messageBrokerTaskScheduler: @Scheduled phải vẫn dùng bean taskScheduler
+        // (Spring 7 dùng TaskSchedulerRouter: chọn scheduler mặc định lúc chạy — kiểm tra bằng chính thread chạy task)
+        ScheduledTaskRegistrar registrar = (ScheduledTaskRegistrar) ReflectionTestUtils.getField(
+                applicationContext.getBean(ScheduledAnnotationBeanPostProcessor.class), "registrar");
+        assertThat(registrar).isNotNull();
+        assertThat(applicationContext.containsBean("messageBrokerTaskScheduler")).isTrue();
+        CompletableFuture<String> threadName = new CompletableFuture<>();
+
+        registrar.getScheduler().schedule(() -> threadName.complete(Thread.currentThread().getName()), Instant.now());
+
+        assertThat(threadName.get(5, TimeUnit.SECONDS)).startsWith("sched-");
     }
 
     @Test

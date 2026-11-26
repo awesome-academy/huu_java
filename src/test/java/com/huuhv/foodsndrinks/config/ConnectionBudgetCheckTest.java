@@ -29,12 +29,12 @@ class ConnectionBudgetCheckTest {
 
     @Test
     void defaultConfiguration_fitsInHalfOfTheConfiguredHikariPool() throws Exception {
-        // Chính application.yml của app + 3 listener JMS một thread (2 subscription thông báo + DLQ)
+        // Chính application.yml của app + 4 listener JMS một thread (2 subscription thông báo + DLQ + WebSocket)
         MockEnvironment environment = new MockEnvironment();
         new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml"))
                 .forEach(source -> environment.getPropertySources().addLast(source));
 
-        assertThatNoException().isThrownBy(() -> check(environment, 1, 1, 1).verify());
+        assertThatNoException().isThrownBy(() -> check(environment, 1, 1, 1, 1).verify());
     }
 
     @Test

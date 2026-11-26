@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.AuthProvider;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.repository.projection.UserAccountStatus;
+import com.huuhv.foodsndrinks.repository.projection.UsernameAccountStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,6 +12,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -30,6 +33,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** Chạy ở mỗi request của người dùng đã đăng nhập (xem {@code AccountStatusService}) — chỉ lấy 2 cột, theo index UNIQUE. */
     @Query("SELECT u.isActive AS active, u.role AS role FROM User u WHERE u.username = :username")
     Optional<UserAccountStatus> findAccountStatusByUsername(@Param("username") String username);
+
+    /** Trạng thái của nhiều tài khoản trong một query (job kiểm tra lại các kết nối WebSocket đang mở). */
+    @Query("SELECT u.username AS username, u.isActive AS active, u.role AS role FROM User u"
+            + " WHERE u.username IN :usernames")
+    List<UsernameAccountStatus> findAccountStatusesByUsernameIn(@Param("usernames") Collection<String> usernames);
     Optional<User> findByAuthProviderAndProviderId(AuthProvider authProvider, String providerId);
 
     long countByIsActiveTrue();

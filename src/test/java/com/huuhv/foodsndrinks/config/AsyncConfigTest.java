@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.task.TaskExecutionAutoConfiguration;
+import org.springframework.boot.autoconfigure.task.TaskSchedulingAutoConfiguration;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -29,8 +31,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AsyncConfigTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class))
+            .withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class,
+                    TaskSchedulingAutoConfiguration.class))
             .withUserConfiguration(AsyncConfig.class);
+
+    @Test
+    void scheduler_isDeclaredExplicitly_soAnotherTaskSchedulerBeanDoesNotReplaceIt() {
+        // Như @EnableWebSocketMessageBroker: có sẵn một TaskScheduler khác → Boot sẽ không tự tạo taskScheduler
+        contextRunner
+                .withBean("messageBrokerTaskScheduler", ThreadPoolTaskScheduler.class, ThreadPoolTaskScheduler::new)
+                .withPropertyValues("spring.task.scheduling.pool.size=2", "spring.task.scheduling.thread-name-prefix=sched-")
+                .run(context -> {
+                    ThreadPoolTaskScheduler scheduler =
+                            context.getBean(AsyncConfig.TASK_SCHEDULER, ThreadPoolTaskScheduler.class);
+                    assertThat(scheduler.getThreadNamePrefix()).isEqualTo("sched-");
+                    assertThat(scheduler.getScheduledThreadPoolExecutor().getCorePoolSize()).isEqualTo(2);
+                    assertThat(context.getBeansOfType(ThreadPoolTaskScheduler.class))
+                            .containsOnlyKeys(AsyncConfig.TASK_SCHEDULER, "messageBrokerTaskScheduler");
+                });
+    }
 
     @Test
     void executors_useDefaultSizes_andCallerRunsPolicy() {

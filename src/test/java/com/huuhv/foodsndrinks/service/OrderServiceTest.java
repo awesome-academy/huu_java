@@ -297,6 +297,13 @@ class OrderServiceTest {
         }
     }
 
+    @Test
+    void countPendingOrders_countsOnlyPendingStatus() {
+        when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(5L);
+
+        assertThat(orderService.countPendingOrders()).isEqualTo(5L);
+    }
+
     @Nested
     class UpdateStatus {
 

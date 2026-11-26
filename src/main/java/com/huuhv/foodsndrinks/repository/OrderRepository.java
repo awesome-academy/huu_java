@@ -100,6 +100,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT COALESCE(SUM(o.totalPrice), 0) FROM Order o WHERE o.status = 'COMPLETED'")
     BigDecimal sumCompletedRevenue();
 
+    /** Số đơn ở một trạng thái (badge "đơn chờ xử lý" của admin). */
+    long countByStatus(OrderStatus status);
+
     /** Status counts excluding CART */
     @Query("SELECT o.status, COUNT(o) FROM Order o WHERE o.status <> 'CART' GROUP BY o.status")
     List<Object[]> countGroupByStatus();

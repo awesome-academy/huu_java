@@ -1,10 +1,12 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
 import com.huuhv.foodsndrinks.dto.response.OrderResDto;
+import com.huuhv.foodsndrinks.dto.response.PendingOrderCountResDto;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -40,6 +42,16 @@ public class OrderAdminController {
         model.addAttribute("searchOrderId", orderId);
 
         return "admin/orders/list";
+    }
+
+    /**
+     * Số đơn chờ xác nhận (JSON) — {@code static/js/admin/realtime.js} gọi sau mỗi lần kết nối WebSocket (bù sự kiện lỡ
+     * khi mất kết nối/đổi instance) và để kiểm tra session còn sống khi không kết nối lại được.
+     */
+    @GetMapping(value = "/pending-count", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public PendingOrderCountResDto pendingCount() {
+        return new PendingOrderCountResDto(orderService.countPendingOrders());
     }
 
     @GetMapping("/{id}")

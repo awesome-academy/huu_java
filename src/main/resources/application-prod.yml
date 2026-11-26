@@ -55,6 +55,10 @@ app:
   # định dạng — xem config/InstanceIdCheck). Không lấy hostname: container tạo lại nhận hostname mới, log ghi sang thư
   # mục mới và thư mục cũ không bao giờ được dọn.
   instance-id: ${INSTANCE_ID:}
+  websocket:
+    # Origin public của trang (vd. https://shop.example.com) — bắt buộc: sau load balancer, so khớp same-origin theo Host
+    # không đáng tin (config/WebSocketOriginCheck chặn khởi động nếu rỗng)
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
   security:
     remember-me-key: ${REMEMBER_ME_KEY}
     attempt-limits:
