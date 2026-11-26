@@ -1,6 +1,6 @@
 package com.huuhv.foodsndrinks.service.notification;
 
-import com.huuhv.foodsndrinks.config.AsyncConfig;
+import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +45,7 @@ class SchedulingIntegrationTest {
     @Autowired private OrderStatisticsScheduler scheduler;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired @Qualifier("taskExecutor") private ThreadPoolTaskExecutor notifyExecutor;
-    @Autowired @Qualifier(AsyncConfig.DASHBOARD_EXECUTOR) private ThreadPoolTaskExecutor dashboardExecutor;
+    @Autowired @Qualifier(AsyncProperties.DASHBOARD_EXECUTOR) private ThreadPoolTaskExecutor dashboardExecutor;
     @Autowired private ThreadPoolTaskScheduler taskScheduler;
     @Autowired private ApplicationContext applicationContext;
     @Value("${app.instance-id}") private String instanceId;

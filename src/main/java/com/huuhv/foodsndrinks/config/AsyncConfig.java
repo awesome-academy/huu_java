@@ -44,7 +44,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 @EnableConfigurationProperties(AsyncProperties.class)
 public class AsyncConfig implements AsyncConfigurer {
 
-    public static final String DASHBOARD_EXECUTOR = "dashboardExecutor";
+    /** Hằng số ở {@link AsyncProperties} để service dùng mà không import {@code config}. */
+    public static final String DASHBOARD_EXECUTOR = AsyncProperties.DASHBOARD_EXECUTOR;
     /** Tên bean scheduler của {@code @Scheduled} (cùng tên Spring Boot dùng). */
     public static final String TASK_SCHEDULER = "taskScheduler";
     /** Hằng số ở {@link AsyncProperties} để service ({@code service.messaging}) dùng mà không import {@code config}. */
