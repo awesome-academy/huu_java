@@ -1,7 +1,9 @@
 package com.huuhv.foodsndrinks.service;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 import com.huuhv.foodsndrinks.dto.response.OrderResDto;
+import com.huuhv.foodsndrinks.dto.response.OrderStatusEventResDto;
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.OrderDetail;
 import com.huuhv.foodsndrinks.entity.Product;
@@ -24,14 +26,20 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class OrderService {
+
+    /** Số mã đơn tối đa mỗi lần hỏi trạng thái ({@code GET /orders/statuses}) — trang lịch sử hiện 10 đơn/trang. */
+    public static final int MAX_STATUS_IDS = 20;
 
     private final OrderRepository        orderRepository;
     private final OrderDetailRepository  orderDetailRepository;
@@ -175,9 +183,31 @@ public class OrderService {
         return orderRepository.countByStatus(OrderStatus.PENDING);
     }
 
+    /**
+     * Trạng thái hiện tại của các đơn {@code ids} của chính user {@code userId} — id của người khác hoặc không tồn tại bị
+     * bỏ qua (không lỗi, không lộ đơn đó có tồn tại hay không). Dùng khi trang lịch sử/chi tiết đơn kết nối WebSocket lại.
+     *
+     * @throws IllegalArgumentException khi {@code ids} rỗng hoặc nhiều hơn {@value #MAX_STATUS_IDS}
+     */
+    @Transactional(readOnly = true)
+    public List<OrderStatusEventResDto> getOrderStatusesForUser(Long userId, Collection<Long> ids) {
+        Set<Long> distinct = new LinkedHashSet<>(ids);
+        if (distinct.isEmpty() || distinct.size() > MAX_STATUS_IDS) {
+            throw new IllegalArgumentException("Cần từ 1 đến " + MAX_STATUS_IDS + " mã đơn");
+        }
+        return orderRepository.findStatusesByUserIdAndIdIn(userId, distinct).stream()
+                .map(view -> OrderStatusEventResDto.of(view.getId(), view.getStatus()))
+                .toList();
+    }
+
+    /**
+     * Đổi trạng thái đơn (admin). Cùng transaction: ghi outbox {@link OrderStatusChangedMessage} → chỉ gửi sau commit
+     * (rollback thì không ai nhận), không mất khi broker chết. Chủ đơn đang mở trang đơn hàng và các admin đang online
+     * nhận qua WebSocket. Không phát cho giỏ hàng ({@code CART} ở trạng thái cũ hoặc mới — chưa phải đơn của khách).
+     */
     @Transactional
     public void updateStatus(Long id, OrderStatus newStatus) {
-        Order order = orderRepository.findById(id)
+        Order order = orderRepository.findByIdWithUser(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng #" + id));
 
         OrderStatus current = order.getStatus();
@@ -192,6 +222,11 @@ public class OrderService {
         order.setStatus(newStatus);
         orderRepository.save(order);
         auditLogService.orderStatusChanged(id, current, newStatus);
+        if (current != OrderStatus.CART && newStatus != OrderStatus.CART) {
+            // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn
+            outboxService.enqueue(OutboxType.ORDER_STATUS_CHANGED,
+                    new OrderStatusChangedMessage(id, order.getUser().getUsername(), newStatus));
+        }
     }
 
     private OrderResDto buildOrderResDto(Order order, List<OrderDetail> details) {

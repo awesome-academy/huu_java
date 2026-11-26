@@ -14,6 +14,8 @@ import org.springframework.security.messaging.access.intercept.MessageMatcherDel
  * <ul>
  *   <li>CONNECT / HEARTBEAT / UNSUBSCRIBE / DISCONNECT: đã đăng nhập (user lấy từ session HTTP lúc handshake).</li>
  *   <li>SUBSCRIBE {@value StompDestinations#ADMIN_ORDERS}: chỉ {@code ADMIN}.</li>
+ *   <li>SUBSCRIBE {@value StompDestinations#USER_ORDERS}: {@code USER}/{@code ADMIN} — trạng thái đơn của chính mình;
+ *       {@code /user/<tên khác>/...} không khớp → từ chối.</li>
  *   <li>Mọi SEND/MESSAGE: từ chối — simple broker phát thẳng message client gửi vào {@code /topic}/{@code /queue} tới
  *       mọi subscriber (giả mạo sự kiện), và chưa có {@code @MessageMapping} nào dưới {@code /app}. Thêm handler thì
  *       thêm quy tắc tường minh cho đúng đích đó.</li>
@@ -40,6 +42,8 @@ public class WebSocketSecurityConfig {
                 .simpTypeMatchers(SimpMessageType.CONNECT, SimpMessageType.HEARTBEAT, SimpMessageType.UNSUBSCRIBE,
                         SimpMessageType.DISCONNECT).authenticated()
                 .simpSubscribeDestMatchers(StompDestinations.ADMIN_ORDERS).hasRole("ADMIN")
+                // Đích theo phiên của chính người SUBSCRIBE — Spring tự gắn session id, không chọn được user khác
+                .simpSubscribeDestMatchers(StompDestinations.USER_ORDERS).hasAnyRole("USER", "ADMIN")
                 .anyMessage().denyAll();
     }
 }

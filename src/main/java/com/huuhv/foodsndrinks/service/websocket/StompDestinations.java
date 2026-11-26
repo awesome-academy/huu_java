@@ -25,6 +25,15 @@ public final class StompDestinations {
     /** Sự kiện đơn hàng cho admin (đơn mới, số đơn chờ xử lý). Chỉ {@code ROLE_ADMIN} được SUBSCRIBE. */
     public static final String ADMIN_ORDERS = TOPIC_PREFIX + "/admin/orders";
 
+    /** Trạng thái đơn của chính user — đích server truyền cho {@code convertAndSendToUser(username, ...)}. */
+    public static final String USER_ORDERS_QUEUE = QUEUE_PREFIX + "/orders";
+    /**
+     * Đích client SUBSCRIBE để nhận {@link #USER_ORDERS_QUEUE} của chính mình ({@code ROLE_USER}/{@code ROLE_ADMIN}).
+     * Spring đổi thành hàng đợi riêng theo phiên WebSocket ({@code /queue/orders-user<sessionId>}) — user khác không
+     * SUBSCRIBE được hàng đợi đó (quy tắc {@code denyAll} cho {@code /queue/**} trực tiếp và {@code /user/<tên>/...}).
+     */
+    public static final String USER_ORDERS = USER_PREFIX + USER_ORDERS_QUEUE;
+
     private StompDestinations() {
     }
 }

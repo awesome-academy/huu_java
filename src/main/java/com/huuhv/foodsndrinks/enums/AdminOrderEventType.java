@@ -6,5 +6,7 @@ package com.huuhv.foodsndrinks.enums;
  */
 public enum AdminOrderEventType {
     /** Có đơn mới (checkout). */
-    ORDER_PLACED
+    ORDER_PLACED,
+    /** Một admin vừa đổi trạng thái đơn (badge đơn chờ + biểu đồ dashboard cần làm mới). */
+    ORDER_STATUS_CHANGED
 }

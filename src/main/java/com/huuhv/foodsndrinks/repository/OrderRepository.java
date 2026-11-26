@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.repository.projection.OrderStatusView;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,6 +63,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // -------------------------------------------------------
     // User-facing: cart & order history
     // -------------------------------------------------------
+
+    /**
+     * Trạng thái của các đơn trong {@code ids} THUỘC {@code userId} (chống IDOR: id của người khác bị bỏ qua), trừ giỏ
+     * hàng — trang của chủ đơn tải lại badge sau khi kết nối WebSocket lại.
+     */
+    @Query("""
+            SELECT o.id AS id, o.status AS status FROM Order o
+            WHERE o.user.id = :userId AND o.id IN :ids AND o.status <> 'CART'
+            """)
+    List<OrderStatusView> findStatusesByUserIdAndIdIn(@Param("userId") Long userId,
+                                                      @Param("ids") Collection<Long> ids);
 
     /** The user's active cart (status = CART), with items + products pre-loaded */
     @Query("""

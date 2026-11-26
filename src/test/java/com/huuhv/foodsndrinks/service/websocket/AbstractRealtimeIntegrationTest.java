@@ -2,8 +2,11 @@ package com.huuhv.foodsndrinks.service.websocket;
 
 import com.huuhv.foodsndrinks.config.properties.JmsBrokerProperties;
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.User;
+import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.support.BrowserSession;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
@@ -14,6 +17,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jms.config.JmsListenerEndpointRegistry;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.jms.listener.DefaultMessageListenerContainer;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
@@ -48,7 +52,11 @@ abstract class AbstractRealtimeIntegrationTest {
     @Autowired protected JmsListenerEndpointRegistry listenerRegistry;
     @Autowired @Qualifier(JmsBrokerProperties.TOPIC_JMS_TEMPLATE) protected JmsTemplate topicJmsTemplate;
 
+    @Autowired protected OrderRepository orderRepository;
+    @Autowired protected JdbcTemplate jdbcTemplate;
+
     private final List<Long> userIds = new ArrayList<>();
+    private final List<Long> orderIds = new ArrayList<>();
     private final List<BrowserSession.Stomp> connections = new ArrayList<>();
 
     @BeforeEach
@@ -60,7 +68,25 @@ abstract class AbstractRealtimeIntegrationTest {
     @AfterEach
     void cleanUp() {
         connections.forEach(BrowserSession.Stomp::close);
+        orderIds.forEach(id -> {
+            jdbcTemplate.update("DELETE FROM outbox_messages WHERE JSON_EXTRACT(payload, '$.orderId') = ?", id);
+            orderRepository.deleteById(id);
+        });
         userIds.forEach(userRepository::deleteById);
+    }
+
+    /** Đơn đã đặt (đã commit — Tomcat và listener JMS chạy trên thread khác), tự xoá sau test. */
+    protected Order createOrder(User owner, OrderStatus status) {
+        LocalDateTime now = LocalDateTime.now();
+        Order order = orderRepository.saveAndFlush(Order.builder()
+                .user(owner)
+                .status(status)
+                .totalPrice(new BigDecimal("120000"))
+                .shippingAddress("12 Lê Lợi")
+                .orderedAt(now)
+                .build());
+        orderIds.add(order.getId());
+        return order;
     }
 
     protected static void awaitRegistered(JmsListenerEndpointRegistry registry) {

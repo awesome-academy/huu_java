@@ -47,9 +47,18 @@ class WebSocketSecurityConfigTest {
         assertThat(granted(ANONYMOUS, subscribe)).isFalse();
     }
 
+    @Test
+    void ownOrderStatusQueue_anySignedInUserMaySubscribe() {
+        Message<?> subscribe = message(SimpMessageType.SUBSCRIBE, StompDestinations.USER_ORDERS);
+
+        assertThat(granted(USER, subscribe)).isTrue();
+        assertThat(granted(ADMIN, subscribe)).isTrue();
+        assertThat(granted(ANONYMOUS, subscribe)).isFalse();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"/topic/admin/orders/extra", "/topic/other", "/queue/orders-user123", "/app/anything",
-            "/user/queue/anything"})
+            "/user/queue/anything", "/queue/orders", "/user/alice/queue/orders", "/user/queue/orders/extra"})
     void subscribeToOtherDestinations_isDenied_evenForAdmin(String destination) {
         assertThat(granted(ADMIN, message(SimpMessageType.SUBSCRIBE, destination))).isFalse();
     }

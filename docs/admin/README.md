@@ -89,6 +89,7 @@ Admin đang mở **bất kỳ trang `/admin/**`** thấy đơn mới ngay, khôn
 
 - Toast "Đơn mới #id" (số món, tổng tiền, link tới chi tiết đơn) ở góc phải dưới.
 - Badge số đơn **chờ xác nhận** (`PENDING`) cạnh mục "Manage Orders" của sidebar — số luôn tính lại từ DB lúc gửi, nên đúng cả khi nhiều admin cùng xử lý đơn.
+- Một admin đổi trạng thái đơn (`POST /admin/orders/{id}/status`) → sau commit, mọi admin đang online nhận sự kiện `ORDER_STATUS_CHANGED` (badge cập nhật, dashboard tải lại biểu đồ — doanh thu/top sản phẩm đổi khi đơn sang hoàn thành; không toast) và **chủ đơn** đang mở trang đơn hàng thấy trạng thái mới ([docs/web](../web/README.md#trạng-thái-đơn-realtime)). Luồng: `OrderService.updateStatus` ghi outbox → topic JMS `order.status-changed` → `OrderStatusChangedWebSocketConsumer` → `OrderStatusNotifier` (chủ đơn) + `AdminOrderNotifier`.
 
 Luồng: checkout → outbox → topic JMS `order.placed` → `OrderPlacedWebSocketConsumer` (mỗi instance một subscription non-durable) → `AdminOrderNotifier` → STOMP `/topic/admin/orders` (payload `AdminOrderEventResDto`: `type`, `orderId`, `itemCount`, `totalPrice`, `pendingCount` — không có tên/email/SĐT/địa chỉ khách). Client: `static/js/realtime.js` (kết nối dùng chung) + `static/js/admin/realtime.js`, nạp ở `admin/layout/base.html`; script của từng trang nghe `CustomEvent` `admin:orders-changed` (mỗi sự kiện) và `admin:realtime-resync` (sau mỗi lần kết nối lại).
 

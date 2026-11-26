@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 import com.huuhv.foodsndrinks.dto.response.AdminOrderEventResDto;
 import com.huuhv.foodsndrinks.enums.AdminOrderEventType;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
@@ -32,6 +33,20 @@ public class AdminOrderNotifier {
         int itemCount = message.items().stream().mapToInt(OrderPlacedMessage.OrderLineItem::quantity).sum();
         AdminOrderEventResDto event = new AdminOrderEventResDto(AdminOrderEventType.ORDER_PLACED, message.orderId(),
                 itemCount, message.totalPrice(), orderRepository.countByStatus(OrderStatus.PENDING));
+        send(event);
+    }
+
+    /**
+     * Một admin đổi trạng thái đơn → mọi admin đang online cập nhật badge "chờ xác nhận" (đếm lại từ DB) và dashboard tải
+     * lại biểu đồ (doanh thu/top sản phẩm chỉ tính đơn hoàn thành nên chỉ đổi qua sự kiện này).
+     */
+    @Transactional(readOnly = true)
+    public void orderStatusChanged(OrderStatusChangedMessage message) {
+        send(new AdminOrderEventResDto(AdminOrderEventType.ORDER_STATUS_CHANGED, message.orderId(), null, null,
+                orderRepository.countByStatus(OrderStatus.PENDING)));
+    }
+
+    private void send(AdminOrderEventResDto event) {
         messagingTemplate.convertAndSend(StompDestinations.ADMIN_ORDERS, event);
         log.debug("Sent {} for order #{} to {}", event.type(), event.orderId(), StompDestinations.ADMIN_ORDERS);
     }

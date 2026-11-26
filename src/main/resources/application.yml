@@ -8,8 +8,9 @@ spring:
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
   # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
-  # (2) + listener JMS (4: email, Slack, DLQ, WebSocket) + sched-* (2) = 12 — không được quá nửa pool
-  # (config/ConnectionBudgetCheck, vượt thì app không khởi động), nửa còn lại cho request web. Nhiều instance: số
+  # (2) + listener JMS (5: email, Slack, DLQ, WebSocket đơn mới, WebSocket đổi trạng thái) + sched-* (2) = 13 — không
+  # được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không khởi động), nửa còn lại cho request web. Nhiều
+  # instance: số
   # instance × maximum-pool-size < max_connections của MySQL (mặc định 151). minimum-idle: không giữ sẵn cả pool khi rảnh.
   datasource:
     hikari:

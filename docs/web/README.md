@@ -75,6 +75,16 @@ Các endpoint AJAX vẫn thuộc chain web (session + CSRF token), không phải
 |---|---|---|---|
 | GET | `/orders` | USER | Lịch sử đơn hàng của tôi (phân trang) |
 | GET | `/orders/{id}` | USER | Chi tiết đơn hàng (chỉ đơn của chính mình) |
+| GET | `/orders/statuses?ids=1&ids=2` | USER | (`OrderStatusController`) JSON trạng thái hiện tại của tối đa 20 đơn — chỉ đơn của chính mình, id của người khác bị bỏ qua (chống IDOR). Thiếu/sai định dạng/quá 20 mã → 400 |
+
+### Trạng thái đơn realtime
+
+Trang `/orders` (khi có đơn) và `/orders/{id}` nối WebSocket `/ws-stomp` và SUBSCRIBE `/user/queue/orders` (`static/js/web/order-status.js` + `static/js/realtime.js`, cấu hình trong fragment `web/fragments/order-status-realtime.html`). Admin đổi trạng thái đơn → sau khi transaction commit (outbox → topic JMS `order.status-changed`), chủ đơn thấy badge trạng thái đổi (chữ + màu) và toast "Đơn #id: <trạng thái>", không cần tải lại trang.
+
+- **Chỉ chủ đơn nhận:** server gửi bằng `convertAndSendToUser(<username chủ đơn lấy từ DB>, "/queue/orders", ...)`; Spring chỉ chuyển tới phiên WebSocket có cùng tên principal — username local với mọi kiểu đăng nhập (form, remember-me, Google/Facebook/X). User khác đang online không nhận; SUBSCRIBE `/user/<tên khác>/queue/orders` hay `/queue/...` trực tiếp bị từ chối (`Access denied`).
+- Transaction đổi trạng thái rollback → không ai nhận. Không phát cho giỏ hàng (`CART`).
+- Kết nối lại (mất mạng, instance tắt/rolling deploy): trang gọi `GET /orders/statuses` cho các đơn đang hiện để bù sự kiện lỡ. Session hết hạn → dừng (như trang admin).
+- Payload: `{orderId, status, statusLabel, badgeClass}` (`OrderStatusEventResDto`) — không có dữ liệu cá nhân.
 
 ### Đánh giá sản phẩm — `RatingController`
 

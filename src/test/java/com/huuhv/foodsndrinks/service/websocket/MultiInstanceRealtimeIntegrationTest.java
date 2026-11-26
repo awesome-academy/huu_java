@@ -2,8 +2,11 @@ package com.huuhv.foodsndrinks.service.websocket;
 
 import com.huuhv.foodsndrinks.FoodsndrinksApplication;
 import com.huuhv.foodsndrinks.config.properties.JmsBrokerProperties;
+import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.User;
+import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.messaging.Destinations;
 import com.huuhv.foodsndrinks.support.BrowserSession;
 import com.zaxxer.hikari.HikariDataSource;
@@ -101,5 +104,27 @@ class MultiInstanceRealtimeIntegrationTest extends AbstractRealtimeIntegrationTe
         // Đúng một bản mỗi admin (mỗi instance một subscription, không nhận trùng)
         assertThat(eventsA.poll(500, TimeUnit.MILLISECONDS)).isNull();
         assertThat(eventsB.poll(500, TimeUnit.MILLISECONDS)).isNull();
+    }
+
+    @Test
+    void statusChangedOnOneInstance_reachesOwnerConnectedToAnotherInstance_only() throws Exception {
+        User owner = createUser(Role.ROLE_USER);
+        User other = createUser(Role.ROLE_USER);
+        Order order = createOrder(owner, OrderStatus.PENDING);
+        // Chủ đơn và user khác cùng nối vào A
+        BlockingQueue<Map<String, Object>> ownerEvents =
+                track(login(owner).connect()).subscribe(StompDestinations.USER_ORDERS);
+        BlockingQueue<Map<String, Object>> otherEvents =
+                track(login(other).connect()).subscribe(StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, owner.getUsername(), StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, other.getUsername(), StompDestinations.USER_ORDERS);
+
+        // Admin đổi trạng thái trên instance B (outbox của B gửi lên topic sau commit)
+        instanceB.getBean(OrderService.class).updateStatus(order.getId(), OrderStatus.COMPLETED);
+
+        Map<String, Object> event = ownerEvents.poll(BrowserSession.WAIT.toSeconds(), TimeUnit.SECONDS);
+        assertThat(event).as("owner on A").isNotNull().containsEntry("status", "COMPLETED");
+        assertThat(longValue(event, "orderId")).isEqualTo(order.getId());
+        assertThat(otherEvents.poll(1, TimeUnit.SECONDS)).as("other user on A").isNull();
     }
 }

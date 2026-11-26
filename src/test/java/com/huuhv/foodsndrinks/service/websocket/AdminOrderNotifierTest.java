@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 import com.huuhv.foodsndrinks.dto.response.AdminOrderEventResDto;
 import com.huuhv.foodsndrinks.enums.AdminOrderEventType;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
@@ -39,5 +40,15 @@ class AdminOrderNotifierTest {
 
         verify(messagingTemplate).convertAndSend(StompDestinations.ADMIN_ORDERS, new AdminOrderEventResDto(
                 AdminOrderEventType.ORDER_PLACED, 42L, 3, new BigDecimal("120000.00"), 7L));
+    }
+
+    @Test
+    void orderStatusChanged_sendsRecountedPendingCount_withoutOwnerName() {
+        when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(2L);
+
+        notifier.orderStatusChanged(new OrderStatusChangedMessage(42L, "alice", OrderStatus.COMPLETED));
+
+        verify(messagingTemplate).convertAndSend(StompDestinations.ADMIN_ORDERS, new AdminOrderEventResDto(
+                AdminOrderEventType.ORDER_STATUS_CHANGED, 42L, null, null, 2L));
     }
 }

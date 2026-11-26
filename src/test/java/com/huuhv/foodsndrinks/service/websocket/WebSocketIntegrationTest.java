@@ -1,13 +1,17 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.User;
+import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
 import com.huuhv.foodsndrinks.service.messaging.Destinations;
 import com.huuhv.foodsndrinks.support.BrowserSession;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.stomp.StompHeaders;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -23,6 +27,8 @@ import static org.awaitility.Awaitility.await;
 class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
 
     @Autowired private WebSocketSessionRevalidationJob revalidationJob;
+    @Autowired private OrderService orderService;
+    @Autowired private TransactionTemplate transactionTemplate;
 
     @Test
     void admin_receivesNewOrder_withPendingCount_andNoCustomerData() throws Exception {
@@ -152,6 +158,68 @@ class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
         BrowserSession.Stomp fresh = track(browser.connect(browser.fetchCsrfToken(), null));
         assertThat(fresh.session().isConnected()).isTrue();
         await().atMost(BrowserSession.WAIT).until(() -> userRegistry.getUser(other.getUsername()) != null);
+    }
+
+    @Test
+    void statusChange_reachesOnlyTheOrderOwner_andAdmins_afterCommit() throws Exception {
+        User owner = createUser(Role.ROLE_USER);
+        User other = createUser(Role.ROLE_USER);
+        User admin = createUser(Role.ROLE_ADMIN);
+        Order order = createOrder(owner, OrderStatus.PENDING);
+        BrowserSession.Stomp ownerStomp = track(login(owner).connect());
+        BrowserSession.Stomp otherStomp = track(login(other).connect());
+        BlockingQueue<Map<String, Object>> ownerEvents = ownerStomp.subscribe(StompDestinations.USER_ORDERS);
+        BlockingQueue<Map<String, Object>> otherEvents = otherStomp.subscribe(StompDestinations.USER_ORDERS);
+        BlockingQueue<Map<String, Object>> adminEvents =
+                track(login(admin).connect()).subscribe(StompDestinations.ADMIN_ORDERS);
+        awaitSubscribed(userRegistry, owner.getUsername(), StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, other.getUsername(), StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, admin.getUsername(), StompDestinations.ADMIN_ORDERS);
+
+        // Admin đổi trạng thái (transaction riêng của service, commit) → outbox → topic JMS → STOMP
+        orderService.updateStatus(order.getId(), OrderStatus.PROCESSING);
+
+        Map<String, Object> event = ownerEvents.poll(BrowserSession.WAIT.toSeconds(), TimeUnit.SECONDS);
+        assertThat(event).isNotNull();
+        assertThat(longValue(event, "orderId")).isEqualTo(order.getId());
+        assertThat(event).containsEntry("status", "PROCESSING")
+                .containsEntry("statusLabel", OrderStatus.PROCESSING.getLabel())
+                .containsEntry("badgeClass", OrderStatus.PROCESSING.getBadgeClass());
+        Map<String, Object> adminEvent = adminEvents.poll(BrowserSession.WAIT.toSeconds(), TimeUnit.SECONDS);
+        assertThat(adminEvent).isNotNull().containsEntry("type", "ORDER_STATUS_CHANGED").containsKey("pendingCount");
+        assertThat(longValue(adminEvent, "orderId")).isEqualTo(order.getId());
+        // IDOR: user khác đang online cùng đích /user/queue/orders không nhận gì
+        assertThat(otherEvents.poll(1, TimeUnit.SECONDS)).isNull();
+        assertThat(ownerEvents.poll(500, TimeUnit.MILLISECONDS)).as("exactly one event").isNull();
+    }
+
+    @Test
+    void otherUser_cannotSubscribeToOwnersUserDestination() throws Exception {
+        User owner = createUser(Role.ROLE_USER);
+        User other = createUser(Role.ROLE_USER);
+        BrowserSession.Stomp otherStomp = track(login(other).connect());
+
+        otherStomp.subscribe("/user/" + owner.getUsername() + "/queue/orders");
+
+        assertThat(otherStomp.nextError().getFirst("message")).isEqualTo("Access denied");
+    }
+
+    @Test
+    void rolledBackStatusChange_notifiesNobody() throws Exception {
+        User owner = createUser(Role.ROLE_USER);
+        Order order = createOrder(owner, OrderStatus.PENDING);
+        BlockingQueue<Map<String, Object>> ownerEvents =
+                track(login(owner).connect()).subscribe(StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, owner.getUsername(), StompDestinations.USER_ORDERS);
+
+        transactionTemplate.executeWithoutResult(tx -> {
+            orderService.updateStatus(order.getId(), OrderStatus.CANCELLED);
+            tx.setRollbackOnly();
+        });
+
+        assertThat(ownerEvents.poll(2, TimeUnit.SECONDS)).isNull();
+        assertThat(orderRepository.findById(order.getId())).get()
+                .extracting(Order::getStatus).isEqualTo(OrderStatus.PENDING);
     }
 
     @Test
