@@ -20,9 +20,11 @@ Trang quản trị hệ thống, render phía server bằng Thymeleaf + Bootstra
 | Method | Path | Mô tả |
 |---|---|---|
 | GET | `/admin`, `/admin/dashboard` | Dashboard thống kê tổng quan. Các truy vấn thống kê chạy song song trên pool `dashboard-*` (`DashboardService`); một truy vấn lỗi, quá `app.async.dashboard.timeout` (mặc định 10s) hoặc pool đầy (nhiều admin cùng tải) → 503, trang lỗi admin với thông báo chung |
-| GET | `/admin/dashboard/charts` | JSON dữ liệu 2 biểu đồ (`DashboardChartResDto`: doanh thu 6 tháng, số đơn theo trạng thái) cho `static/js/admin/dashboard.js` — thay cho script inline (CSP) |
+| GET | `/admin/dashboard/charts` | JSON dữ liệu 3 biểu đồ (`DashboardChartResDto`: doanh thu 6 tháng, số đơn theo trạng thái, top 5 sản phẩm bán chạy theo số lượng — chỉ đơn hoàn thành) cho `static/js/admin/dashboard.js` — thay cho script inline (CSP). `ROLE_USER` → 403 |
 
-JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua thuộc tính `data-confirm="..."` trên `<form>`/`<button>`, kiểm tra kích thước file qua `data-max-file-size`), `realtime.js` (đơn mới realtime — xem [Thông báo realtime](#thông-báo-realtime-websocket--stomp)), `dashboard.js` (Chart.js). Không viết `onclick`/`onsubmit` hay `<script>` inline — CSP chặn.
+**Biểu đồ realtime:** `dashboard.js` vẽ 3 biểu đồ (cột doanh thu, doughnut trạng thái + danh sách số đơn, cột ngang top 5 sản phẩm) và tải lại `/admin/dashboard/charts` khi `realtime.js` phát `admin:orders-changed` (mỗi sự kiện đơn hàng) hoặc `admin:realtime-resync` (kết nối lại). Các sự kiện liên tiếp được gộp: một lần tải sau 1s + jitter 0–2s, đang tải thì tải thêm đúng 1 lần sau; tab ẩn thì hoãn tới khi hiện lại. Số liệu luôn đọc lại từ DB (không cộng dồn từ sự kiện). Đơn mới (chờ xác nhận) chỉ đổi biểu đồ trạng thái; doanh thu và top sản phẩm chỉ tính đơn hoàn thành nên đổi khi đơn chuyển sang hoàn thành (sự kiện đổi trạng thái — issue #24). Thẻ KPI và bảng "Đơn hàng gần đây" không tự cập nhật (tải lại trang).
+
+JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua thuộc tính `data-confirm="..."` trên `<form>`/`<button>`, kiểm tra kích thước file qua `data-max-file-size`), `realtime.js` (đơn mới realtime — xem [Thông báo realtime](#thông-báo-realtime-websocket--stomp)), `dashboard.js` (Chart.js, tự cập nhật theo sự kiện realtime). Không viết `onclick`/`onsubmit` hay `<script>` inline — CSP chặn.
 
 ### Quản lý sản phẩm — `ProductAdminController` (`/admin/products`)
 

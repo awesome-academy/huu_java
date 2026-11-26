@@ -42,6 +42,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DashboardService {
 
+    /** Số sản phẩm của biểu đồ "top bán chạy". */
+    static final int TOP_PRODUCTS = 5;
     private static final TransactionDefinition READ_ONLY;
 
     static {
@@ -70,7 +72,8 @@ public class DashboardService {
      * <p>
      * Số đơn hoàn thành/đang xử lý tính từ cùng kết quả đếm theo trạng thái nên luôn khớp bảng trạng thái. Các truy vấn
      * khác (doanh thu, sản phẩm...) chạy ở transaction riêng nên có thể lệch nhau vài ms — chấp nhận được với dashboard.
-     * Biểu đồ doanh thu theo tháng không tính ở đây: {@code dashboard.js} lấy qua {@link #getChartData()}.
+     * Dữ liệu biểu đồ (doanh thu theo tháng, top sản phẩm) không tính ở đây: {@code dashboard.js} lấy qua
+     * {@link #getChartData()} lúc tải trang và mỗi lần có sự kiện realtime.
      *
      * @throws DashboardUnavailableException khi một truy vấn lỗi, quá thời gian hoặc pool {@code dashboard-*} đầy
      */
@@ -82,9 +85,8 @@ public class DashboardService {
         CompletableFuture<Long>                    users    = query(userRepository::countByIsActiveTrue);
         CompletableFuture<Map<OrderStatus, Long>>  status   = query(this::countByStatus);
         CompletableFuture<List<DashboardResDto.RecentOrderDto>> recent = query(this::buildRecentOrders);
-        CompletableFuture<List<DashboardResDto.TopProductDto>>  top    = query(this::buildTopProducts);
 
-        awaitAll(revenue, products, users, status, recent, top);
+        awaitAll(revenue, products, users, status, recent);
 
         Map<OrderStatus, Long> counts = status.join();
         DashboardResDto result = DashboardResDto.builder()
@@ -95,23 +97,34 @@ public class DashboardService {
                 .totalUsers(users.join())
                 .statusCounts(toLabels(counts))
                 .recentOrders(recent.join())
-                .topProducts(top.join())
                 .build();
         log.debug("Dashboard aggregated in {} ms (parallel)",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
         return result;
     }
 
-    /** Chỉ dữ liệu biểu đồ (2 query) — cho dashboard.js và cập nhật realtime, không tính lại KPI/bảng. */
+    /**
+     * Chỉ dữ liệu 3 biểu đồ (3 query gom nhóm, một transaction read-only) — cho {@code dashboard.js} lúc tải trang và mỗi
+     * lần cập nhật realtime, không tính lại KPI/bảng. Luôn đọc lại từ DB: dashboard ở mọi instance hội tụ cùng số liệu,
+     * client không cộng dồn từ sự kiện.
+     */
     @Transactional(readOnly = true)
     public DashboardChartResDto getChartData() {
         List<DashboardResDto.MonthlyRevenueDto> monthly = buildMonthlyRevenue();
         Map<String, Long> statusCounts = toLabels(countByStatus());
+        List<String> topLabels = new ArrayList<>();
+        List<Long> topQuantities = new ArrayList<>();
+        for (Object[] row : orderDetailRepository.findTopSellingProducts(PageRequest.of(0, TOP_PRODUCTS))) {
+            topLabels.add((String) row[1]);
+            topQuantities.add(((Number) row[2]).longValue());
+        }
         return new DashboardChartResDto(
                 monthly.stream().map(DashboardResDto.MonthlyRevenueDto::getLabel).toList(),
                 monthly.stream().map(DashboardResDto.MonthlyRevenueDto::getRevenue).toList(),
                 List.copyOf(statusCounts.keySet()),
-                List.copyOf(statusCounts.values()));
+                List.copyOf(statusCounts.values()),
+                List.copyOf(topLabels),
+                List.copyOf(topQuantities));
     }
 
     // -------------------------------------------------------
@@ -233,17 +246,6 @@ public class DashboardService {
         return orderRepository.findRecent(PageRequest.of(0, 8))
                 .stream()
                 .map(DashboardResDto.RecentOrderDto::new)
-                .collect(Collectors.toList());
-    }
-
-    private List<DashboardResDto.TopProductDto> buildTopProducts() {
-        return orderDetailRepository.findTopSellingProducts(PageRequest.of(0, 5))
-                .stream()
-                .map(row -> DashboardResDto.TopProductDto.builder()
-                        .id((Long) row[0])
-                        .name((String) row[1])
-                        .totalQuantity(((Number) row[2]).longValue())
-                        .build())
                 .collect(Collectors.toList());
     }
 }

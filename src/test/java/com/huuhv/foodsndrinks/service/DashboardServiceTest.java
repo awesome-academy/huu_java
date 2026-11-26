@@ -15,10 +15,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskRejectedException;
+import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -96,8 +98,6 @@ class DashboardServiceTest {
                 new Object[]{OrderStatus.PROCESSING, 1L},
                 new Object[]{OrderStatus.COMPLETED, 3L}));
         when(orderRepository.findRecent(any())).thenReturn(List.of(recentOrder()));
-        when(orderDetailRepository.findTopSellingProducts(any())).thenReturn(List.<Object[]>of(
-                new Object[]{7L, "Trà sữa", 12L}));
 
         DashboardResDto result = dashboardService.getDashboardData();
 
@@ -114,16 +114,13 @@ class DashboardServiceTest {
         // KPI suy ra từ cùng kết quả đếm → luôn khớp bảng trạng thái, không tốn truy vấn riêng
         assertThat(result.getTotalCompletedOrders()).isEqualTo(3L);
         assertThat(result.getActiveOrders()).isEqualTo(3L);   // PENDING + PROCESSING
-        // Biểu đồ doanh thu theo tháng chỉ tính ở getChartData
+        // Biểu đồ doanh thu theo tháng và top sản phẩm chỉ tính ở getChartData (5 truy vấn song song, không phải 7)
         verify(orderRepository, never()).findMonthlyRevenue(any());
+        verifyNoInteractions(orderDetailRepository);
 
         assertThat(result.getRecentOrders()).singleElement().satisfies(o -> {
             assertThat(o.getId()).isEqualTo(42L);
             assertThat(o.getUsername()).isEqualTo("alice");
-        });
-        assertThat(result.getTopProducts()).singleElement().satisfies(p -> {
-            assertThat(p.getName()).isEqualTo("Trà sữa");
-            assertThat(p.getTotalQuantity()).isEqualTo(12L);
         });
     }
 
@@ -147,7 +144,7 @@ class DashboardServiceTest {
     @Test
     void getDashboardData_failsFast_whenOneQueryFails() {
         IllegalStateException dbDown = new IllegalStateException("db down");
-        when(orderDetailRepository.findTopSellingProducts(any())).thenThrow(dbDown);
+        when(productRepository.countByIsAvailableTrue()).thenThrow(dbDown);
 
         assertTimeoutPreemptively(Duration.ofSeconds(5), () ->
                 assertThatThrownBy(() -> dashboardService.getDashboardData())
@@ -214,6 +211,24 @@ class DashboardServiceTest {
         assertThat(charts.statusLabels()).containsExactly(OrderStatus.PENDING.getLabel(),
                 OrderStatus.PROCESSING.getLabel(), OrderStatus.COMPLETED.getLabel(), OrderStatus.CANCELLED.getLabel());
         assertThat(charts.statusCounts()).containsExactly(2L, 0L, 0L, 0L);
+        assertThat(charts.topProductLabels()).isEmpty();
+        assertThat(charts.topProductQuantities()).isEmpty();
+    }
+
+    @Test
+    void getChartData_returnsTopFiveProducts_inQueryOrder() {
+        when(orderDetailRepository.findTopSellingProducts(any())).thenReturn(List.<Object[]>of(
+                new Object[]{7L, "Trà sữa", 12L},
+                new Object[]{3L, "Bánh mì", 9}));   // SUM có thể về Integer/Long tuỳ dialect
+
+        DashboardChartResDto charts = dashboardService.getChartData();
+
+        assertThat(charts.topProductLabels()).containsExactly("Trà sữa", "Bánh mì");
+        assertThat(charts.topProductQuantities()).containsExactly(12L, 9L);
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderDetailRepository).findTopSellingProducts(page.capture());
+        assertThat(page.getValue().getPageNumber()).isZero();
+        assertThat(page.getValue().getPageSize()).isEqualTo(DashboardService.TOP_PRODUCTS).isEqualTo(5);
     }
 
     @Test

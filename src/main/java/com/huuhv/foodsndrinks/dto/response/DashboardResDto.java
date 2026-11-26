@@ -25,9 +25,8 @@ public class DashboardResDto {
     // Charts
     private final Map<String, Long>       statusCounts;     // nhãn trạng thái → số đơn (biểu đồ lấy qua DashboardChartResDto)
 
-    // Tables
+    // Tables (top sản phẩm là biểu đồ: DashboardChartResDto)
     private final List<RecentOrderDto>    recentOrders;     // last 8
-    private final List<TopProductDto>     topProducts;      // top 5
 
     // -------------------------------------------------------
 
@@ -57,14 +56,6 @@ public class DashboardResDto {
             this.status      = o.getStatus();
             this.createdAt   = o.getCreatedAt();
         }
-    }
-
-    @Getter
-    @Builder
-    public static class TopProductDto {
-        private final Long   id;
-        private final String name;
-        private final long   totalQuantity;
     }
 }
 
