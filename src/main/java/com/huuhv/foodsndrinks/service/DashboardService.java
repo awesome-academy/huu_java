@@ -1,6 +1,5 @@
 package com.huuhv.foodsndrinks.service;
 
-import com.huuhv.foodsndrinks.config.AsyncConfig;
 import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
 import com.huuhv.foodsndrinks.dto.response.DashboardResDto;
@@ -56,7 +55,7 @@ public class DashboardService {
     private final ProductRepository          productRepository;
     private final UserRepository             userRepository;
     // @Qualifier được Lombok copy sang tham số constructor (lombok.config: lombok.copyableAnnotations)
-    @Qualifier(AsyncConfig.DASHBOARD_EXECUTOR)
+    @Qualifier(AsyncProperties.DASHBOARD_EXECUTOR)
     private final Executor                   dashboardExecutor;
     private final PlatformTransactionManager transactionManager;
     private final AsyncProperties            asyncProperties;

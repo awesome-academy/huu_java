@@ -41,7 +41,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 @EnableConfigurationProperties(AsyncProperties.class)
 public class AsyncConfig implements AsyncConfigurer {
 
-    public static final String DASHBOARD_EXECUTOR = "dashboardExecutor";
+    /** Hằng số ở {@link AsyncProperties} để service dùng mà không import {@code config}. */
+    public static final String DASHBOARD_EXECUTOR = AsyncProperties.DASHBOARD_EXECUTOR;
     static final String HIKARI_MAX_POOL_SIZE = "spring.datasource.hikari.maximum-pool-size";
     /** Mặc định của HikariCP khi không cấu hình {@value #HIKARI_MAX_POOL_SIZE}. */
     private static final int HIKARI_DEFAULT_MAX = 10;

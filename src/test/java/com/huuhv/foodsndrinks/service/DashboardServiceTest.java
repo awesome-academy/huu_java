@@ -1,6 +1,5 @@
 package com.huuhv.foodsndrinks.service;
 
-import com.huuhv.foodsndrinks.config.AsyncConfig;
 import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
 import com.huuhv.foodsndrinks.dto.response.DashboardResDto;
@@ -225,7 +224,7 @@ class DashboardServiceTest {
 
         assertThat(executorParam.getAnnotation(Qualifier.class))
                 .isNotNull()
-                .extracting(Qualifier::value).isEqualTo(AsyncConfig.DASHBOARD_EXECUTOR);
+                .extracting(Qualifier::value).isEqualTo(AsyncProperties.DASHBOARD_EXECUTOR);
     }
 
     private static Order recentOrder() {

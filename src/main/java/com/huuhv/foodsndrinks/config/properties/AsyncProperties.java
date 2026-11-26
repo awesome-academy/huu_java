@@ -23,6 +23,12 @@ public record AsyncProperties(
         @DefaultValue @Valid DashboardPool dashboard) {
 
     /**
+     * Tên bean executor chạy truy vấn dashboard ({@code AsyncConfig}). Đặt ở đây để service dùng được trong
+     * {@code @Qualifier} mà không import {@code config} ({@code config} đã import {@code service} — ngược lại sẽ thành vòng).
+     */
+    public static final String DASHBOARD_EXECUTOR = "dashboardExecutor";
+
+    /**
      * Kích thước chung của một pool; ràng buộc khai báo một lần ở đây (Bean Validation áp ràng buộc của interface cho
      * mọi record implement nó). Pool mới thêm vào {@link AsyncProperties} chỉ cần implement interface này.
      */
