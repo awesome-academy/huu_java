@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<!--/* Email báo cáo tháng gửi admin. Biến: year, month, revenue, completedCount, statusCounts (Map<OrderStatus, Long>), fmt (NotificationFormat).
+       Quy ước: xem mail/fragments.html */-->
+<html xmlns:th="http://www.thymeleaf.org" lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="|Thống kê đơn hàng tháng ${#numbers.formatInteger(month, 2)}/${year}|">Thống kê đơn hàng</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f5f7;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;">
+    <tr>
+        <td align="center" style="padding:24px 12px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                   style="max-width:600px;background-color:#ffffff;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.05);">
+                <tr><td style="padding:0;"><th:block th:replace="~{mail/fragments :: header('Báo cáo định kỳ')}"/></td></tr>
+
+                <tr>
+                    <td style="padding:24px 28px 8px;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:bold;color:#212529;"
+                        th:text="|Thống kê đơn hàng tháng ${#numbers.formatInteger(month, 2)}/${year}|">
+                        Thống kê đơn hàng tháng
+                    </td>
+                </tr>
+
+                <!-- KPI -->
+                <tr>
+                    <td style="padding:12px 28px;font-family:Arial,Helvetica,sans-serif;">
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                            <tr>
+                                <td width="50%" style="padding:16px;background-color:#e7f1ff;border-radius:6px;">
+                                    <div style="font-size:13px;color:#6c757d;">Doanh thu (đơn hoàn thành)</div>
+                                    <div style="margin-top:4px;font-size:22px;font-weight:bold;color:#0d6efd;"
+                                         th:text="|${fmt.money(revenue)} ₫|">0 ₫</div>
+                                </td>
+                                <td width="12" style="font-size:0;">&nbsp;</td>
+                                <td width="50%" style="padding:16px;background-color:#d1e7dd;border-radius:6px;">
+                                    <div style="font-size:13px;color:#6c757d;">Đơn hàng hoàn thành</div>
+                                    <div style="margin-top:4px;font-size:22px;font-weight:bold;color:#198754;"
+                                         th:text="${completedCount}">0</div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- Theo trạng thái -->
+                <tr>
+                    <td style="padding:12px 28px 24px;font-family:Arial,Helvetica,sans-serif;">
+                        <div style="font-size:15px;font-weight:bold;color:#212529;margin-bottom:8px;">Đơn đặt trong tháng theo trạng thái hiện tại</div>
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#212529;">
+                            <tr style="background-color:#f8f9fa;">
+                                <th align="left" style="padding:10px;border-bottom:2px solid #dee2e6;">Trạng thái</th>
+                                <th align="right" style="padding:10px;border-bottom:2px solid #dee2e6;">Số đơn</th>
+                            </tr>
+                            <tr th:each="entry : ${statusCounts}">
+                                <td style="padding:10px;border-bottom:1px solid #e9ecef;" th:text="${entry.key.label}">Trạng thái</td>
+                                <td align="right" style="padding:10px;border-bottom:1px solid #e9ecef;" th:text="${entry.value}">0</td>
+                            </tr>
+                            <tr th:if="${#maps.isEmpty(statusCounts)}">
+                                <td colspan="2" style="padding:10px;color:#6c757d;">Chưa có đơn hàng nào.</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <tr><td style="padding:0;"><th:block th:replace="~{mail/fragments :: footer}"/></td></tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

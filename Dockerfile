@@ -9,6 +9,8 @@ COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 RUN --mount=type=cache,target=/root/.m2 sh ./mvnw -B -q dependency:go-offline
 
+# lombok.config: Lombok đọc khi biên dịch (copy @Qualifier sang constructor) — thiếu thì bean inject sai
+COPY lombok.config ./
 COPY src/ src/
 # Test chạy riêng qua service `maven` trong docker-compose (cần MySQL), không chạy lúc build image
 RUN --mount=type=cache,target=/root/.m2 sh ./mvnw -B -q package -DskipTests \

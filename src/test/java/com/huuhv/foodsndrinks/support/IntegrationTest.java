@@ -43,7 +43,8 @@ import java.lang.annotation.Target;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:mysql://testcontainers-required.invalid:3306/foodsndrinks",
         "jwt.secret=${random.value}${random.value}",
-        "app.security.remember-me-key=${random.value}${random.value}"
+        "app.security.remember-me-key=${random.value}${random.value}",
+        "app.security.attempt-limits.key-secret=${random.value}${random.value}"
 })
 @Tag("integration")
 public @interface IntegrationTest {

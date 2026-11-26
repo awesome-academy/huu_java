@@ -85,6 +85,9 @@ services:
         condition: service_healthy
       artemis:
         condition: service_started
+    # Mặc định Docker chờ 10s sau SIGTERM rồi SIGKILL — ngắn hơn graceful shutdown của app (request đang chạy +
+    # executor chờ task, mỗi phase tối đa 30s — spring.lifecycle / spring.task.*.shutdown trong application.yml).
+    stop_grace_period: 60s
 
   # Container JDK 25 để chạy lệnh Maven (compile, package, dependency-check...) mà không cần cài JDK local.
   # Chỉ chạy khi gọi: docker compose run --rm maven <goal>

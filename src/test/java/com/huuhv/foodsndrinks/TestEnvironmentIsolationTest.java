@@ -38,5 +38,8 @@ class TestEnvironmentIsolationTest {
         assertThat(environment.getProperty("app.security.remember-me-key"))
                 .isNotBlank()
                 .isNotEqualTo(environment.getProperty("REMEMBER_ME_KEY"));
+        assertThat(environment.getProperty("app.security.attempt-limits.key-secret"))
+                .isNotBlank()
+                .isNotEqualTo(environment.getProperty("ATTEMPT_LIMITS_KEY_SECRET"));
     }
 }

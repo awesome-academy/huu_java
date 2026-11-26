@@ -7,8 +7,6 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.Map;
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -32,7 +30,7 @@ public class SlackNotificationService {
         try {
             restClient.post()
                     .uri(webhookUrl)
-                    .body(Map.of("text", OrderMessageFormatter.buildOrderSummary(event)))
+                    .body(SlackMessageBuilder.orderPlaced(event))
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {

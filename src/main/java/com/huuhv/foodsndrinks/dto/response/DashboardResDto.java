@@ -23,8 +23,7 @@ public class DashboardResDto {
     private final long       totalUsers;
 
     // Charts
-    private final List<MonthlyRevenueDto> monthlyRevenue;   // last 6 months
-    private final Map<String, Long>       statusCounts;     // for doughnut chart
+    private final Map<String, Long>       statusCounts;     // nhãn trạng thái → số đơn (biểu đồ lấy qua DashboardChartResDto)
 
     // Tables
     private final List<RecentOrderDto>    recentOrders;     // last 8

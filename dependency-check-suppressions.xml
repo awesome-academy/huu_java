@@ -15,9 +15,10 @@
 -->
 <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
     <suppress until="2027-05-31Z">
-        <notes>False positive: CVE-2022-31691 thuộc Spring Tools 4 for Eclipse / VSCode extension Spring Boot Tools
-            (YAML editor dùng SnakeYAML), không phải thư viện spring-boot-devtools — CPE vmware:spring_tools /
-            spring_boot_tools khớp nhầm theo tên. devtools là dependency optional, chỉ chạy ở dev và bị loại khỏi jar prod.</notes>
+        <notes>False positive: CVE-2022-31691 là lỗ hổng SnakeYAML trong extension IDE (Spring Tools 4 for Eclipse,
+            VSCode Spring Boot Tools ≤ 1.39.0), không phải thư viện spring-boot-devtools — Dependency-Check khớp nhầm qua
+            CPE vmware:spring_boot_tools. Ngoài ra devtools là dependency optional, chỉ chạy khi dev, không nằm trong jar
+            prod (spring-boot-maven-plugin loại bỏ).</notes>
         <packageUrl regex="true">^pkg:maven/org\.springframework\.boot/spring-boot-devtools@.*$</packageUrl>
         <cve>CVE-2022-31691</cve>
     </suppress>

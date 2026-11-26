@@ -1,9 +1,9 @@
 package com.huuhv.foodsndrinks.repository;
 
+import com.huuhv.foodsndrinks.support.IntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -24,9 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>
  * Không dùng {@code @Transactional} để rollback: repository cố ý chạy ngoài transaction của người gọi (mỗi câu tự
  * commit), nên mỗi test dùng một {@code limiter} riêng và tự xoá bản ghi của mình sau khi chạy. Thời gian là epoch
- * millis rất nhỏ ({@link #NOW}) để {@code deleteExpired} trong test không xoá bản ghi thật (~1.7e12) của app dev.
+ * millis rất nhỏ ({@link #NOW}) để {@code deleteExpired} trong test không xoá bản ghi (~1.7e12) mà integration test
+ * khác ghi vào container MySQL dùng chung.
  */
-@SpringBootTest
+@IntegrationTest
 class JdbcAttemptLimitRepositoryTest {
 
     private static final long NOW = 1_000_000L;

@@ -26,6 +26,14 @@ public class AdminExceptionHandler {
         return buildErrorView("error/admin/409", ex.getMessage(), request.getRequestURI());
     }
 
+    /** Truy vấn thống kê lỗi/quá thời gian: DashboardService đã log ERROR kèm cause, ở đây chỉ trả thông báo chung. */
+    @ExceptionHandler(DashboardUnavailableException.class)
+    public ModelAndView handleDashboardUnavailable(DashboardUnavailableException ex, HttpServletRequest request, HttpServletResponse response) {
+        response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+        log.warn("Dashboard unavailable at {}: {}", request.getRequestURI(), ex.getMessage());
+        return buildErrorView("error/admin/500", "Không tải được số liệu dashboard, vui lòng thử lại sau.", request.getRequestURI());
+    }
+
     @ExceptionHandler(Exception.class)
     public ModelAndView handleAnyException(Exception ex, HttpServletRequest request, HttpServletResponse response) {
         response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);

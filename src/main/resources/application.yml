@@ -12,6 +12,27 @@ spring:
       # Áp dụng mọi profile (prod trước đây dùng mặc định của Spring). Ảnh sản phẩm/avatar: tối đa 5MB/file, 25MB/request
       max-file-size: 5MB
       max-request-size: 25MB
+  task:
+    # Mọi executor tạo từ ThreadPoolTaskExecutorBuilder (config/AsyncConfig) khi tắt app chờ task đang chạy + trong hàng
+    # đợi tối đa 30s rồi mới dừng (mặc định của Spring Boot: dừng ngay, bỏ task trong hàng đợi). Kích thước từng pool:
+    # app.async.*. Task trong hàng đợi bộ nhớ vẫn mất nếu process bị kill -9 (JMS/Outbox ở giai đoạn 5 giải quyết).
+    execution:
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
+    # Pool của @Scheduled (mặc định 1 thread: job chậm làm trễ mọi job khác)
+    scheduling:
+      pool:
+        size: 2
+      thread-name-prefix: sched-
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
+  # Graceful shutdown (server.shutdown=graceful là mặc định của Spring Boot 4): khi bị load balancer rút ra/rolling
+  # deploy, Tomcat ngừng nhận request mới và chờ request đang chạy tối đa thời gian này. Container phải được cho đủ thời
+  # gian dừng (docker-compose: stop_grace_period của service app).
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
@@ -101,6 +122,19 @@ app:
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
   # (application-prod.yml + config/InstanceIdCheck), vì hostname của container đổi mỗi lần tạo lại.
   instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
+  # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
+  # (CallerRunsPolicy, không mất thông báo); dashboard từ chối (AbortPolicy) → /admin trả 503.
+  async:
+    notification:      # notify-*: gửi Slack/email (@Async mặc định)
+      core-size: 2
+      max-size: 4
+      queue-capacity: 100
+    dashboard:         # dashboard-*: truy vấn thống kê song song. Mỗi thread giữ 1 connection → max-size ≤ nửa pool Hikari
+                       # (spring.datasource.hikari.maximum-pool-size, mặc định 10), vượt thì app không khởi động
+      core-size: 4
+      max-size: 4
+      queue-capacity: 50
+      timeout: 10s     # quá thời gian (hoặc 1 truy vấn lỗi, hoặc pool đầy) thì /admin trả 503
   security:
     # Chống brute-force (form + API). Bộ đếm nằm trong bảng attempt_limits (dùng chung giữa các instance, key băm HMAC
     # bằng app.security.attempt-limits.key-secret — đặt theo profile). Trong window (tính từ lần thử đầu tiên, >= 1s),
@@ -130,6 +164,6 @@ app:
     mail:
       enabled: ${MAIL_NOTIFY_ENABLED:true}
     statistics:
-      # 23h ngày cuối tháng, theo múi giờ JVM (TZ/APP_TZ). Không khai báo zone riêng: OrderStatisticsScheduler tính
-      # tháng bằng LocalDate.now() (múi giờ JVM), cron phải chạy cùng múi giờ đó thì mới lấy đúng tháng.
-      cron: ${ORDER_STATS_CRON:0 0 23 L * *}
+      # 00:05 ngày 1, báo cáo tháng vừa kết thúc; theo múi giờ JVM (TZ/APP_TZ). Không khai báo zone riêng: OrderStatisticsScheduler tính
+      # tháng bằng YearMonth.now() (múi giờ JVM), cron phải chạy cùng múi giờ đó thì mới lấy đúng tháng.
+      cron: ${ORDER_STATS_CRON:0 5 0 1 * *}
