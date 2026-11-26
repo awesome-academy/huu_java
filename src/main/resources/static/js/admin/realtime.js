@@ -97,7 +97,7 @@
 
     window.Realtime.connect({
         url: body.dataset.wsUrl,
-        sessionCheckUrl: body.dataset.pendingCountUrl,
+        csrfTokenUrl: body.dataset.csrfTokenUrl,
         subscriptions: [{destination: body.dataset.adminOrdersDestination, onMessage: onOrderEvent}],
         onResync: function (initial) {
             // Lần đầu: badge vừa được server render. Từ lần kết nối lại: có thể đã lỡ sự kiện → tải lại

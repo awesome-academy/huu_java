@@ -14,6 +14,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WebSocket/STOMP end-to-end trên Tomcat thật: admin nhận đơn mới qua topic JMS → STOMP; các lớp bảo mật (đăng nhập,
@@ -128,6 +129,29 @@ class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
         browser.logout();
 
         assertThat(stomp.awaitClosed()).isTrue();
+    }
+
+    @Test
+    void loginAgainInSameBrowser_closesOpenSocket_andReconnectNeedsFreshCsrfToken() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        User other = createUser(Role.ROLE_USER);
+        BrowserSession browser = login(admin);
+        BrowserSession.Stomp adminTab = track(browser.connect());
+        adminTab.session();
+        String pageToken = browser.csrfToken();
+
+        // Tab khác của cùng trình duyệt đăng nhập bằng tài khoản khác: id session đổi, token CSRF đổi
+        browser.signInAgain(other.getUsername(), PASSWORD);
+
+        // Socket mang danh tính admin lúc handshake bị đóng ngay (HttpSessionIdChangedEvent), không chờ job
+        assertThat(adminTab.awaitClosed()).isTrue();
+        // Nối lại bằng token trong meta của trang cũ → bị từ chối mãi (lỗi review: realtime chết tới khi tải lại trang)
+        BrowserSession.Stomp stale = track(browser.connect(pageToken, null));
+        assertThat(stale.nextError().getFirst("message")).isEqualTo("Access denied");
+        // realtime.js lấy token mới qua GET /csrf-token trước khi nối lại → kết nối được, với danh tính mới
+        BrowserSession.Stomp fresh = track(browser.connect(browser.fetchCsrfToken(), null));
+        assertThat(fresh.session().isConnected()).isTrue();
+        await().atMost(BrowserSession.WAIT).until(() -> userRegistry.getUser(other.getUsername()) != null);
     }
 
     @Test

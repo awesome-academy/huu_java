@@ -17,6 +17,7 @@
 <!-- Realtime (static/js/admin/realtime.js): URL theo context path, đích STOMP = StompDestinations.ADMIN_ORDERS -->
 <body class="d-flex"
       th:data-ws-url="@{/ws-stomp}"
+      th:data-csrf-token-url="@{/csrf-token}"
       data-admin-orders-destination="/topic/admin/orders"
       th:data-orders-url="@{/admin/orders}"
       th:data-pending-count-url="@{/admin/orders/pending-count}">

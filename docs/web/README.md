@@ -23,6 +23,7 @@ Trang bán hàng cho người dùng cuối, render phía server bằng Thymeleaf
 | GET | `/login` | Trang đăng nhập (form + nút social login) |
 | GET / POST | `/register` | Đăng ký tài khoản (check trùng, check password nhập lại) → redirect `/login` |
 | POST | `/logout` | Đăng xuất → `/login?logout=true`, xóa session + remember-me cookie |
+| GET | `/csrf-token` | (`CsrfTokenController`, cần đăng nhập) JSON `{"headerName", "token"}` — token CSRF đã mask của session hiện tại; `static/js/realtime.js` gọi trước mỗi lần nối lại WebSocket vì session có thể đã đổi từ lúc render trang. Chưa đăng nhập → `/login`. Không cache, không mở CORS |
 
 Sau khi login: `ADMIN` → `/admin`, `USER` → `/` (hoặc quay lại trang yêu cầu trước đó).
 

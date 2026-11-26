@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -118,6 +119,12 @@ class WebSocketSessionRevalidationJobTest {
         when(socket.getPrincipal()).thenReturn(new TestingAuthenticationToken(username, "n/a", List.of(
                 new org.springframework.security.core.authority.SimpleGrantedAuthority(role))));
         when(socket.isOpen()).thenReturn(true);
+        // Như container: close() thành công → afterConnectionClosed (tracker gỡ bản ghi ở đó)
+        doAnswer(invocation -> {
+            when(socket.isOpen()).thenReturn(false);
+            decorated.afterConnectionClosed(socket, invocation.getArgument(0));
+            return null;
+        }).when(socket).close(any(CloseStatus.class));
         decorated.afterConnectionEstablished(socket);
         return socket;
     }

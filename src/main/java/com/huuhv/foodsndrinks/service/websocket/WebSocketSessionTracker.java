@@ -5,6 +5,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.web.session.HttpSessionDestroyedEvent;
+import org.springframework.security.web.session.HttpSessionIdChangedEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
@@ -30,6 +31,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * Đường nhanh: {@link HttpSessionDestroyedEvent} (logout, session hết hạn, {@code AccountStatusFilter} huỷ session — cần
  * bean {@code HttpSessionEventPublisher}) đóng ngay socket gắn với session đó. Event chỉ phát ở instance giữ session và
  * không phát với Spring Session JDBC, nên job vẫn là nguồn chân lý.
+ * <p>
+ * Đăng nhập lại trong cùng trình duyệt (form/OAuth2, có thể là người khác) giữ nguyên object {@code HttpSession}, chỉ đổi
+ * id ({@code ChangeSessionIdAuthenticationStrategy}) → {@link HttpSessionIdChangedEvent}: socket mở trước đó mang danh
+ * tính lúc handshake, nên bị đóng; client nối lại bằng danh tính mới của session.
+ * <p>
+ * Một socket chỉ rời danh sách khi đã thật sự đóng ({@code afterConnectionClosed}): đóng thất bại thì job thử lại ở chu kỳ
+ * sau thay vì bỏ sót.
  */
 @Slf4j
 @Component
@@ -73,30 +81,42 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
         return List.copyOf(sessions.values());
     }
 
-    /** Đóng kết nối (bỏ qua nếu đã đóng). */
+    /**
+     * Đóng kết nối. Bản ghi được gỡ ở {@code afterConnectionClosed}; socket đã đóng sẵn thì gỡ ngay. Đóng thất bại (vd.
+     * container đang ghi frame khác) → WARN, socket còn trong danh sách để lần kiểm tra sau đóng lại.
+     */
     public void close(WebSocketSession session) {
-        sessions.remove(session.getId());
         if (!session.isOpen()) {
+            sessions.remove(session.getId());
             return;
         }
         try {
             session.close(REVOKED);
         } catch (IOException | IllegalStateException ex) {
-            log.debug("Closing WebSocket session {} failed: {}", session.getId(), ex.toString());
+            log.warn("Closing WebSocket session {} failed, will retry: {}", session.getId(), ex.toString());
         }
     }
 
     @EventListener
     public void onHttpSessionDestroyed(HttpSessionDestroyedEvent event) {
+        closeSocketsOf(event.getId(), "an ended HTTP session");
+    }
+
+    @EventListener
+    public void onHttpSessionIdChanged(HttpSessionIdChangedEvent event) {
+        closeSocketsOf(event.getOldSessionId(), "a re-authenticated HTTP session");
+    }
+
+    private void closeSocketsOf(String httpSessionId, String reason) {
         int closed = 0;
         for (TrackedSession tracked : snapshot()) {
-            if (Objects.equals(tracked.httpSessionId(), event.getId())) {
+            if (Objects.equals(tracked.httpSessionId(), httpSessionId)) {
                 close(tracked.session());
                 closed++;
             }
         }
         if (closed > 0) {
-            log.debug("Closed {} WebSocket session(s) of an ended HTTP session", closed);
+            log.debug("Closed {} WebSocket session(s) of {}", closed, reason);
         }
     }
 

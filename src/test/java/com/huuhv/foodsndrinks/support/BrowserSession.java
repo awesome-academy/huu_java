@@ -39,6 +39,7 @@ public final class BrowserSession {
     private static final Pattern FORM_CSRF = Pattern.compile("<input[^>]*name=\"_csrf\"[^>]*value=\"([^\"]+)\"");
     private static final Pattern META_CSRF = Pattern.compile("<meta name=\"_csrf\" content=\"([^\"]+)\"");
     private static final Pattern META_CSRF_HEADER = Pattern.compile("<meta name=\"_csrf_header\" content=\"([^\"]+)\"");
+    private static final Pattern JSON_TOKEN = Pattern.compile("\"token\":\"([^\"]+)\"");
     public static final Duration WAIT = Duration.ofSeconds(10);
 
     private final String baseUrl;
@@ -55,15 +56,38 @@ public final class BrowserSession {
     /** Đăng nhập form ({@code POST /login}) rồi đọc token CSRF (đã mask) từ meta của trang chủ. */
     public static BrowserSession login(int port, String username, String password) throws Exception {
         BrowserSession browser = new BrowserSession(port);
-        String loginPage = browser.get("/login").body();
-        String formToken = extract(FORM_CSRF, loginPage);
-        HttpResponse<String> login = browser.post("/login", Map.of("username", username, "password", password,
+        browser.signIn(username, password);
+        return browser;
+    }
+
+    /**
+     * Đăng nhập (lại) bằng form với cookie hiện có — như đăng nhập ở một tab khác của cùng trình duyệt: id session đổi,
+     * token CSRF cũ hết hiệu lực. Không cập nhật {@link #csrfToken()} (trang đã mở vẫn giữ token cũ trong meta).
+     */
+    public void signInAgain(String username, String password) throws Exception {
+        String pageToken = csrfToken;
+        signIn(username, password);
+        csrfToken = pageToken;
+    }
+
+    private void signIn(String username, String password) throws Exception {
+        String formToken = extract(FORM_CSRF, get("/login").body());
+        HttpResponse<String> login = post("/login", Map.of("username", username, "password", password,
                 "_csrf", formToken));
         if (login.statusCode() != 302 || login.headers().firstValue("Location").orElse("").contains("error")) {
             throw new IllegalStateException("Login failed for " + username + ": " + login.statusCode());
         }
-        browser.refreshCsrfToken();
-        return browser;
+        refreshCsrfToken();
+    }
+
+    /** {@code GET /csrf-token} như {@code realtime.js} trước khi nối lại; trả token của session hiện tại. */
+    public String fetchCsrfToken() throws IOException, InterruptedException {
+        HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/csrf-token"))
+                .header("Accept", "application/json").GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("GET /csrf-token: " + response.statusCode());
+        }
+        return extract(JSON_TOKEN, response.body());
     }
 
     /** Khách chưa đăng nhập (vẫn có session + token CSRF của trang /login). */

@@ -102,7 +102,7 @@ Bảo mật (chi tiết: [README — Realtime](../../README.md#realtime-websocke
 | Admin bị khoá/hạ quyền khi đang mở trang | Socket bị đóng trong ≤ `WEBSOCKET_REVALIDATE_INTERVAL` (60s), audit `SESSION_REVOKED` (`session.type=websocket`) |
 | Logout / session hết hạn | Socket bị đóng; logout thì trang không kết nối lại được (handshake bị chuyển hướng `/login`) |
 
-Frame WebSocket không gia hạn session HTTP: trang để yên quá 30 phút (timeout session) thì socket bị đóng; trang tự kết nối lại được nếu còn cookie remember-me (đăng nhập lại tự động), không thì realtime dừng — tải lại trang để đăng nhập.
+Frame WebSocket không gia hạn session HTTP: trang để yên quá 30 phút (timeout session) thì socket bị đóng; trang tự kết nối lại được nếu còn cookie remember-me (đăng nhập lại tự động), không thì realtime dừng — tải lại trang để đăng nhập. Mỗi lần nối lại, `realtime.js` lấy token CSRF của session hiện tại qua `GET /csrf-token` (token trong meta của trang gắn với session cũ); bị chuyển hướng `/login` → dừng hẳn. Đăng nhập lại ở tab khác của cùng trình duyệt (id session đổi) → socket đang mở bị đóng ngay rồi nối lại với danh tính mới.
 
 ## Xử Lý Lỗi
 

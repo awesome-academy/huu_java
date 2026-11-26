@@ -160,6 +160,7 @@ class OrderAdminControllerTest {
                 .contains("data-ws-url=\"/ws-stomp\"")
                 .contains("data-admin-orders-destination=\"" + StompDestinations.ADMIN_ORDERS + "\"")
                 .contains("data-pending-count-url=\"/admin/orders/pending-count\"")
+                .contains("data-csrf-token-url=\"/csrf-token\"")
                 .contains("<meta name=\"_csrf\"")
                 // stompjs (WebJar, URL có version do webjars-locator gắn) → realtime.js → admin/realtime.js
                 .containsSubsequence("/webjars/stomp__stompjs/", "/bundles/stomp.umd.min.js", "/js/realtime.js",
