@@ -2,7 +2,9 @@ package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.repository.projection.OrderStatusView;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -22,6 +24,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     /**
      * Danh sách đơn của admin. Không bao giờ trả giỏ hàng ({@code CART}) — kể cả khi {@code status} = CART: mọi thao
      * tác admin trên giỏ hàng trả 404 ({@code OrderService.getOrderDetail}/{@code updateStatus}).
+     * <p>
+     * {@code orderedFrom}/{@code orderedBefore}: ngày đặt trong {@code [orderedFrom, orderedBefore)}, {@code null} = không
+     * chặn đầu đó. Điều kiện WHERE phải giống hệt {@link #findExportRows} — file export là đúng danh sách đang lọc; sửa một
+     * câu thì sửa cả ba (kể cả {@code countQuery}).
      */
     @Query(value = """
             SELECT o FROM Order o LEFT JOIN FETCH o.user u
@@ -32,6 +38,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                    OR LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
+              AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
+              AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
             ORDER BY o.id DESC
             """,
             countQuery = """
@@ -43,11 +51,42 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                    OR LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
+              AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
+              AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
             """)
     Page<Order> search(@Param("status")  OrderStatus status,
                        @Param("keyword") String keyword,
                        @Param("orderId") Long orderId,
+                       @Param("orderedFrom") LocalDateTime orderedFrom,
+                       @Param("orderedBefore") LocalDateTime orderedBefore,
                        Pageable pageable);
+
+    /**
+     * Các dòng của file export đơn hàng: cùng bộ lọc và thứ tự với {@link #search}, không nạp entity. {@code limit} chặn
+     * số dòng đọc lên (người gọi xin {@code max + 1} để nhận ra bộ lọc vượt giới hạn).
+     */
+    @Query("""
+            SELECT new com.huuhv.foodsndrinks.repository.projection.OrderExportRow(
+                       o.id, u.fullName, u.username, o.orderedAt, o.status, o.totalPrice,
+                       (SELECT COALESCE(SUM(od.quantity), 0) FROM OrderDetail od WHERE od.order = o))
+            FROM Order o LEFT JOIN o.user u
+            WHERE o.status <> 'CART'
+              AND (:status   IS NULL OR o.status = :status)
+              AND (:orderId  IS NULL OR o.id     = :orderId)
+              AND (:keyword  IS NULL
+                   OR LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                   OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                   OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
+              AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
+              AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
+            ORDER BY o.id DESC
+            """)
+    List<OrderExportRow> findExportRows(@Param("status")  OrderStatus status,
+                                        @Param("keyword") String keyword,
+                                        @Param("orderId") Long orderId,
+                                        @Param("orderedFrom") LocalDateTime orderedFrom,
+                                        @Param("orderedBefore") LocalDateTime orderedBefore,
+                                        Limit limit);
 
     /** Fetch order + user eagerly for detail view */
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.user WHERE o.id = :id")

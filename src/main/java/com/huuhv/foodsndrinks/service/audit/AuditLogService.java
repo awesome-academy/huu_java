@@ -210,6 +210,23 @@ public class AuditLogService {
     }
 
     // -------------------------------------------------------
+    // Admin: Excel
+    // -------------------------------------------------------
+
+    /**
+     * Admin xuất dữ liệu ra file Excel (dữ liệu rời khỏi hệ thống hàng loạt).
+     *
+     * @param dataset tên cố định của loại dữ liệu ({@code orders}, {@code products}) — không phải dữ liệu người dùng nhập
+     * @param rows    số dòng dữ liệu trong file
+     */
+    public void dataExported(String dataset, int rows) {
+        write(event(Level.INFO, "Data exported", "DATA_EXPORTED", "success")
+                .with("actor", currentActor())
+                .with("export.dataset", dataset)
+                .with("export.rows", rows));
+    }
+
+    // -------------------------------------------------------
     // Helpers
     // -------------------------------------------------------
 

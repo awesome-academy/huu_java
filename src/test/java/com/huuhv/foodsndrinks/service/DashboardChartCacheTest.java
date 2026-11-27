@@ -186,6 +186,6 @@ class DashboardChartCacheTest {
 
     private static DashboardChartResDto charts(long completed) {
         return new DashboardChartResDto(List.of("T11"), List.of(), List.of("Hoàn thành"), List.of(completed),
-                List.of(), List.of());
+                List.of(), List.of(), 0L);
     }
 }

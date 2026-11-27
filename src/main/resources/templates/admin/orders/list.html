@@ -12,6 +12,11 @@
         <h2 class="fw-bold m-0">
             <i class="fa-solid fa-cart-shopping text-primary me-2"></i>Quản lý Đơn Hàng
         </h2>
+        <!-- Xuất đúng danh sách đang lọc (mọi trang) ra .xlsx -->
+        <a th:href="@{/admin/orders/export(status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId},from=${searchFrom},to=${searchTo})}"
+           class="btn btn-success fw-medium shadow-sm" data-export-orders>
+            <i class="fa-solid fa-file-excel me-1"></i> Export Excel
+        </a>
     </div>
 
     <!-- Flash messages -->
@@ -51,6 +56,14 @@
                     <label class="form-label fw-medium">Khách hàng (username / tên / email)</label>
                     <input type="text" name="keyword" class="form-control" placeholder="Tìm kiếm..."
                            th:value="${searchKeyword}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-medium">Đặt từ ngày</label>
+                    <input type="date" name="from" class="form-control" th:value="${searchFrom}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-medium">Đến ngày</label>
+                    <input type="date" name="to" class="form-control" th:value="${searchTo}">
                 </div>
                 <div class="col-md-3">
                     <label class="form-label fw-medium">Trạng thái</label>
@@ -169,7 +182,7 @@
         <ul class="pagination mb-0">
             <li class="page-item" th:classappend="${currentPage == 0} ? 'disabled'">
                 <a class="page-link"
-                   th:href="@{/admin/orders(page=${currentPage - 1},size=${pageSize},status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId})}">
+                   th:href="@{/admin/orders(page=${currentPage - 1},size=${pageSize},status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId},from=${searchFrom},to=${searchTo})}">
                     &laquo;
                 </a>
             </li>
@@ -177,13 +190,13 @@
                 <li class="page-item" th:each="i : ${#numbers.sequence(s,e)}"
                     th:classappend="${i == currentPage} ? 'active'">
                     <a class="page-link" th:text="${i + 1}"
-                       th:href="@{/admin/orders(page=${i},size=${pageSize},status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId})}">
+                       th:href="@{/admin/orders(page=${i},size=${pageSize},status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId},from=${searchFrom},to=${searchTo})}">
                     </a>
                 </li>
             </th:block>
             <li class="page-item" th:classappend="${currentPage + 1 >= totalPages} ? 'disabled'">
                 <a class="page-link"
-                   th:href="@{/admin/orders(page=${currentPage + 1},size=${pageSize},status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId})}">
+                   th:href="@{/admin/orders(page=${currentPage + 1},size=${pageSize},status=${searchStatus},keyword=${searchKeyword},orderId=${searchOrderId},from=${searchFrom},to=${searchTo})}">
                     &raquo;
                 </a>
             </li>

@@ -10,6 +10,8 @@
 // - Tab ẩn: không tải, đánh dấu cũ; hiện lại thì tải 1 lần.
 // - Mỗi canvas chỉ tạo Chart 1 lần, các lần sau gán data rồi update(). Lỗi tải giữ nguyên biểu đồ đang có và hiện thông
 //   báo; lần tải sau thành công thì ẩn đi.
+// - KPI "Đơn đang xử lý" ([data-dashboard-active-orders], render sẵn bởi server) cập nhật từ activeOrders của cùng JSON —
+//   cùng kết quả đếm với biểu đồ trạng thái nên hai chỗ luôn khớp. Các KPI khác, bảng đơn gần đây không realtime.
 (function () {
     "use strict";
 
@@ -25,6 +27,7 @@
     const topEmpty = document.getElementById("topProductsEmpty");
     const statusList = document.getElementById("statusCountList");
     const errorBox = document.getElementById("dashboardChartsError");
+    const activeOrders = document.querySelector("[data-dashboard-active-orders]");
     if (!container || !container.dataset.chartsUrl || !revenueCanvas || !statusCanvas || !topCanvas
             || typeof Chart === "undefined") {
         return;
@@ -170,13 +173,17 @@
     function render(data) {
         if (!data || !isPairOfArrays(data.monthLabels, data.monthRevenues)
                 || !isPairOfArrays(data.statusLabels, data.statusCounts)
-                || !isPairOfArrays(data.topProductLabels, data.topProductQuantities)) {
+                || !isPairOfArrays(data.topProductLabels, data.topProductQuantities)
+                || !Number.isSafeInteger(data.activeOrders) || data.activeOrders < 0) {
             throw new Error("Unexpected chart payload");
         }
         upsert("revenue", revenueCanvas, revenueConfig, data.monthLabels, data.monthRevenues);
         upsert("status", statusCanvas, statusConfig, data.statusLabels, data.statusCounts);
         renderStatusList(data.statusLabels, data.statusCounts);
         renderTopProducts(data.topProductLabels, data.topProductQuantities);
+        if (activeOrders) {
+            activeOrders.textContent = String(data.activeOrders);
+        }
     }
 
     function load() {

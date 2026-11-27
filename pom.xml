@@ -46,6 +46,8 @@
 		     (vd. artemis-jakarta-client của spring-boot-starter-artemis) ở version này chỉ là POM relocation sang groupId mới.
 		     Bỏ dòng này khi BOM Boot >= 2.52. Giữ cùng version với image apache/artemis trong docker-compose.yaml. -->
 		<artemis.version>2.57.0</artemis.version>
+		<!-- Không có trong Spring Boot BOM. Dòng 5.x ổn định mới nhất (6.0.0 mới phát hành 10/2026, chưa dùng) -->
+		<poi.version>5.5.1</poi.version>
 	</properties>
     <dependencies>
         <dependency>
@@ -168,6 +170,13 @@
             <groupId>net.javacrumbs.shedlock</groupId>
             <artifactId>shedlock-provider-jdbc-template</artifactId>
             <version>${shedlock.version}</version>
+        </dependency>
+
+        <!-- Apache POI: export/import Excel .xlsx (service/excel). Export dùng SXSSF (streaming, file tạm trên đĩa) -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
         </dependency>
 
         <dependency>

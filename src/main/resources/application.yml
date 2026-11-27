@@ -194,6 +194,11 @@ app:
     # đang mở tải lại sau mỗi sự kiện đơn hàng → một lần tính cho tất cả. Bị xoá ngay khi instance nhận sự kiện đơn hàng;
     # TTL chỉ giới hạn độ trễ của thay đổi không có sự kiện (đổi tên sản phẩm). 0s = tắt.
     chart-cache-ttl: 30s
+  # Excel import/export — Apache POI (config/properties/ExcelProperties, service/excel)
+  excel:
+    export:
+      # Số dòng dữ liệu tối đa của một file export. Bộ lọc khớp nhiều hơn → báo lỗi, không tạo file
+      max-rows: 50000
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy); dashboard từ chối (AbortPolicy) → /admin trả 503; outbox bỏ task (job gửi lại).
   async:

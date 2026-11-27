@@ -69,15 +69,17 @@ class OrderRepositoryOwnershipTest {
     @Test
     void adminSearch_neverReturnsCarts_evenWhenFilteringByCart() {
         // Lọc theo tên chủ đơn để không phụ thuộc dữ liệu của class test khác trong cùng DB
-        Page<Order> all = orderRepository.search(null, alice.getUsername(), null, PageRequest.of(0, 20));
+        Page<Order> all = orderRepository.search(null, alice.getUsername(), null, null, null, PageRequest.of(0, 20));
         assertThat(all.getContent()).extracting(Order::getId).containsExactly(aliceOrder.getId());
         assertThat(all.getTotalElements()).isEqualTo(1);
 
-        Page<Order> carts = orderRepository.search(OrderStatus.CART, alice.getUsername(), null, PageRequest.of(0, 20));
+        Page<Order> carts = orderRepository.search(OrderStatus.CART, alice.getUsername(), null, null, null,
+                PageRequest.of(0, 20));
         assertThat(carts.getContent()).isEmpty();
         assertThat(carts.getTotalElements()).isZero();
 
-        assertThat(orderRepository.search(null, null, aliceCart.getId(), PageRequest.of(0, 20)).getContent()).isEmpty();
+        assertThat(orderRepository.search(null, null, aliceCart.getId(), null, null, PageRequest.of(0, 20)).getContent())
+                .isEmpty();
     }
 
     private User user(String prefix) {

@@ -14,6 +14,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -68,7 +69,9 @@ class DashboardChartsTest {
                 .andExpect(jsonPath("$.statusCounts", hasSize(4)))
                 // top sản phẩm: tối đa 5, hai mảng cùng độ dài (DB test có thể chưa có đơn hoàn thành)
                 .andExpect(jsonPath("$.topProductLabels", hasSize(lessThanOrEqualTo(5))))
-                .andExpect(jsonPath("$.topProductQuantities", hasSize(lessThanOrEqualTo(5))));
+                .andExpect(jsonPath("$.topProductQuantities", hasSize(lessThanOrEqualTo(5))))
+                // KPI "Đơn đang xử lý" cập nhật realtime cùng biểu đồ
+                .andExpect(jsonPath("$.activeOrders", greaterThanOrEqualTo(0)));
     }
 
     @Test
@@ -94,6 +97,7 @@ class DashboardChartsTest {
         assertThat(html)
                 .contains("data-charts-url=\"/admin/dashboard/charts\"")
                 .contains("id=\"revenueChart\"", "id=\"statusChart\"", "id=\"topProductsChart\"", "id=\"statusCountList\"")
+                .contains("data-dashboard-active-orders")
                 // Chart.js → realtime (layout, phát sự kiện) → dashboard.js (nghe sự kiện, tải lại biểu đồ)
                 .containsSubsequence("/js/admin/realtime.js", "/chart.js/", "/js/admin/dashboard.js");
     }

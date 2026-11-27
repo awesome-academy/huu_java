@@ -13,6 +13,7 @@ import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.repository.projection.OrderStatusView;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
@@ -25,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 
 import java.math.BigDecimal;
@@ -65,14 +67,96 @@ class OrderServiceTest {
 
     @Test
     void searchOrders_cartStatusFilter_isIgnored_soAdminNeverListsCarts() {
-        when(orderRepository.search(any(), any(), any(), any())).thenReturn(Page.empty());
+        when(orderRepository.search(any(), any(), any(), any(), any(), any())).thenReturn(Page.empty());
 
-        orderService.searchOrders("cart", null, null, 0, 10);
-        orderService.searchOrders("PENDING", null, null, 0, 10);
+        orderService.searchOrders("cart", null, null, null, null, 0, 10);
+        orderService.searchOrders("PENDING", null, null, null, null, 0, 10);
 
         // CART → không lọc; câu truy vấn tự loại giỏ hàng (OrderRepositoryOwnershipTest)
-        verify(orderRepository).search(eq(null), eq(null), eq(null), any());
-        verify(orderRepository).search(eq(OrderStatus.PENDING), eq(null), eq(null), any());
+        verify(orderRepository).search(eq(null), eq(null), eq(null), eq(null), eq(null), any());
+        verify(orderRepository).search(eq(OrderStatus.PENDING), eq(null), eq(null), eq(null), eq(null), any());
+    }
+
+    @Nested
+    class DateRangeFilter {
+
+        @Test
+        void searchOrders_dateRange_isInclusiveOnBothDays() {
+            when(orderRepository.search(any(), any(), any(), any(), any(), any())).thenReturn(Page.empty());
+
+            orderService.searchOrders(null, "  alice ", 7L, "2026-11-01", " 2026-11-30 ", 0, 10);
+
+            // "Đến ngày" tính cả ngày đó: chặn trên là 00:00 ngày kế tiếp
+            verify(orderRepository).search(eq(null), eq("alice"), eq(7L),
+                    eq(LocalDateTime.of(2026, 11, 1, 0, 0)), eq(LocalDateTime.of(2026, 12, 1, 0, 0)), any());
+        }
+
+        @Test
+        void searchOrders_sameDayRange_isAccepted_andBlankDatesAreNotFilters() {
+            when(orderRepository.search(any(), any(), any(), any(), any(), any())).thenReturn(Page.empty());
+
+            orderService.searchOrders(null, null, null, "2026-11-27", "2026-11-27", 0, 10);
+            orderService.searchOrders(null, null, null, " ", "", 0, 10);
+
+            verify(orderRepository).search(eq(null), eq(null), eq(null),
+                    eq(LocalDateTime.of(2026, 11, 27, 0, 0)), eq(LocalDateTime.of(2026, 11, 28, 0, 0)), any());
+            verify(orderRepository).search(eq(null), eq(null), eq(null), eq(null), eq(null), any());
+        }
+
+        @Test
+        void startAfterEnd_isRejected_withFriendlyMessage_andNoQuery() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> orderService.searchOrders(null, null, null, "2026-11-30", "2026-11-01", 0, 10))
+                    .withMessage("Ngày bắt đầu không được sau ngày kết thúc!");
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> orderService.findExportRows(null, null, null, "2026-11-30", "2026-11-01", 100))
+                    .withMessage("Ngày bắt đầu không được sau ngày kết thúc!");
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        void malformedOrAbsurdDates_areRejected_withoutEchoingTheInput() {
+            for (String bad : List.of("27/11/2026", "2026-13-01", "abc", "+999999999-12-31", "0001-01-01")) {
+                assertThatIllegalArgumentException()
+                        .isThrownBy(() -> orderService.searchOrders(null, null, null, bad, null, 0, 10))
+                        .withMessage("Ngày bắt đầu không hợp lệ!");
+                assertThatIllegalArgumentException()
+                        .isThrownBy(() -> orderService.searchOrders(null, null, null, null, bad, 0, 10))
+                        .withMessage("Ngày kết thúc không hợp lệ!");
+            }
+            verifyNoInteractions(orderRepository);
+        }
+    }
+
+    @Nested
+    class ExportRows {
+
+        @Test
+        void usesTheSameFilterAsTheList_andAsksForOneRowMoreThanTheLimit() {
+            List<OrderExportRow> rows = List.of(exportRow(2L), exportRow(1L));
+            when(orderRepository.findExportRows(any(), any(), any(), any(), any(), any())).thenReturn(rows);
+
+            assertThat(orderService.findExportRows("cart", " bob ", 9L, "2026-11-01", "2026-11-02", 2))
+                    .isEqualTo(rows);
+
+            verify(orderRepository).findExportRows(null, "bob", 9L, LocalDateTime.of(2026, 11, 1, 0, 0),
+                    LocalDateTime.of(2026, 11, 3, 0, 0), Limit.of(3));
+        }
+
+        @Test
+        void moreRowsThanTheLimit_isRejected_soNoFileIsBuilt() {
+            when(orderRepository.findExportRows(any(), any(), any(), any(), any(), any()))
+                    .thenReturn(List.of(exportRow(3L), exportRow(2L), exportRow(1L)));
+
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> orderService.findExportRows(null, null, null, null, null, 2))
+                    .withMessageContaining("vượt giới hạn 2 dòng");
+        }
+
+        private static OrderExportRow exportRow(Long id) {
+            return new OrderExportRow(id, "Alice", "alice", LocalDateTime.of(2026, 11, 1, 9, 30),
+                    OrderStatus.PENDING, new BigDecimal("50000"), 2L);
+        }
     }
 
     private static User user(Long id, String username) {
