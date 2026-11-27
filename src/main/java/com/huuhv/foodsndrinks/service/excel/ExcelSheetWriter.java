@@ -52,6 +52,7 @@ public final class ExcelSheetWriter implements AutoCloseable {
     private final CellStyle dateTimeStyle;
     private final CellStyle integerStyle;
     private final CellStyle moneyStyle;
+    private final CellStyle decimalStyle;
 
     private Sheet sheet;
     private Row currentRow;
@@ -69,6 +70,7 @@ public final class ExcelSheetWriter implements AutoCloseable {
             dateTimeStyle = numberStyle("dd/mm/yyyy hh:mm");
             integerStyle = numberStyle("0");
             moneyStyle = numberStyle("#,##0");
+            decimalStyle = numberStyle("#,##0.##");
             newSheet(sheetName, columns);
         } catch (RuntimeException e) {
             close();
@@ -136,6 +138,19 @@ public final class ExcelSheetWriter implements AutoCloseable {
         if (value != null) {
             cell.setCellValue(value.doubleValue());
             cell.setCellStyle(moneyStyle);
+        }
+        return this;
+    }
+
+    /**
+     * Ô số thập phân (ô số; hiển thị có dấu phân cách hàng nghìn và tối đa 2 chữ số thập phân, giá trị lưu đầy đủ — bộ đọc
+     * import nhận lại đúng số này). {@code null} → ô trống.
+     */
+    public ExcelSheetWriter decimal(BigDecimal value) {
+        Cell cell = nextCell();
+        if (value != null) {
+            cell.setCellValue(value.doubleValue());
+            cell.setCellStyle(decimalStyle);
         }
         return this;
     }

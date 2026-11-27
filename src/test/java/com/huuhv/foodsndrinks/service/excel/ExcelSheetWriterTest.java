@@ -99,6 +99,22 @@ class ExcelSheetWriterTest {
     }
 
     @Test
+    void decimal_keepsTheFractionInTheCellValue_soItSurvivesAnImportRoundTrip() throws IOException {
+        try (ExcelSheetWriter writer = new ExcelSheetWriter("Sheet", COLUMNS)) {
+            writer.row().decimal(new BigDecimal("35000.50")).decimal(new BigDecimal("45000.00")).decimal(null);
+
+            try (XSSFWorkbook workbook = reopen(writer)) {
+                Row row = workbook.getSheetAt(0).getRow(1);
+                assertThat(row.getCell(0).getCellType()).isEqualTo(CellType.NUMERIC);
+                assertThat(row.getCell(0).getNumericCellValue()).isEqualTo(35000.5);
+                assertThat(row.getCell(0).getCellStyle().getDataFormatString()).isEqualTo("#,##0.##");
+                assertThat(row.getCell(1).getNumericCellValue()).isEqualTo(45000d);
+                assertThat(row.getCell(2).getCellType()).isEqualTo(CellType.BLANK);
+            }
+        }
+    }
+
+    @Test
     void nullOrEmptyValues_leaveTheCellBlank_andKeepTheColumnPosition() throws IOException {
         try (ExcelSheetWriter writer = new ExcelSheetWriter("Sheet", COLUMNS)) {
             writer.row().text(null).text("").money(null).dateTime(null).text("cuối");

@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.excel.ExcelFile;
 import com.huuhv.foodsndrinks.service.excel.ExcelSheetWriter;
 import com.huuhv.foodsndrinks.service.excel.ImportJobService;
+import com.huuhv.foodsndrinks.service.excel.ProductExportService;
 import com.huuhv.foodsndrinks.service.excel.ProductImportService;
 import com.huuhv.foodsndrinks.support.SecuredWebMvcTest;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -35,22 +36,26 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
-/** {@link ProductExcelController} qua chain web thật: chỉ {@code ROLE_ADMIN}, upload bắt CSRF. */
+/** {@link ProductExcelController} (import + export sản phẩm) qua chain web thật: chỉ {@code ROLE_ADMIN}, upload bắt CSRF. */
 @SecuredWebMvcTest(ProductExcelController.class)
 class ProductExcelControllerTest {
 
     private static final String IMPORT_URL = "/admin/products/import";
     private static final String TEMPLATE_URL = "/admin/products/import/template";
+    private static final String EXPORT_URL = "/admin/products/export";
     private static final String STATUS_PAGE = IMPORT_URL + "/42";
     private static final String STATUS_JSON = IMPORT_URL + "/42/status";
 
@@ -58,6 +63,7 @@ class ProductExcelControllerTest {
     @Autowired private OrderService orderService;
     @MockitoBean private ProductImportService productImportService;
     @MockitoBean private ImportJobService importJobService;
+    @MockitoBean private ProductExportService productExportService;
 
     private final MockMultipartFile file = new MockMultipartFile("file", "san-pham.xlsx",
             ExcelSheetWriter.XLSX_CONTENT_TYPE, new byte[]{'P', 'K', 3, 4});
@@ -156,6 +162,71 @@ class ProductExcelControllerTest {
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(response.getContentAsByteArray()))) {
             assertThat(workbook.getSheetAt(0).getRow(0).getCell(0).getStringCellValue()).isEqualTo("Tên");
         }
+    }
+
+    // -------------------------------------------------------
+    // Export danh sách sản phẩm
+    // -------------------------------------------------------
+
+    @Test
+    void export_anonymousOrUser_cannotDownload() throws Exception {
+        mockMvc.perform(get(EXPORT_URL)).andExpect(redirectedUrl("/login"));
+        mockMvc.perform(get(EXPORT_URL).with(user("alice").roles("USER"))).andExpect(status().isForbidden());
+        verify(productExportService, never()).export(any(), any(), any(), any());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void export_admin_downloadsXlsxBuiltFromTheCurrentFilter() throws Exception {
+        ExcelSheetWriter sheet = new ExcelSheetWriter("Sản phẩm", List.of(new ExcelSheetWriter.Column("Tên", 20)));
+        sheet.row().text("Trà đào");
+        when(productExportService.export("trà", 10L, "DRINK", "true"))
+                .thenReturn(new ExcelFile("foodsndrinks-products-20261127.xlsx", 1, sheet));
+
+        MockHttpServletResponse response = mockMvc.perform(get(EXPORT_URL).param("name", "trà")
+                        .param("categoryId", "10").param("type", "DRINK").param("isAvailable", "true"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(ExcelSheetWriter.XLSX_CONTENT_TYPE))
+                .andExpect(header().string("Content-Disposition",
+                        "attachment; filename=\"foodsndrinks-products-20261127.xlsx\""))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andReturn().getResponse();
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(response.getContentAsByteArray()))) {
+            assertThat(workbook.getSheetAt(0).getRow(1).getCell(0).getStringCellValue()).isEqualTo("Trà đào");
+        }
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void export_blankFilterParameters_meanNoFilter() throws Exception {
+        // Link export của trang danh sách gửi tham số rỗng cho các ô không lọc
+        when(productExportService.export(any(), any(), any(), any())).thenThrow(new IllegalArgumentException("stop"));
+
+        mockMvc.perform(get(EXPORT_URL).param("name", "").param("categoryId", "").param("type", "")
+                .param("isAvailable", "")).andExpect(status().is3xxRedirection());
+
+        verify(productExportService).export("", null, "", "");
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void export_tooManyRows_redirectsBackToTheListWithTheFilterAndAFriendlyError() throws Exception {
+        when(productExportService.export(any(), any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("Số sản phẩm khớp bộ lọc vượt giới hạn 50000 dòng"));
+
+        mockMvc.perform(get(EXPORT_URL).param("name", "trà").param("categoryId", "10"))
+                .andExpect(redirectedUrlPattern("/admin/products?name=tr*&categoryId=10"))
+                .andExpect(flash().attribute("errorMessage", "Số sản phẩm khớp bộ lọc vượt giới hạn 50000 dòng"));
+    }
+
+    @Test
+    void productList_hasAnExportLinkCarryingTheCurrentFilter() throws Exception {
+        // Trang danh sách thuộc ProductAdminController (không nằm trong slice này) — kiểm tra template trực tiếp
+        assertThat(new String(getClass().getResourceAsStream("/templates/admin/products/list.html").readAllBytes(),
+                StandardCharsets.UTF_8))
+                .contains("th:href=\"@{/admin/products/export(name=${searchName},categoryId=${searchCategoryId},"
+                        + "type=${searchType},isAvailable=${searchIsAvailable})}\"");
     }
 
     // -------------------------------------------------------

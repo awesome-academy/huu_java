@@ -2,7 +2,9 @@ package com.huuhv.foodsndrinks.controller.admin;
 
 import com.huuhv.foodsndrinks.dto.response.ImportJobResDto;
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
+import com.huuhv.foodsndrinks.service.excel.ExcelFile;
 import com.huuhv.foodsndrinks.service.excel.ImportJobService;
+import com.huuhv.foodsndrinks.service.excel.ProductExportService;
 import com.huuhv.foodsndrinks.service.excel.ProductImportService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
 import java.security.Principal;
@@ -37,6 +40,34 @@ public class ProductExcelController {
 
     private final ProductImportService productImportService;
     private final ImportJobService importJobService;
+    private final ProductExportService productExportService;
+
+    /**
+     * Tải file .xlsx gồm đúng các sản phẩm mà trang {@code /admin/products} liệt kê với cùng bộ lọc (mọi trang), cùng định
+     * dạng cột với file mẫu import. Vượt giới hạn số dòng → không tạo file, quay lại danh sách kèm thông báo.
+     */
+    @GetMapping("/export")
+    public String exportProducts(@RequestParam(required = false) String name,
+                                 @RequestParam(required = false) Long categoryId,
+                                 @RequestParam(required = false) String type,
+                                 @RequestParam(required = false) String isAvailable,
+                                 HttpServletResponse response,
+                                 RedirectAttributes ra) throws IOException {
+        ExcelFile file;
+        try {
+            file = productExportService.export(name, categoryId, type, isAvailable);
+        } catch (IllegalArgumentException e) {
+            ra.addFlashAttribute("errorMessage", e.getMessage());
+            ra.addAttribute("name", name);
+            ra.addAttribute("categoryId", categoryId);
+            ra.addAttribute("type", type);
+            ra.addAttribute("isAvailable", isAvailable);
+            return "redirect:/admin/products";
+        }
+        // File đã dựng xong trước khi đụng tới response; trả null = response đã được ghi trực tiếp
+        ExcelDownload.write(file, response);
+        return null;
+    }
 
     @GetMapping("/import")
     public String importPage(Model model) {

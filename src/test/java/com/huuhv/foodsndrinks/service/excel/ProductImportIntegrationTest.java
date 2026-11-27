@@ -5,6 +5,7 @@ import com.huuhv.foodsndrinks.dto.request.ProductReqDto;
 import com.huuhv.foodsndrinks.dto.response.ImportRowErrorResDto;
 import com.huuhv.foodsndrinks.dto.response.ProductImportResDto;
 import com.huuhv.foodsndrinks.entity.Category;
+import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.enums.ProductType;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
@@ -12,11 +13,17 @@ import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import com.huuhv.foodsndrinks.service.ProductService;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.List;
@@ -28,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
- * Import sản phẩm từ file .xlsx thật vào MySQL thật: quy tắc "trùng tên" là của collation MySQL (unit test chỉ giả lập),
+ * Import (và export rồi import lại) sản phẩm bằng file .xlsx thật trên MySQL thật: quy tắc "trùng tên" là của collation MySQL (unit test chỉ giả lập),
  * và tính nguyên tử của bước ghi là của transaction thật. Tên sản phẩm/danh mục gắn hậu tố ngẫu nhiên để không đụng dữ
  * liệu của class test khác trong cùng DB.
  */
@@ -36,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 class ProductImportIntegrationTest {
 
     @Autowired private ProductImportService importService;
+    @Autowired private ProductExportService exportService;
     @Autowired private ProductService productService;
     @Autowired private ProductRepository productRepository;
     @Autowired private CategoryRepository categoryRepository;
@@ -121,6 +129,50 @@ class ProductImportIntegrationTest {
         // Sản phẩm "Bò kho" không bị sửa, dòng hợp lệ cũng không được thêm
         assertThat(only("Bò kho " + uid).price()).isEqualByComparingTo("50000");
         assertThat(productRepository.findImportMatchesByName("Mới " + uid)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void exportedList_matchesTheAdminSearch_andReimportingItChangesNothingUntilACellIsEdited() throws IOException {
+        Category drinks = category("Đồ uống " + uid);
+        importOk(row("Trà đào " + uid, drinks.getName(), "Đồ uống", 35000.5, "=1+1", "Có"),
+                row("Cà phê " + uid, drinks.getName(), "Đồ uống", 29000, null, "Không"));
+        List<String> listed = productRepository.search(uid, null, null, null, PageRequest.of(0, 50))
+                .map(Product::getName).getContent();
+
+        byte[] exported;
+        try (ExcelFile file = exportService.export(uid, null, null, null)) {
+            assertThat(file.rowCount()).isEqualTo(2);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            file.writeTo(out);
+            exported = out.toByteArray();
+        }
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(exported))) {
+            Sheet sheet = workbook.getSheetAt(0);
+            // File export = đúng danh sách admin đang lọc, cùng thứ tự (mới nhất trước)
+            assertThat(List.of(sheet.getRow(1).getCell(0).getStringCellValue(),
+                    sheet.getRow(2).getCell(0).getStringCellValue()))
+                    .isEqualTo(listed).containsExactly("Cà phê " + uid, "Trà đào " + uid);
+
+            // Import lại nguyên file: không dòng nào đổi (kể cả giá lẻ và mô tả trông như công thức)
+            assertThat(importFile(exported)).isEqualTo(new ProductImportResDto(2, 0, 0, 2, 0, List.of()));
+
+            // Sửa giá một dòng rồi import lại: đúng sản phẩm đó được cập nhật
+            sheet.getRow(1).getCell(3).setCellValue(31000);
+            assertThat(importFile(ExcelTestFiles.bytes(workbook)))
+                    .isEqualTo(new ProductImportResDto(2, 0, 1, 1, 0, List.of()));
+            assertThat(only("Cà phê " + uid).price()).isEqualByComparingTo("31000");
+            assertThat(only("Trà đào " + uid).description()).isEqualTo("=1+1");
+        }
+
+        // Bộ lọc của danh sách cũng áp dụng cho file export
+        try (ExcelFile available = exportService.export(uid, null, "DRINK", "true")) {
+            assertThat(available.rowCount()).isEqualTo(1);
+        }
+        try (ExcelFile none = exportService.export(uid, null, "FOOD", null)) {
+            assertThat(none.rowCount()).isZero();
+        }
     }
 
     /** Không {@code @Transactional}: kiểm tra đúng transaction của {@code applyImport} rollback mọi dòng đã ghi. */

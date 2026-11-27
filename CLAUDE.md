@@ -96,7 +96,7 @@ Hiện trạng so với danh sách công nghệ của khóa (✅ đã có · �
 | WebSocket + STOMP | ✅ | STOMP + bảo mật, admin nhận đơn mới/đổi trạng thái realtime (6.1), chủ đơn nhận trạng thái đơn qua `/user/queue/orders` (6.3) — đúng khi nhiều instance. |
 | `@Scheduled` + `@Async` | ✅ | Pool `sched-*`, executor tách theo loại việc (`notify-*`, `dashboard-*`), ShedLock cho job khi chạy nhiều instance. |
 | `ThreadPoolTaskExecutor` | ✅ | Kích thước từ `app.async.*`, `CallerRunsPolicy` (notify) / `AbortPolicy` (dashboard) / bỏ task (outbox), chờ task khi tắt app, `TaskDecorator` truyền MDC, ngân sách connection kiểm tra lúc khởi động. |
-| Apache POI (Excel import/export) | 🟡 | Đã có export đơn hàng (7.1), import sản phẩm upsert theo tên (7.2) chạy nền qua queue `excel.import` (7.3). Còn export sản phẩm (7.4). |
+| Apache POI (Excel import/export) | ✅ | Export đơn hàng (7.1) và sản phẩm (7.4) theo bộ lọc, import sản phẩm upsert theo tên (7.2) chạy nền qua queue `excel.import` (7.3); file export sản phẩm import lại được. |
 | SOAP (Spring-WS) | ❌ | Expose web service contract-first. |
 | Chart (Chart.js) | ✅ | 3 chart (doanh thu, trạng thái, top 5 sản phẩm; WebJar, dữ liệu qua JSON), tự tải lại theo sự kiện STOMP (6.2). |
 | JUnit 5 + Mockito + MockMvc | ✅ | Unit test Mockito, `@WebMvcTest` với security thật, integration test trên Testcontainers, coverage JaCoCo. |
@@ -115,7 +115,7 @@ Thứ tự thực hiện. Tên giai đoạn trùng với dropdown "Roadmap phase
 - [x] 4. Scheduler & Multithread
 - [x] 5. JMS (ActiveMQ Artemis)
 - [x] 6. WebSocket + STOMP + Chart
-- [ ] 7. Excel import/export (Apache POI)
+- [x] 7. Excel import/export (Apache POI)
 - [ ] 8. SOAP (Spring-WS) + Tổng kết
 
 Issue tạo trên repo `academy` (`awesome-academy/huu_java`, public) theo template trong `.github/ISSUE_TEMPLATE/`: Bug → label `bug`, Tính năng → `enhancement`, Task → không có label (repo không có label `feature`/`task` và tài khoản không có quyền tạo). Template chỉ hiện trên GitHub sau khi được merge vào `master` của repo `academy`. Lỗ hổng bảo mật không tạo issue công khai — xem `.github/SECURITY.md`.
@@ -251,6 +251,7 @@ Các package mới vẫn theo 3 lớp: config ở `config/`, entrypoint (WebSock
   - Audit: `PRODUCT_IMPORT_SUBMITTED` (thread request: actor + IP) và `PRODUCTS_IMPORTED` (thread listener: actor = `created_by` truyền tường minh, nối với sự kiện trước bằng `import.id`).
   - Test: `ImportFileStorageTest`, `ImportJobServiceTest`, `ImportJobProcessorTest` (từng nhánh: ack hay ném lại), `ExcelImportListenersTest` (consumer, DLQ, job dọn), `ImportJobRepositoryTest` (UPDATE có điều kiện trên MySQL thật), `ExcelImportIntegrationTest` (kế thừa `AbstractMessagingIntegrationTest` — đã `public` để dùng chung context: upload → `COMPLETED` + file bị xoá, lỗi dòng → `FAILED` không lưu dòng nào, message trùng → import một lần, lỗi hệ thống đúng 5 lần giao → DLQ → `FAILED`), `ProductExcelControllerTest`, `OutboxPublisherTest` (nhánh queue), `ArtemisEmbeddedConfigTest`, `ConnectionBudgetCheckTest`, JS `import-status.test.mjs`.
   - Test: `ExcelUploadValidatorTest` (kể cả zip bomb), `ProductImportReaderTest`, `ProductImportValidatorTest` (Validator thật), `ProductImportServiceTest` (kể cả file mẫu), `ProductServiceImportTest`, `ProductExcelControllerTest` (multipart + CSRF, 403), `ProductImportIntegrationTest` (MySQL thật: collation, upsert, rollback cả file), `ExcelConfigTest`, `CollationKeysTest`. File test dựng bằng `service/excel/ExcelTestFiles`.
+- **Đã có (issue 7.4, #28)** — export sản phẩm: `GET /admin/products/export` (`ProductExcelController`, nút ở `admin/products/list.html` mang bộ lọc hiện tại) → `ProductExportService` → `ProductService.findExportRows` (projection `ProductExportRow`, `Limit.of(max + 1)`; `ProductRepository.findExportRows` phải giữ cùng WHERE với `search` + `countQuery`). File dùng **đúng** `ProductExcelColumns` và cách ghi giá trị mà bộ đọc import nhận (nhãn Loại, `Có`/`Không`, Giá ghi bằng `ExcelSheetWriter.decimal` — ô số giữ đủ phần thập phân) ⇒ export → sửa → import lại cập nhật theo tên, dòng không sửa là "không đổi" (`ProductExportServiceTest.exportedFile_isReadBackByTheImportReader…`, `ProductImportIntegrationTest.exportedList_matchesTheAdminSearch…` trên MySQL thật). Giới hạn đã biết: sản phẩm không còn danh mục (FK `ON DELETE SET NULL`) xuất ô Danh mục trống → import lại báo lỗi dòng tới khi điền danh mục. Audit `DATA_EXPORTED` (`dataset=products`).
 - Bảo mật: xem mục File Management trong OWASP (giới hạn kích thước/số dòng, kiểm tra magic bytes, chống formula injection khi export, giữ cấu hình zip-bomb mặc định của POI).
 
 **SOAP (Spring-WS).** Contract-first: `spring-boot-starter-webservices` + `wsdl4j`, XSD đặt ở `src/main/resources/xsd/`, sinh class bằng `jaxb2-maven-plugin` (goal `xjc`) vào `target/generated-sources`.

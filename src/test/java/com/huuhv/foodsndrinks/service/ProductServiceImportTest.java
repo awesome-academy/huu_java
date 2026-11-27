@@ -10,6 +10,7 @@ import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.projection.ProductExportRow;
 import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Limit;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -33,7 +35,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit test phần import Excel của {@link ProductService}: mỗi dòng đi qua đúng luồng thêm/sửa của form admin. Tính nguyên
+ * Unit test phần export/import Excel của {@link ProductService}: mỗi dòng đi qua đúng luồng thêm/sửa của form admin. Tính nguyên
  * tử (một dòng lỗi → rollback cả file) là của transaction thật — xem {@code ProductImportIntegrationTest}.
  */
 @ExtendWith(MockitoExtension.class)
@@ -114,6 +116,33 @@ class ProductServiceImportTest {
         assertThat(matches.get("Trà đào")).containsExactly(match);
         assertThat(matches.get("Mới")).isEmpty();
         verify(productRepository, times(1)).findImportMatchesByName("Trà đào");
+    }
+
+    @Test
+    void findExportRows_usesTheSameFilterParsingAsTheList_andAsksForOneRowMoreThanTheLimit() {
+        List<ProductExportRow> rows = List.of(exportRow("B"), exportRow("A"));
+        when(productRepository.findExportRows(any(), any(), any(), any(), any())).thenReturn(rows);
+
+        assertThat(productService.findExportRows("  trà ", 10L, "drink", "1", 2)).isEqualTo(rows);
+        // Giá trị lọc lạ/rỗng = không lọc, như trang danh sách
+        productService.findExportRows(" ", null, "nước", "có", 2);
+
+        verify(productRepository).findExportRows("trà", 10L, ProductType.DRINK, Boolean.TRUE, Limit.of(3));
+        verify(productRepository).findExportRows(null, null, null, null, Limit.of(3));
+    }
+
+    @Test
+    void findExportRows_moreRowsThanTheLimit_isRejected_soNoFileIsBuilt() {
+        when(productRepository.findExportRows(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(exportRow("C"), exportRow("B"), exportRow("A")));
+
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> productService.findExportRows(null, null, null, null, 2))
+                .withMessageContaining("vượt giới hạn 2 dòng");
+    }
+
+    private static ProductExportRow exportRow(String name) {
+        return new ProductExportRow(name, "Đồ uống", ProductType.DRINK, new BigDecimal("35000"), null, true);
     }
 
     private static ProductReqDto product(String name, String price, String description, boolean available) {

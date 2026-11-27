@@ -36,6 +36,7 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 | GET | `/admin/products/edit/{id}` | Form sửa sản phẩm |
 | POST | `/admin/products/edit/{id}` | Cập nhật (thêm/xóa ảnh, chọn ảnh đại diện) |
 | POST | `/admin/products/{id}/delete` | Xóa sản phẩm |
+| GET | `/admin/products/export` | Tải file `foodsndrinks-products-yyyyMMdd.xlsx` gồm đúng các sản phẩm mà danh sách đang lọc (cùng tham số `name`, `categoryId`, `type`, `isAvailable`; mọi trang) — `ProductExcelController`. `ROLE_USER` → 403 |
 | GET | `/admin/products/import` | Trang import sản phẩm từ Excel (`ProductExcelController`): nút tải file mẫu + form upload |
 | GET | `/admin/products/import/template` | Tải file mẫu `foodsndrinks-products-template.xlsx` (cột Tên, Danh mục, Loại, Giá, Mô tả, Còn bán; danh sách chọn cho Loại / Còn bán; sheet "Hướng dẫn" kèm danh mục hiện có) |
 | POST | `/admin/products/import` | Upload file `.xlsx` (`file`, multipart + CSRF). Tạo một "lần import" rồi chuyển **ngay** tới trang trạng thái của nó — không chờ đọc/ghi file. File bị từ chối ngay lúc tải lên (không phải `.xlsx`, quá lớn, đang có 3 file chờ xử lý) → thông báo lỗi trên trang import. `ROLE_USER` → 403, thiếu CSRF → 403 |
@@ -43,6 +44,8 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 | GET | `/admin/products/import/{id}/status` | JSON trạng thái (`ImportJobResDto`: `status`, `statusLabel`, `terminal`, số liệu, `errors`…) cho `static/js/admin/import-status.js` |
 
 Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`). Chỉ nhận PNG, JPEG — nội dung file (magic bytes) phải khớp đuôi file, `Content-Type` do trình duyệt gửi không được dùng. Ảnh được decode rồi encode lại (bỏ EXIF/GPS và dữ liệu thừa, áp hướng xoay EXIF, từ chối ảnh trên 40 triệu pixel, thu nhỏ cạnh dài về 2048px); tên file lưu là UUID. GIF/WEBP không được nhận vì JDK không có codec WebP và encode lại GIF làm mất animation.
+
+**Export Excel sản phẩm** (nút "Export Excel" ở `/admin/products` — `service/excel/ProductExportService`): file có **đúng các cột của file mẫu import** (Tên, Danh mục, Loại, Giá, Mô tả, Còn bán) và cùng cách ghi giá trị (Loại là `Đồ ăn`/`Đồ uống`, Còn bán là `Có`/`Không`, Giá là ô số giữ đủ phần thập phân), nên **sửa file rồi import lại sẽ cập nhật đúng các sản phẩm đó** (import là upsert theo tên; dòng không sửa được tính "không đổi"). Sản phẩm không còn danh mục (danh mục đã bị xoá) xuất ra ô Danh mục trống — import lại sẽ báo lỗi dòng đó cho tới khi điền danh mục. Tối đa `app.excel.export.max-rows` dòng (50.000), vượt thì không tạo file và quay lại danh sách kèm thông báo; chống formula injection và audit `DATA_EXPORTED` như export đơn hàng.
 
 **Import sản phẩm từ Excel** (Apache POI — `service/excel/ProductImportService`):
 

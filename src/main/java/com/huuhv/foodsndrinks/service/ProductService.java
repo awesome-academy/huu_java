@@ -12,10 +12,12 @@ import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.projection.ProductExportRow;
 import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -174,8 +176,28 @@ public class ProductService {
     }
 
     // -------------------------------------------------------
-    // Import Excel (service/excel)
+    // Export / import Excel (service/excel)
     // -------------------------------------------------------
+
+    /**
+     * Các dòng của file export: đúng các sản phẩm mà {@link #searchProducts} liệt kê với cùng bộ lọc (mọi trang), mới
+     * nhất trước.
+     *
+     * @param maxRows số dòng tối đa của một file
+     * @throws IllegalArgumentException khi bộ lọc khớp nhiều hơn {@code maxRows} sản phẩm
+     */
+    @Transactional(readOnly = true)
+    public List<ProductExportRow> findExportRows(String name, Long categoryId, String type, String isAvailableStr,
+                                                 int maxRows) {
+        // Xin thừa 1 dòng: biết bộ lọc vượt giới hạn mà không cần đếm riêng
+        List<ProductExportRow> rows = productRepository.findExportRows(blank(name) ? null : name.trim(), categoryId,
+                parseEnum(ProductType.class, type), parseBoolean(isAvailableStr), Limit.of(maxRows + 1));
+        if (rows.size() > maxRows) {
+            throw new IllegalArgumentException("Số sản phẩm khớp bộ lọc vượt giới hạn " + maxRows
+                    + " dòng của một file Excel. Hãy thu hẹp bộ lọc!");
+        }
+        return rows;
+    }
 
     /**
      * Với mỗi tên trong {@code names}: các sản phẩm đã có mà MySQL coi là trùng tên (theo collation của cột — xem
