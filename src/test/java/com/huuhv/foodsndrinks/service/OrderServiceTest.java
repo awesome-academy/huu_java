@@ -25,6 +25,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -61,6 +62,18 @@ class OrderServiceTest {
 
     private final User alice = user(1L, "alice");
     private final User mallory = user(2L, "mallory");
+
+    @Test
+    void searchOrders_cartStatusFilter_isIgnored_soAdminNeverListsCarts() {
+        when(orderRepository.search(any(), any(), any(), any())).thenReturn(Page.empty());
+
+        orderService.searchOrders("cart", null, null, 0, 10);
+        orderService.searchOrders("PENDING", null, null, 0, 10);
+
+        // CART → không lọc; câu truy vấn tự loại giỏ hàng (OrderRepositoryOwnershipTest)
+        verify(orderRepository).search(eq(null), eq(null), eq(null), any());
+        verify(orderRepository).search(eq(OrderStatus.PENDING), eq(null), eq(null), any());
+    }
 
     private static User user(Long id, String username) {
         return User.builder().id(id).username(username).fullName(username).email(username + "@example.com").build();

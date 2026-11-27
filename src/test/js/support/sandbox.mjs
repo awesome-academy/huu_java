@@ -53,10 +53,22 @@ export class FakeElement {
     }
 
     append(...nodes) {
+        nodes.forEach((node) => {
+            node.parentNode = this;
+        });
         this.children.push(...nodes);
     }
 
     remove() {
+        if (this.parentNode) {
+            this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+            this.parentNode = null;
+        }
+    }
+
+    /** Như HTMLElement.click(): gọi listener "click". */
+    click() {
+        (this.listeners.click || []).forEach((listener) => listener({type: "click", target: this}));
     }
 
     addEventListener(type, listener) {

@@ -9,6 +9,8 @@ import com.huuhv.foodsndrinks.support.IntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -20,7 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Chống IDOR ở chính câu truy vấn (MySQL thật): hai truy vấn trạng thái đơn dùng cho realtime chỉ trả đơn của đúng chủ
- * đơn và không bao giờ trả giỏ hàng — unit test của service chỉ kiểm tra tham số truyền xuống, không kiểm tra JPQL.
+ * đơn và không bao giờ trả giỏ hàng; danh sách đơn của admin không bao giờ có giỏ hàng — unit test của service chỉ kiểm
+ * tra tham số truyền xuống, không kiểm tra JPQL.
  */
 @IntegrationTest
 @Transactional
@@ -61,6 +64,20 @@ class OrderRepositoryOwnershipTest {
         // Message giả/nhầm chủ đơn: không lộ trạng thái đơn của người khác
         assertThat(orderRepository.findStatusByIdAndOwnerUsername(aliceOrder.getId(), bob.getUsername())).isEmpty();
         assertThat(orderRepository.findStatusByIdAndOwnerUsername(Long.MAX_VALUE, alice.getUsername())).isEmpty();
+    }
+
+    @Test
+    void adminSearch_neverReturnsCarts_evenWhenFilteringByCart() {
+        // Lọc theo tên chủ đơn để không phụ thuộc dữ liệu của class test khác trong cùng DB
+        Page<Order> all = orderRepository.search(null, alice.getUsername(), null, PageRequest.of(0, 20));
+        assertThat(all.getContent()).extracting(Order::getId).containsExactly(aliceOrder.getId());
+        assertThat(all.getTotalElements()).isEqualTo(1);
+
+        Page<Order> carts = orderRepository.search(OrderStatus.CART, alice.getUsername(), null, PageRequest.of(0, 20));
+        assertThat(carts.getContent()).isEmpty();
+        assertThat(carts.getTotalElements()).isZero();
+
+        assertThat(orderRepository.search(null, null, aliceCart.getId(), PageRequest.of(0, 20)).getContent()).isEmpty();
     }
 
     private User user(String prefix) {

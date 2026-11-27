@@ -38,6 +38,12 @@ public record WebSocketProperties(
         @DefaultValue("5") @Min(1) @Max(50) int maxSubscriptionsPerSession,
         @DefaultValue("10") @Min(1) @Max(100) int maxConnectionsPerUser) {
 
+    /**
+     * Tên bean executor đóng socket ngoài thread phát sự kiện ({@code WebSocketSessionTracker}) — hằng số ở đây để
+     * service không import {@code config}.
+     */
+    public static final String CLOSE_EXECUTOR = "webSocketCloseExecutor";
+
     public WebSocketProperties {
         allowedOrigins = OriginValidator.normalize(allowedOrigins,
                 "app.websocket.allowed-origins (WEBSOCKET_ALLOWED_ORIGINS)");

@@ -21,6 +21,8 @@ import java.util.Optional;
  *       {@link AccountStatusService#revocationReason}) → audit {@code SESSION_REVOKED};</li>
  *   <li>session HTTP đã kết thúc (logout, hết hạn, bị huỷ) — {@link HttpSessionLookup}.</li>
  * </ul>
+ * Ngoài ra đóng lại ({@code RESYNC}) socket còn dấu {@link TrackedSession#resyncPending()} — lần đóng sau khi
+ * subscription realtime được tạo lại đã thất bại.
  * Trạng thái đọc từ nguồn dùng chung (DB, kho session) nên đúng khi nhiều instance: admin khoá user ở instance A thì
  * instance B đóng socket của user đó trong ≤ {@code app.websocket.revalidate-interval}.
  * <p>
@@ -73,6 +75,10 @@ public class WebSocketSessionRevalidationJob {
                 if (tracker.revoke(tracked.session())) {
                     auditLogService.webSocketSessionRevoked(tracked.username(), reason.get());
                 }
+                closed++;
+            } else if (tracked.resyncPending()) {
+                // Subscription realtime đã được tạo lại nhưng chưa đóng được socket này → client chưa resync
+                tracker.closeForResync(tracked.session());
                 closed++;
             }
         }

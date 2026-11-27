@@ -20,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,7 +42,8 @@ class WebSocketSessionTrackerTest {
 
     private static final int MAX_CONNECTIONS = 2;
 
-    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker(properties(MAX_CONNECTIONS));
+    /** Executor đóng socket chạy ngay trên thread gọi — test riêng dùng executor giữ task lại. */
+    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker(properties(MAX_CONNECTIONS), Runnable::run);
     private final WebSocketHandler delegate = mock(WebSocketHandler.class);
     private final WebSocketHandler decorated = tracker.decorate(delegate);
 
@@ -248,6 +250,66 @@ class WebSocketSessionTrackerTest {
         tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.status-changed"));
 
         verify(socket).close(WebSocketSessionTracker.RESYNC);
+    }
+
+    @Test
+    void realtimeSubscriptionRestored_closesOnCloseExecutor_notOnTheListenerThread() throws Exception {
+        List<Runnable> queued = new ArrayList<>();
+        WebSocketSessionTracker asyncTracker = new WebSocketSessionTracker(properties(MAX_CONNECTIONS), queued::add);
+        WebSocketHandler asyncDecorated = asyncTracker.decorate(delegate);
+        WebSocketSession alice = socket("ws-q1", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        doAnswer(invocation -> {
+            when(alice.isOpen()).thenReturn(false);
+            asyncDecorated.afterConnectionClosed(alice, invocation.getArgument(0));
+            return null;
+        }).when(alice).close(any(CloseStatus.class));
+        asyncDecorated.afterConnectionEstablished(alice);
+
+        asyncTracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+
+        // Thread listener JMS chỉ đánh dấu: client treo mạng không chặn được nó
+        verify(alice, never()).close(any(CloseStatus.class));
+        assertThat(asyncTracker.snapshot()).singleElement()
+                .extracting(WebSocketSessionTracker.TrackedSession::resyncPending).isEqualTo(true);
+        assertThat(queued).hasSize(1);
+
+        // Sự kiện thứ hai trong lúc chưa đóng xong: không xếp thêm lần đóng
+        asyncTracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.status-changed"));
+        assertThat(queued).hasSize(1);
+
+        queued.forEach(Runnable::run);
+        verify(alice).close(WebSocketSessionTracker.RESYNC);
+        assertThat(asyncTracker.snapshot()).isEmpty();
+    }
+
+    @Test
+    void failedResyncClose_keepsSocketMarked_soJobClosesItLater() throws Exception {
+        WebSocketSession socket = socket("ws-q2", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        decorated.afterConnectionEstablished(socket);
+        doThrow(new IllegalStateException("TEXT_PARTIAL_WRITING")).when(socket).close(any(CloseStatus.class));
+
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+
+        assertThat(tracker.snapshot()).singleElement().satisfies(tracked -> {
+            assertThat(tracked.resyncPending()).isTrue();
+            assertThat(tracked.revoked()).isFalse();
+        });
+        tracker.closeForResync(socket);
+        verify(socket, times(2)).close(WebSocketSessionTracker.RESYNC);
+    }
+
+    @Test
+    void rejectedCloseTask_keepsSocketMarked() throws Exception {
+        WebSocketSessionTracker rejecting = new WebSocketSessionTracker(properties(MAX_CONNECTIONS), task -> {
+            throw new RejectedExecutionException("shutting down");
+        });
+        WebSocketSession socket = socket("ws-q3", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        rejecting.decorate(delegate).afterConnectionEstablished(socket);
+
+        rejecting.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+
+        assertThat(rejecting.snapshot()).singleElement()
+                .extracting(WebSocketSessionTracker.TrackedSession::resyncPending).isEqualTo(true);
     }
 
     /** Socket giả hành xử như container: {@code close()} thành công → {@code afterConnectionClosed}. */

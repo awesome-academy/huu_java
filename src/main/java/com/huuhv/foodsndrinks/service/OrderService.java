@@ -290,10 +290,12 @@ public class OrderService {
         cart.setTotalPrice(total);
     }
 
+    /** Bộ lọc trạng thái của admin; giá trị lạ hoặc {@code CART} (không phải đơn) → không lọc. */
     private static OrderStatus parseStatus(String value) {
         if (blank(value)) return null;
         try {
-            return OrderStatus.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            OrderStatus status = OrderStatus.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            return status == OrderStatus.CART ? null : status;
         } catch (IllegalArgumentException e) {
             return null;
         }

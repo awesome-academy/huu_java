@@ -1,6 +1,8 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
+import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -49,6 +51,20 @@ class AsyncConfigTest {
                     assertThat(context.getBeansOfType(ThreadPoolTaskScheduler.class))
                             .containsOnlyKeys(AsyncConfig.TASK_SCHEDULER, "messageBrokerTaskScheduler");
                 });
+    }
+
+    @Test
+    void webSocketCloseExecutor_runsEachTaskOnItsOwnVirtualThread() {
+        contextRunner.run(context -> {
+            SimpleAsyncTaskExecutor executor =
+                    context.getBean(WebSocketProperties.CLOSE_EXECUTOR, SimpleAsyncTaskExecutor.class);
+            Future<Thread> thread = executor.submit(Thread::currentThread);
+
+            assertThat(thread.get(5, TimeUnit.SECONDS).isVirtual()).isTrue();
+            assertThat(thread.get().getName()).startsWith("ws-close-");
+            // @Async không đổi sang executor này
+            assertThat(context.getBean("taskExecutor")).isInstanceOf(ThreadPoolTaskExecutor.class);
+        });
     }
 
     @Test

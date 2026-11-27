@@ -36,7 +36,8 @@ import static org.mockito.Mockito.when;
  */
 class WebSocketSessionRevalidationJobTest {
 
-    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker(WebSocketSessionTrackerTest.properties(10));
+    private final WebSocketSessionTracker tracker =
+            new WebSocketSessionTracker(WebSocketSessionTrackerTest.properties(10), Runnable::run);
     private final WebSocketHandler decorated = tracker.decorate(mock(WebSocketHandler.class));
     private final HttpSessionLookup httpSessionLookup = mock(HttpSessionLookup.class);
     private final AccountStatusService accountStatusService = mock(AccountStatusService.class);
@@ -139,6 +140,43 @@ class WebSocketSessionRevalidationJobTest {
         verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
         assertThat(tracker.snapshot()).isEmpty();
         verifyNoInteractions(auditLogService, accountStatusService);
+    }
+
+    @Test
+    void socketWhoseResyncCloseFailed_isClosedForResyncByJob_withoutAudit() throws Exception {
+        WebSocketSession socket = open("ws-1", "alice", "ROLE_USER");
+        WebSocketSession other = open("ws-2", "bob", "ROLE_USER");
+        doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
+                .when(socket).close(any(CloseStatus.class));
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
+                "alice", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+
+        verify(socket, times(2)).close(WebSocketSessionTracker.RESYNC);
+        verify(socket, never()).close(WebSocketSessionTracker.REVOKED);
+        assertThat(tracker.snapshot()).isEmpty();
+        verifyNoInteractions(auditLogService);
+        // ws-2 đã đóng được ngay lúc sự kiện → job không đụng lại
+        verify(other, times(1)).close(any(CloseStatus.class));
+    }
+
+    @Test
+    void resyncPendingSocketOfLockedAccount_isRevoked_notResynced() throws Exception {
+        WebSocketSession socket = open("ws-1", "locked", "ROLE_USER");
+        doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
+                .when(socket).close(any(CloseStatus.class));
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(accountStatusService.findAccountStatuses(anyCollection()))
+                .thenReturn(Map.of("locked", new Status(false, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+
+        verify(socket).close(WebSocketSessionTracker.REVOKED);
+        verify(auditLogService).webSocketSessionRevoked("locked", AccountStatusService.DISABLED);
     }
 
     @Test

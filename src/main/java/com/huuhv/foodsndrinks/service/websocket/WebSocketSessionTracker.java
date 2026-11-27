@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
 import com.huuhv.foodsndrinks.logging.LogSanitizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.event.EventListener;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -17,12 +18,15 @@ import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 import org.springframework.web.socket.handler.WebSocketHandlerDecoratorFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -53,7 +57,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * với client không đọc) nằm ngoài mọi khoá.
  * <p>
  * Subscription JMS realtime được tạo lại sau khi mất kết nối broker ({@link RealtimeSubscriptionRestoredEvent}) → đóng
- * mọi socket mở trước đó bằng {@link #RESYNC} (1012): client nối lại và tải lại số liệu, bù sự kiện broker đã bỏ.
+ * mọi socket mở trước đó bằng {@link #RESYNC} (1012): client nối lại và tải lại số liệu, bù sự kiện broker đã bỏ. Việc
+ * đóng chạy trên executor riêng (không chặn listener JMS); socket chưa đóng được giữ dấu
+ * {@link TrackedSession#resyncPending()} để job đóng lại.
  */
 @Slf4j
 @Component
@@ -68,6 +74,9 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
     public static final CloseStatus RESYNC = CloseStatus.SERVICE_RESTARTED.withReason("Realtime resync");
 
     private final WebSocketProperties properties;
+    /** Đóng socket ngoài thread listener JMS ({@link #onRealtimeSubscriptionRestored}). */
+    @Qualifier(WebSocketProperties.CLOSE_EXECUTOR)
+    private final Executor closeExecutor;
     private final Map<String, TrackedSession> sessions = new ConcurrentHashMap<>();
     /** Số socket đang theo dõi của mỗi user (chỉ chứa user có ≥ 1 socket). */
     private final Map<String, Integer> openPerUser = new ConcurrentHashMap<>();
@@ -142,7 +151,7 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
             return TOO_MANY_CONNECTIONS;
         }
         sessions.put(session.getId(), new TrackedSession(session, username,
-                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session), false,
+                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session), false, false,
                 sequence.incrementAndGet()));
         return null;
     }
@@ -207,26 +216,66 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
      * Đóng ({@link #RESYNC}) mọi socket mở TRƯỚC lúc subscription được tạo lại — socket mở sau đó đã resync sau thời
      * điểm này. Hai listener realtime thường tạo lại gần như cùng lúc (cùng recovery interval) → lần thứ hai không còn
      * socket cũ (client chờ ≥ 1s mới nối lại); nếu lần thứ hai muộn hơn thì socket nối lại ở giữa bị đóng thêm một lần —
-     * đúng, vì nó có thể đã lỡ message của topic thứ hai. Chạy trên thread listener JMS: message tới trong lúc đóng vẫn
-     * nằm trên subscription (đã tạo), không mất.
+     * đúng, vì nó có thể đã lỡ message của topic thứ hai.
+     * <p>
+     * Sự kiện phát đồng bộ trên thread listener JMS: ở đây chỉ đánh dấu {@link TrackedSession#resyncPending()} (thao tác
+     * trên map, không I/O), còn {@code close()} — có thể chờ tới timeout ghi với client treo mạng — chạy trên
+     * {@link WebSocketProperties#CLOSE_EXECUTOR}, mỗi socket một task. Đóng thất bại (vd. container đang ghi frame khác)
+     * hoặc executor từ chối → socket giữ dấu, {@link WebSocketSessionRevalidationJob} đóng lại ở chu kỳ sau.
      */
     @EventListener
     public void onRealtimeSubscriptionRestored(RealtimeSubscriptionRestoredEvent event) {
         long restoredAt = sequence.get();
-        int closed = 0;
+        List<WebSocketSession> marked = new ArrayList<>();
         for (TrackedSession tracked : snapshot()) {
-            if (tracked.sequence() > restoredAt || tracked.revoked() || !tracked.session().isOpen()) {
-                continue;
-            }
-            try {
-                tracked.session().close(RESYNC);
-                closed++;
-            } catch (IOException | IllegalStateException ex) {
-                log.warn("Closing WebSocket session {} for resync failed: {}", tracked.session().getId(), ex.toString());
+            if (tracked.sequence() <= restoredAt && tracked.session().isOpen()
+                    && markResyncPending(tracked.session().getId())) {
+                marked.add(tracked.session());
             }
         }
-        log.info("Realtime subscription to {} re-established, closed {} WebSocket connection(s) so clients resync",
-                LogSanitizer.sanitize(event.destination()), closed);
+        for (WebSocketSession session : marked) {
+            try {
+                closeExecutor.execute(() -> closeForResync(session));
+            } catch (RejectedExecutionException ex) {
+                log.warn("Closing WebSocket session {} for resync was rejected, will retry: {}", session.getId(),
+                        ex.toString());
+            }
+        }
+        log.info("Realtime subscription to {} re-established, closing {} WebSocket connection(s) so clients resync",
+                LogSanitizer.sanitize(event.destination()), marked.size());
+    }
+
+    /**
+     * Đóng ({@link #RESYNC}) socket đang chờ resync. Bỏ qua nếu socket không còn được theo dõi, không chờ resync hoặc đã
+     * bị thu hồi ({@link #revoke} đóng nó bằng {@link #REVOKED}). Đóng thất bại → WARN, giữ dấu để job thử lại.
+     */
+    public void closeForResync(WebSocketSession session) {
+        TrackedSession tracked = sessions.get(session.getId());
+        if (tracked == null || !tracked.resyncPending() || tracked.revoked()) {
+            return;
+        }
+        if (!session.isOpen()) {
+            untrack(session.getId());
+            return;
+        }
+        try {
+            session.close(RESYNC);
+        } catch (IOException | IllegalStateException ex) {
+            log.warn("Closing WebSocket session {} for resync failed, will retry: {}", session.getId(), ex.toString());
+        }
+    }
+
+    /** @return {@code true} nếu socket vừa được đánh dấu (chưa bị thu hồi, chưa chờ resync) */
+    private boolean markResyncPending(String sessionId) {
+        boolean[] marked = {false};
+        sessions.computeIfPresent(sessionId, (id, tracked) -> {
+            if (tracked.revoked() || tracked.resyncPending()) {
+                return tracked;
+            }
+            marked[0] = true;
+            return tracked.asResyncPending();
+        });
+        return marked[0];
     }
 
     private void closeSocketsOf(String httpSessionId, String reason) {
@@ -247,14 +296,20 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
      * @param authorities   quyền lúc handshake — so với DB để phát hiện đổi role
      * @param httpSessionId id session HTTP lúc handshake (không bao giờ ghi ra log)
      * @param revoked       đã bị thu hồi nhưng chưa đóng được — chỉ còn việc đóng lại, không kiểm tra/audit lại
+     * @param resyncPending phải đóng ({@link #RESYNC}) để client resync — subscription realtime đã được tạo lại sau khi
+     *                      socket mở; còn dấu này nghĩa là chưa đóng được, job đóng lại
      * @param sequence      thứ tự mở socket trên instance này
      */
     public record TrackedSession(WebSocketSession session, String username,
                                  Collection<? extends GrantedAuthority> authorities, String httpSessionId,
-                                 boolean revoked, long sequence) {
+                                 boolean revoked, boolean resyncPending, long sequence) {
 
         TrackedSession asRevoked() {
-            return new TrackedSession(session, username, authorities, httpSessionId, true, sequence);
+            return new TrackedSession(session, username, authorities, httpSessionId, true, resyncPending, sequence);
+        }
+
+        TrackedSession asResyncPending() {
+            return new TrackedSession(session, username, authorities, httpSessionId, revoked, true, sequence);
         }
     }
 }

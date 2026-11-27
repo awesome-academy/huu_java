@@ -2,16 +2,19 @@ package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
 import com.huuhv.foodsndrinks.config.properties.DashboardProperties;
+import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
 import com.huuhv.foodsndrinks.logging.MdcTaskDecorator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.task.SimpleAsyncTaskExecutorBuilder;
 import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
 import org.springframework.boot.task.ThreadPoolTaskSchedulerBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.core.task.TaskDecorator;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -114,6 +117,19 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = OUTBOX_EXECUTOR)
     public ThreadPoolTaskExecutor outboxExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
         return build(builder, properties.outbox(), "outbox-", AsyncConfig::skipOutboxPublish);
+    }
+
+    /**
+     * Đóng socket WebSocket ngoài thread phát sự kiện ({@code WebSocketSessionTracker} khi subscription JMS realtime được
+     * tạo lại — sự kiện phát trên thread listener JMS). {@code close()} ghi frame đóng đồng bộ: client treo mạng làm nó
+     * chờ tới timeout ghi của Tomcat, nên mỗi socket một task trên virtual thread — một socket chậm không chặn listener
+     * JMS hay socket khác. Không có giới hạn đồng thời (giới hạn sẽ chặn chính thread gửi task): số task bị chặn bởi số
+     * socket đang mở. Không giữ connection JDBC nên không tính vào {@code ConnectionBudgetCheck}. Tạo từ builder của Boot
+     * như mọi executor (TaskDecorator, chờ task khi tắt app).
+     */
+    @Bean(name = WebSocketProperties.CLOSE_EXECUTOR)
+    public SimpleAsyncTaskExecutor webSocketCloseExecutor(SimpleAsyncTaskExecutorBuilder builder) {
+        return builder.virtualThreads(true).threadNamePrefix("ws-close-").build();
     }
 
     /**

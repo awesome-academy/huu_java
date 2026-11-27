@@ -19,9 +19,14 @@ import java.util.Optional;
 @Repository
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
+    /**
+     * Danh sách đơn của admin. Không bao giờ trả giỏ hàng ({@code CART}) — kể cả khi {@code status} = CART: mọi thao
+     * tác admin trên giỏ hàng trả 404 ({@code OrderService.getOrderDetail}/{@code updateStatus}).
+     */
     @Query(value = """
             SELECT o FROM Order o LEFT JOIN FETCH o.user u
-            WHERE (:status   IS NULL OR o.status = :status)
+            WHERE o.status <> 'CART'
+              AND (:status   IS NULL OR o.status = :status)
               AND (:orderId  IS NULL OR o.id     = :orderId)
               AND (:keyword  IS NULL
                    OR LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
@@ -31,7 +36,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             """,
             countQuery = """
             SELECT COUNT(o) FROM Order o LEFT JOIN o.user u
-            WHERE (:status   IS NULL OR o.status = :status)
+            WHERE o.status <> 'CART'
+              AND (:status   IS NULL OR o.status = :status)
               AND (:orderId  IS NULL OR o.id     = :orderId)
               AND (:keyword  IS NULL
                    OR LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
