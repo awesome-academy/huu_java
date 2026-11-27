@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.service.OrderService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.ModelAndView;
@@ -15,8 +16,10 @@ import org.springframework.web.servlet.view.RedirectView;
  * Interceptor thay vì {@code @ModelAttribute} trong {@link AdminLayoutModelAdvice}: method {@code @ModelAttribute} chạy
  * cho MỌI handler của package, kể cả endpoint JSON ({@code /admin/dashboard/charts}) và redirect — tốn một query vô
  * ích. {@code postHandle} chỉ thêm khi thật sự render view. Đăng ký cho {@code /admin/**} ở {@code WebMvcConfig}.
- * Trang lỗi ({@code AdminExceptionHandler}) không qua đây: template ẩn badge khi thiếu giá trị.
+ * Trang lỗi ({@code AdminExceptionHandler}) không qua đây: template ẩn badge khi thiếu giá trị — cũng là cách xử lý
+ * khi truy vấn đếm lỗi (WARN, trang vẫn hiển thị).
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PendingOrderCountInterceptor implements HandlerInterceptor {
@@ -33,6 +36,11 @@ public class PendingOrderCountInterceptor implements HandlerInterceptor {
                 || (modelAndView.getViewName() != null && modelAndView.getViewName().startsWith(REDIRECT_PREFIX))) {
             return;
         }
-        modelAndView.addObject(MODEL_ATTRIBUTE, orderService.countPendingOrders());
+        try {
+            modelAndView.addObject(MODEL_ATTRIBUTE, orderService.countPendingOrders());
+        } catch (RuntimeException ex) {
+            // Badge chỉ để trang trí: handler đã chạy xong, không biến trang thành 500 vì truy vấn đếm lỗi
+            log.warn("Could not count pending orders for the admin badge: {}", ex.toString());
+        }
     }
 }

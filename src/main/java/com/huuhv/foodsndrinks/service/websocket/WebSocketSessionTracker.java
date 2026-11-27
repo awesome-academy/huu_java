@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Danh sách kết nối WebSocket đang mở trên instance này, để đóng được những kết nối không còn được phép
@@ -47,6 +48,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * Chống DoS: mỗi user tối đa {@code app.websocket.max-connections-per-user} kết nối trên instance này; kết nối vượt (hoặc
  * không có principal đã xác thực) bị đóng ngay và KHÔNG được chuyển cho handler STOMP — không tốn bộ nhớ/thread nào.
+ * Số kết nối mỗi user giữ trong một map riêng, cập nhật nguyên tử theo từng user ({@code ConcurrentHashMap.compute}):
+ * không khoá chung cả instance, không duyệt mọi socket mỗi handshake, và việc đóng socket bị từ chối (I/O, có thể chậm
+ * với client không đọc) nằm ngoài mọi khoá.
+ * <p>
+ * Subscription JMS realtime được tạo lại sau khi mất kết nối broker ({@link RealtimeSubscriptionRestoredEvent}) → đóng
+ * mọi socket mở trước đó bằng {@link #RESYNC} (1012): client nối lại và tải lại số liệu, bù sự kiện broker đã bỏ.
  */
 @Slf4j
 @Component
@@ -57,9 +64,15 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
     public static final CloseStatus REVOKED = CloseStatus.POLICY_VIOLATION.withReason("Session revoked");
     /** Mã đóng 1008: user đã mở quá số kết nối cho phép trên instance này. */
     public static final CloseStatus TOO_MANY_CONNECTIONS = CloseStatus.POLICY_VIOLATION.withReason("Too many connections");
+    /** Mã đóng 1012: server có thể đã lỡ sự kiện của client — nối lại để resync. */
+    public static final CloseStatus RESYNC = CloseStatus.SERVICE_RESTARTED.withReason("Realtime resync");
 
     private final WebSocketProperties properties;
     private final Map<String, TrackedSession> sessions = new ConcurrentHashMap<>();
+    /** Số socket đang theo dõi của mỗi user (chỉ chứa user có ≥ 1 socket). */
+    private final Map<String, Integer> openPerUser = new ConcurrentHashMap<>();
+    /** Thứ tự mở socket — xác định socket nào mở trước khi subscription realtime được tạo lại. */
+    private final AtomicLong sequence = new AtomicLong();
     /** Socket bị từ chối lúc mở: không chuyển tiếp cả sự kiện đóng của nó cho handler STOMP (handler chưa biết socket). */
     private final Set<String> rejected = ConcurrentHashMap.newKeySet();
 
@@ -78,44 +91,67 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
                 if (rejected.remove(session.getId())) {
                     return;
                 }
-                sessions.remove(session.getId());
+                untrack(session.getId());
                 super.afterConnectionClosed(session, closeStatus);
             }
         };
     }
 
     /**
-     * Ghi nhận socket vừa mở. {@code synchronized}: đếm rồi thêm phải nguyên tử, không thì nhiều handshake song song của
-     * cùng user vượt được giới hạn.
+     * Ghi nhận socket vừa mở, hoặc từ chối và đóng nó.
      *
      * @return {@code false} nếu socket bị từ chối (đã đóng)
      */
-    synchronized boolean register(WebSocketSession session) {
+    boolean register(WebSocketSession session) {
+        CloseStatus rejection = admit(session);
+        if (rejection == null) {
+            return true;
+        }
+        // Đóng ngoài mọi khoá: close() ghi frame và gọi afterConnectionClosed đồng bộ
+        rejected.add(session.getId());
+        try {
+            session.close(rejection);
+        } catch (IOException | IllegalStateException ex) {
+            log.warn("Closing rejected WebSocket session {} failed: {}", session.getId(), ex.toString());
+        }
+        return false;
+    }
+
+    /** @return {@code null} nếu socket được nhận (đã ghi nhận), không thì mã đóng */
+    private CloseStatus admit(WebSocketSession session) {
         // Handshake chỉ qua được khi đã đăng nhập (SecurityConfig), principal là Authentication của session HTTP
         if (!(session.getPrincipal() instanceof Authentication authentication)) {
             log.warn("WebSocket session without authenticated principal, closing it");
-            reject(session, REVOKED);
-            return false;
+            return REVOKED;
         }
         String username = authentication.getName();
-        long open = sessions.values().stream().filter(tracked -> tracked.username().equals(username)).count();
-        if (open >= properties.maxConnectionsPerUser()) {
+        int limit = properties.maxConnectionsPerUser();
+        boolean[] admitted = {false};
+        // Đếm + giữ chỗ nguyên tử theo user: handshake song song của cùng user không vượt được giới hạn
+        openPerUser.compute(username, (user, open) -> {
+            int current = open == null ? 0 : open;
+            if (current >= limit) {
+                return open;
+            }
+            admitted[0] = true;
+            return current + 1;
+        });
+        if (!admitted[0]) {
             log.warn("User {} already has {} open WebSocket connections on this instance, rejecting a new one",
-                    LogSanitizer.sanitize(username), open);
-            reject(session, TOO_MANY_CONNECTIONS);
-            return false;
+                    LogSanitizer.sanitize(username), limit);
+            return TOO_MANY_CONNECTIONS;
         }
         sessions.put(session.getId(), new TrackedSession(session, username,
-                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session), false));
-        return true;
+                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session), false,
+                sequence.incrementAndGet()));
+        return null;
     }
 
-    private void reject(WebSocketSession session, CloseStatus status) {
-        rejected.add(session.getId());
-        try {
-            session.close(status);
-        } catch (IOException | IllegalStateException ex) {
-            log.warn("Closing rejected WebSocket session {} failed: {}", session.getId(), ex.toString());
+    /** Gỡ socket và trả chỗ của user — chỉ bên gỡ được bản ghi mới giảm bộ đếm (không giảm hai lần). */
+    private void untrack(String sessionId) {
+        TrackedSession removed = sessions.remove(sessionId);
+        if (removed != null) {
+            openPerUser.computeIfPresent(removed.username(), (user, open) -> open <= 1 ? null : open - 1);
         }
     }
 
@@ -134,7 +170,7 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
     public boolean revoke(WebSocketSession session) {
         boolean first = markRevoked(session.getId());
         if (!session.isOpen()) {
-            sessions.remove(session.getId());
+            untrack(session.getId());
             return first;
         }
         try {
@@ -167,6 +203,32 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
         closeSocketsOf(event.getOldSessionId(), "a re-authenticated HTTP session");
     }
 
+    /**
+     * Đóng ({@link #RESYNC}) mọi socket mở TRƯỚC lúc subscription được tạo lại — socket mở sau đó đã resync sau thời
+     * điểm này. Hai listener realtime thường tạo lại gần như cùng lúc (cùng recovery interval) → lần thứ hai không còn
+     * socket cũ (client chờ ≥ 1s mới nối lại); nếu lần thứ hai muộn hơn thì socket nối lại ở giữa bị đóng thêm một lần —
+     * đúng, vì nó có thể đã lỡ message của topic thứ hai. Chạy trên thread listener JMS: message tới trong lúc đóng vẫn
+     * nằm trên subscription (đã tạo), không mất.
+     */
+    @EventListener
+    public void onRealtimeSubscriptionRestored(RealtimeSubscriptionRestoredEvent event) {
+        long restoredAt = sequence.get();
+        int closed = 0;
+        for (TrackedSession tracked : snapshot()) {
+            if (tracked.sequence() > restoredAt || tracked.revoked() || !tracked.session().isOpen()) {
+                continue;
+            }
+            try {
+                tracked.session().close(RESYNC);
+                closed++;
+            } catch (IOException | IllegalStateException ex) {
+                log.warn("Closing WebSocket session {} for resync failed: {}", tracked.session().getId(), ex.toString());
+            }
+        }
+        log.info("Realtime subscription to {} re-established, closed {} WebSocket connection(s) so clients resync",
+                LogSanitizer.sanitize(event.destination()), closed);
+    }
+
     private void closeSocketsOf(String httpSessionId, String reason) {
         int closed = 0;
         for (TrackedSession tracked : snapshot()) {
@@ -185,13 +247,14 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
      * @param authorities   quyền lúc handshake — so với DB để phát hiện đổi role
      * @param httpSessionId id session HTTP lúc handshake (không bao giờ ghi ra log)
      * @param revoked       đã bị thu hồi nhưng chưa đóng được — chỉ còn việc đóng lại, không kiểm tra/audit lại
+     * @param sequence      thứ tự mở socket trên instance này
      */
     public record TrackedSession(WebSocketSession session, String username,
                                  Collection<? extends GrantedAuthority> authorities, String httpSessionId,
-                                 boolean revoked) {
+                                 boolean revoked, long sequence) {
 
         TrackedSession asRevoked() {
-            return new TrackedSession(session, username, authorities, httpSessionId, true);
+            return new TrackedSession(session, username, authorities, httpSessionId, true, sequence);
         }
     }
 }

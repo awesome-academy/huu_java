@@ -29,8 +29,9 @@ import java.util.function.Function;
  * Mỗi lần đếm là một truy vấn riêng trong khoá (không {@code @Transactional} bao quanh method: transaction mở trước khi
  * vào khoá có thể giữ snapshot REPEATABLE READ cũ).
  * <p>
- * Trước khi gửi, phát {@link OrdersChangedEvent} (đồng bộ): cache dẫn xuất từ đơn hàng của instance
- * ({@code DashboardChartCache}) bị xoá TRƯỚC khi client nhận sự kiện và tải lại.
+ * Trước khi đếm, phát {@link OrdersChangedEvent} (đồng bộ): cache dẫn xuất từ đơn hàng của instance
+ * ({@code DashboardChartCache}) bị xoá TRƯỚC khi client nhận sự kiện và tải lại — và vẫn bị xoá khi truy vấn đếm lỗi
+ * (dữ liệu đơn đã đổi dù badge không gửi được).
  */
 @Slf4j
 @Service
@@ -44,8 +45,8 @@ public class AdminOrderNotifier {
 
     public void orderPlaced(OrderPlacedMessage message) {
         int itemCount = message.items().stream().mapToInt(OrderPlacedMessage.OrderLineItem::quantity).sum();
-        countAndSend(pendingCount -> new AdminOrderEventResDto(AdminOrderEventType.ORDER_PLACED, message.orderId(),
-                itemCount, message.totalPrice(), pendingCount));
+        countAndSend(message.orderId(), pendingCount -> new AdminOrderEventResDto(AdminOrderEventType.ORDER_PLACED,
+                message.orderId(), itemCount, message.totalPrice(), pendingCount));
     }
 
     /**
@@ -53,15 +54,16 @@ public class AdminOrderNotifier {
      * lại biểu đồ (doanh thu/top sản phẩm chỉ tính đơn hoàn thành nên chỉ đổi qua sự kiện này).
      */
     public void orderStatusChanged(OrderStatusChangedMessage message) {
-        countAndSend(pendingCount -> new AdminOrderEventResDto(AdminOrderEventType.ORDER_STATUS_CHANGED,
-                message.orderId(), null, null, pendingCount));
+        countAndSend(message.orderId(), pendingCount -> new AdminOrderEventResDto(
+                AdminOrderEventType.ORDER_STATUS_CHANGED, message.orderId(), null, null, pendingCount));
     }
 
-    private void countAndSend(Function<Long, AdminOrderEventResDto> eventFactory) {
+    private void countAndSend(Long orderId, Function<Long, AdminOrderEventResDto> eventFactory) {
+        // Ngoài khoá: xoá cache không phụ thuộc thứ tự gửi badge, và không phụ thuộc truy vấn đếm thành công
+        eventPublisher.publishEvent(new OrdersChangedEvent(orderId));
         sendLock.lock();
         try {
             AdminOrderEventResDto event = eventFactory.apply(orderRepository.countByStatus(OrderStatus.PENDING));
-            eventPublisher.publishEvent(new OrdersChangedEvent(event.orderId()));
             messagingTemplate.convertAndSend(StompDestinations.ADMIN_ORDERS, event);
             log.debug("Sent {} for order #{} to {}", event.type(), event.orderId(), StompDestinations.ADMIN_ORDERS);
         } finally {

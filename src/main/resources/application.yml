@@ -187,6 +187,8 @@ app:
     max-attempts: 5
     batch-size: 100       # số bản ghi tối đa mỗi lần job chạy
     retention: 7d         # bản ghi SENT cũ hơn thì bị xoá
+    unknown-type-grace: 1h  # loại message instance không biết (rolling deploy) được hoãn không tính lần thử trong 1h
+                            # kể từ lúc ghi; quá hạn (không instance nào biết — rollback) → tính lần thử → FAILED
   dashboard:
     # Cache dữ liệu biểu đồ /admin/dashboard/charts trong bộ nhớ mỗi instance (service/DashboardChartCache): mọi dashboard
     # đang mở tải lại sau mỗi sự kiện đơn hàng → một lần tính cho tất cả. Bị xoá ngay khi instance nhận sự kiện đơn hàng;

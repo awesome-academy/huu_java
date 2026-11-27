@@ -48,8 +48,9 @@ import java.util.function.Supplier;
  *   <li><b>Loại không có trong {@link OutboxType} của instance này</b> — trong lúc rolling deploy, bản ghi do phiên bản
  *       MỚI hơn ghi (alias của loại đã dùng không bao giờ bị đổi/xoá): KHÔNG tính lần thử, hoãn
  *       {@code app.outbox.retry-delay} ({@code last_error} = {@value #UNKNOWN_TYPE_ERROR}) để instance mới gửi; WARN mỗi
- *       lần gặp. Nếu không instance nào biết loại đó (rollback bản deploy) thì bản ghi nằm PENDING và WARN lặp lại mỗi chu
- *       kỳ — xử lý bằng tay (README).</li>
+ *       lần gặp. Chỉ hoãn trong {@code app.outbox.unknown-type-grace} kể từ lúc ghi: quá hạn thì không instance nào biết
+ *       loại đó (rollback bản deploy, cột {@code type} hỏng) → mỗi lần gặp tính một lần thử như lỗi riêng của bản ghi, đủ
+ *       số lần → {@code FAILED} + ERROR (một lần), không WARN mãi mỗi chu kỳ; đặt lại bằng tay sau khi deploy lại.</li>
  * </ul>
  * Gửi thành công mà commit DB lỗi (hiếm) thì bản ghi còn PENDING và được gửi lại — consumer idempotent
  * ({@code notification_logs}) nên không gửi thông báo lần hai. Broker chặn producer (đĩa đầy, address {@code BLOCK})
@@ -139,11 +140,15 @@ public class OutboxPublisher {
         Optional<OutboxType> type = OutboxType.fromAlias(message.getType());
         if (type.isEmpty()) {
             // Do phiên bản mới hơn ghi (rolling deploy): không tính lần thử — để instance biết loại này gửi
-            repository.postpone(message.getId(), properties.retryDelay().toMillis(), UNKNOWN_TYPE_ERROR);
-            log.warn("Outbox message #{} has type {} unknown to this instance (written by a newer version?), "
-                    + "left PENDING for an instance that knows it", message.getId(),
-                    LogSanitizer.sanitize(message.getType()));
-            return Outcome.POSTPONED;
+            if (repository.postpone(message.getId(), properties.retryDelay().toMillis(),
+                    properties.unknownTypeGrace().toSeconds(), UNKNOWN_TYPE_ERROR) > 0) {
+                log.warn("Outbox message #{} has type {} unknown to this instance (written by a newer version?), "
+                        + "left PENDING for an instance that knows it", message.getId(),
+                        LogSanitizer.sanitize(message.getType()));
+                return Outcome.POSTPONED;
+            }
+            // Quá thời gian hoãn: không instance nào biết loại này → lỗi của bản ghi
+            return recordFailure(message, UNKNOWN_TYPE_ERROR, null);
         }
         OutboxType outboxType = type.get();
         try {
@@ -161,9 +166,9 @@ public class OutboxPublisher {
                         ex.getClass().getSimpleName(), message.getId());
                 return Outcome.BROKER_UNAVAILABLE;
             }
-            return recordFailure(message, ex);
+            return recordFailure(message, ex.getClass().getSimpleName(), ex);
         } catch (RuntimeException ex) {
-            return recordFailure(message, ex);
+            return recordFailure(message, ex.getClass().getSimpleName(), ex);
         }
         repository.markSent(message.getId());
         log.debug("Outbox message #{} ({}) sent", message.getId(), outboxType.alias());
@@ -187,10 +192,14 @@ public class OutboxPublisher {
         return false;
     }
 
-    private Outcome recordFailure(OutboxMessage message, RuntimeException ex) {
+    /**
+     * @param errorName tên loại lỗi (ghi vào {@code last_error})
+     * @param ex        exception gốc để log stack trace ở lần cuối, {@code null} nếu không có
+     */
+    private Outcome recordFailure(OutboxMessage message, String errorName, RuntimeException ex) {
         long id = message.getId();
         int attempt = (message.getAttempts() == null ? 0 : message.getAttempts()) + 1;
-        String error = LogSanitizer.truncate(ex.getClass().getSimpleName(), MAX_ERROR_LENGTH);
+        String error = LogSanitizer.truncate(errorName, MAX_ERROR_LENGTH);
         repository.markAttemptFailed(id, properties.maxAttempts(), properties.retryDelay().toMillis(), error);
         String type = LogSanitizer.sanitize(message.getType());
         if (attempt >= properties.maxAttempts()) {

@@ -27,10 +27,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Đơn mới → một sự kiện trên kênh admin, kèm số đơn chờ đọc từ DB, không mang dữ liệu cá nhân của khách. */
@@ -76,6 +78,19 @@ class AdminOrderNotifierTest {
         InOrder order = inOrder(eventPublisher, messagingTemplate);
         order.verify(eventPublisher).publishEvent(new OrdersChangedEvent(42L));
         order.verify(messagingTemplate).convertAndSend(eq(StompDestinations.ADMIN_ORDERS), any(Object.class));
+    }
+
+    @Test
+    void countFailure_stillClearsCaches_butSendsNothing() {
+        when(orderRepository.countByStatus(OrderStatus.PENDING)).thenThrow(new IllegalStateException("db down"));
+
+        assertThatThrownBy(() -> notifier.orderStatusChanged(
+                new OrderStatusChangedMessage(42L, "alice", OrderStatus.COMPLETED)))
+                .isInstanceOf(IllegalStateException.class);
+
+        // Dữ liệu đơn đã đổi dù badge không đếm được: biểu đồ không được giữ số liệu cũ tới hết TTL
+        verify(eventPublisher).publishEvent(new OrdersChangedEvent(42L));
+        verifyNoInteractions(messagingTemplate);
     }
 
     @Test

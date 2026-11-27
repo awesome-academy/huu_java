@@ -1,12 +1,15 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.service.messaging.Destinations;
+import com.huuhv.foodsndrinks.service.websocket.RealtimeSubscriptionRestoredEvent;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
 import jakarta.jms.TextMessage;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.jms.ConnectionFactoryUnwrapper;
 import org.springframework.boot.artemis.autoconfigure.ArtemisAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
@@ -14,6 +17,7 @@ import org.springframework.boot.jms.autoconfigure.JmsAutoConfiguration;
 import org.springframework.boot.test.context.assertj.AssertableApplicationContext;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.EventListener;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.config.JmsListenerEndpointRegistry;
 import org.springframework.jms.core.JmsTemplate;
@@ -141,6 +145,30 @@ class JmsConfigTest {
     }
 
     @Test
+    void broadcastSubscriptionRecreatedAfterBrokerConnectionLoss_publishesRestoredEvent_andReceivesAgain() {
+        runner.withUserConfiguration(BroadcastListeners.class, RestoredEvents.class).run(context -> {
+            awaitSubscriptionsRegistered(context);
+            RestoredEvents restored = context.getBean(RestoredEvents.class);
+            assertThat(restored.events).as("first subscription at startup is not a restore").isEmpty();
+
+            // Mất kết nối broker: subscription non-durable biến mất, DMLC tạo lại consumer sau recovery interval
+            context.getBean(EmbeddedActiveMQ.class).getActiveMQServer().getRemotingService().getConnections()
+                    .forEach(connection -> connection.fail(new ActiveMQException("simulated connection loss")));
+
+            await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> assertThat(restored.events)
+                    .extracting(RealtimeSubscriptionRestoredEvent::destination).contains(Destinations.ORDER_PLACED));
+            awaitSubscriptionsRegistered(context);
+            JmsTemplate sender = new JmsTemplate(ConnectionFactoryUnwrapper.unwrap(context.getBean(ConnectionFactory.class)));
+            sender.setPubSubDomain(true);
+            sender.send(Destinations.ORDER_PLACED, session -> session.createTextMessage("after-restore"));
+
+            BroadcastListeners listeners = context.getBean(BroadcastListeners.class);
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(listeners.instanceA).contains("after-restore"));
+        });
+    }
+
+    @Test
     void nativeMode_withEmbeddedBrokerStillEnabled_failsStartup() {
         runner.withPropertyValues("spring.artemis.mode=native").run(context -> {
             assertThat(context).hasFailed();
@@ -189,6 +217,17 @@ class JmsConfigTest {
                 containerFactory = JmsConfig.TOPIC_FACTORY)
         void ok(TextMessage message) throws JMSException {
             received.add(message.getText());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class RestoredEvents {
+
+        final List<RealtimeSubscriptionRestoredEvent> events = new CopyOnWriteArrayList<>();
+
+        @EventListener
+        void on(RealtimeSubscriptionRestoredEvent event) {
+            events.add(event);
         }
     }
 

@@ -51,7 +51,8 @@ class OutboxPublisherTest {
     @Mock private JmsBrokerProbe brokerProbe;
 
     private final OutboxProperties properties =
-            new OutboxProperties(Duration.ofMinutes(1), Duration.ofSeconds(30), 5, 3, Duration.ofDays(7));
+            new OutboxProperties(Duration.ofMinutes(1), Duration.ofSeconds(30), 5, 3, Duration.ofDays(7),
+                    Duration.ofHours(1));
     private OutboxPublisher publisher;
 
     @BeforeEach
@@ -154,23 +155,39 @@ class OutboxPublisherTest {
     void unknownType_isPostponed_withoutCountingAnAttempt(CapturedOutput output) {
         // Rolling deploy: bản ghi do phiên bản mới ghi, instance cũ chưa biết alias → để instance mới gửi
         when(repository.lockDueById(7L)).thenReturn(Optional.of(row(7L, "typeFromNewerVersion", 4)));
+        when(repository.postpone(eq(7L), anyLong(), anyLong(), anyString())).thenReturn(1);
 
         assertThat(publisher.publish(7L)).isFalse();
 
-        verify(repository).postpone(eq(7L), anyLong(), eq(OutboxPublisher.UNKNOWN_TYPE_ERROR));
+        verify(repository).postpone(7L, 30_000L, 3600L, OutboxPublisher.UNKNOWN_TYPE_ERROR);
         verify(repository, never()).markAttemptFailed(anyLong(), anyInt(), anyLong(), anyString());
         verifyNoInteractions(topicJmsTemplate, queueJmsTemplate);
         assertThat(output).contains("WARN").contains("typeFromNewerVersion").doesNotContain("FAILED");
     }
 
     @Test
+    void unknownType_pastGracePeriod_countsAttempts_untilFailed(CapturedOutput output) {
+        // Không instance nào biết loại này (rollback bản deploy): không hoãn mãi, đi đường lỗi của bản ghi
+        when(repository.lockDueById(7L)).thenReturn(Optional.of(row(7L, "typeFromRolledBackVersion", 4)));
+        when(repository.postpone(eq(7L), anyLong(), anyLong(), anyString())).thenReturn(0);
+
+        assertThat(publisher.publish(7L)).isFalse();
+
+        verify(repository).markAttemptFailed(7L, 5, 30_000L, OutboxPublisher.UNKNOWN_TYPE_ERROR);
+        verifyNoInteractions(topicJmsTemplate, queueJmsTemplate);
+        assertThat(output).contains("ERROR")
+                .contains("Outbox message #7 (typeFromRolledBackVersion) FAILED after 5 attempts");
+    }
+
+    @Test
     void publishDue_skipsUnknownType_andContinuesWithNextRecord() {
         when(repository.lockNextDueAfter(0L)).thenReturn(Optional.of(row(1L, "typeFromNewerVersion", 0)));
         when(repository.lockNextDueAfter(1L)).thenReturn(Optional.of(row(2L, "orderPlaced", 0)));
+        when(repository.postpone(eq(1L), anyLong(), anyLong(), anyString())).thenReturn(1);
 
         assertThat(publisher.publishDue()).isEqualTo(1);
 
-        verify(repository).postpone(eq(1L), anyLong(), anyString());
+        verify(repository).postpone(eq(1L), anyLong(), anyLong(), anyString());
         verify(repository).markSent(2L);
     }
 

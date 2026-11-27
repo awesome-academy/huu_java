@@ -12,9 +12,15 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.security.Principal;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -175,6 +181,73 @@ class WebSocketSessionTrackerTest {
 
         verify(socket, never()).close(WebSocketSessionTracker.REVOKED);
         assertThat(tracker.snapshot()).isEmpty();
+    }
+
+    @Test
+    void concurrentHandshakesOfOneUser_neverExceedLimit() throws Exception {
+        List<WebSocketSession> sockets = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            sockets.add(socket("ws-c" + i, "http-c", new TestingAuthenticationToken("carol", "n/a", "ROLE_USER")));
+        }
+        ExecutorService threads = Executors.newFixedThreadPool(8);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<?>> handshakes = new ArrayList<>();
+            for (WebSocketSession socket : sockets) {
+                handshakes.add(threads.submit(() -> {
+                    start.await();
+                    decorated.afterConnectionEstablished(socket);
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> handshake : handshakes) {
+                handshake.get(5, TimeUnit.SECONDS);
+            }
+        } finally {
+            threads.shutdownNow();
+        }
+
+        assertThat(tracker.snapshot()).hasSize(MAX_CONNECTIONS);
+        verify(delegate, times(MAX_CONNECTIONS)).afterConnectionEstablished(any());
+    }
+
+    @Test
+    void realtimeSubscriptionRestored_closesSocketsOpenedBefore_soClientsResync() throws Exception {
+        WebSocketSession alice = socket("ws-r1", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        WebSocketSession admin = socket("ws-r2", "http-b", new TestingAuthenticationToken("admin", "n/a", "ROLE_ADMIN"));
+        decorated.afterConnectionEstablished(alice);
+        decorated.afterConnectionEstablished(admin);
+
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+
+        // 1012: client nối lại như khi mất kết nối, resync sau SUBSCRIBE — không phải thu hồi
+        verify(alice).close(WebSocketSessionTracker.RESYNC);
+        verify(admin).close(WebSocketSessionTracker.RESYNC);
+        assertThat(tracker.snapshot()).isEmpty();
+
+        // Listener thứ hai tạo lại ngay sau (client chưa kịp nối lại — chờ ≥ 1s): không đóng gì thêm
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.status-changed"));
+        verify(alice, times(1)).close(any(CloseStatus.class));
+
+        // Socket nối lại SAU cả hai lần tạo lại subscription đã resync sau đó → được giữ
+        WebSocketSession reconnected = socket("ws-r3", "http-a",
+                new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        decorated.afterConnectionEstablished(reconnected);
+        verify(reconnected, never()).close(any(CloseStatus.class));
+        assertThat(tracker.snapshot()).extracting(tracked -> tracked.session().getId()).containsExactly("ws-r3");
+    }
+
+    @Test
+    void socketReconnectedBetweenTwoRestores_isClosedAgain_becauseItMayHaveMissedTheSecondTopic() throws Exception {
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
+        WebSocketSession socket = socket("ws-r4", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        decorated.afterConnectionEstablished(socket);
+
+        // Subscription order.status-changed tạo lại muộn hơn: message của nó trước lúc này có thể đã bị bỏ
+        tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.status-changed"));
+
+        verify(socket).close(WebSocketSessionTracker.RESYNC);
     }
 
     /** Socket giả hành xử như container: {@code close()} thành công → {@code afterConnectionClosed}. */

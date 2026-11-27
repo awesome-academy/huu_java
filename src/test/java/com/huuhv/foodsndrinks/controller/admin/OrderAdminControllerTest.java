@@ -180,6 +180,21 @@ class OrderAdminControllerTest {
 
     @Test
     @WithMockUser(roles = "ADMIN")
+    void pendingCountFailure_stillRendersPage_withBadgeHidden() throws Exception {
+        when(orderService.searchOrders(any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(orderService.countPendingOrders()).thenThrow(new IllegalStateException("lock wait timeout"));
+
+        String html = mockMvc.perform(get("/admin/orders"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin/orders/list"))
+                .andExpect(model().attributeDoesNotExist(PendingOrderCountInterceptor.MODEL_ATTRIBUTE))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(html).containsPattern("id=\"pendingOrderBadge\"[^>]*hidden");
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
     void jsonAndRedirectResponses_doNotQueryPendingCount() throws Exception {
         mockMvc.perform(post("/admin/orders/5/status").param("newStatus", "PROCESSING").with(csrf()))
                 .andExpect(status().is3xxRedirection());
