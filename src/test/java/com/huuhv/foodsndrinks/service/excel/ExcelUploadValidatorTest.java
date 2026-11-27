@@ -90,7 +90,7 @@ class ExcelUploadValidatorTest {
 
     private static ExcelProperties properties(DataSize maxFileSize, DataSize maxUncompressedSize) {
         return new ExcelProperties(new ExcelProperties.Export(50_000),
-                new ExcelProperties.Import(1_000, maxFileSize, maxUncompressedSize, 200));
+                ExcelTestFiles.importLimits(1_000, maxFileSize, maxUncompressedSize, "./import-tmp"));
     }
 
     private static byte[] zip(String entryName, byte[] content) throws IOException {

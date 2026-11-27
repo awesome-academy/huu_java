@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
+import com.huuhv.foodsndrinks.dto.message.ExcelImportMessage;
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 
@@ -31,10 +32,14 @@ public final class MessageTypes {
     /** {@link OrderStatusChangedMessage} trên topic {@code order.status-changed}. */
     public static final String ORDER_STATUS_CHANGED = "orderStatusChanged";
 
+    /** {@link ExcelImportMessage} trên queue {@code excel.import}. */
+    public static final String EXCEL_IMPORT = "excelImport";
+
     /** alias → class payload. */
     public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of(
             ORDER_PLACED, OrderPlacedMessage.class,
-            ORDER_STATUS_CHANGED, OrderStatusChangedMessage.class);
+            ORDER_STATUS_CHANGED, OrderStatusChangedMessage.class,
+            EXCEL_IMPORT, ExcelImportMessage.class);
 
     private MessageTypes() {
     }

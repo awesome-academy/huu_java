@@ -8,13 +8,13 @@ spring:
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
   # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
-  # (2) + listener JMS (5: email, Slack, DLQ, WebSocket đơn mới, WebSocket đổi trạng thái) + sched-* (2) = 13 — không
-  # được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không khởi động), nửa còn lại cho request web. Nhiều
-  # instance: số
-  # instance × maximum-pool-size < max_connections của MySQL (mặc định 151). minimum-idle: không giữ sẵn cả pool khi rảnh.
+  # (2) + listener JMS (7: email, Slack, DLQ đơn hàng, WebSocket đơn mới, WebSocket đổi trạng thái, import Excel, DLQ
+  # import Excel) + sched-* (2) = 15 — không được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không khởi
+  # động), nửa còn lại cho request web. Nhiều instance: số instance × maximum-pool-size < max_connections của MySQL (mặc
+  # định 151 → tối đa 5 instance). minimum-idle: không giữ sẵn cả pool khi rảnh.
   datasource:
     hikari:
-      maximum-pool-size: 28
+      maximum-pool-size: 30
       minimum-idle: 5
   servlet:
     multipart:
@@ -199,12 +199,19 @@ app:
     export:
       # Số dòng dữ liệu tối đa của một file export. Bộ lọc khớp nhiều hơn → báo lỗi, không tạo file
       max-rows: 50000
-    # Import sản phẩm từ .xlsx (trang /admin/products/import). Vượt giới hạn nào thì cả file bị từ chối
+    # Import sản phẩm từ .xlsx (trang /admin/products/import): upload tạo một lần import (bảng import_jobs) + message
+    # trên queue JMS excel.import, consumer xử lý nền. Vượt giới hạn nào dưới đây thì cả file bị từ chối
     import:
       max-rows: 1000              # số dòng dữ liệu (không tính dòng tiêu đề)
       max-file-size: 5MB          # phải ≤ spring.servlet.multipart.max-file-size (lớn hơn → app không khởi động)
       max-uncompressed-size: 20MB # tổng dung lượng sau khi giải nén file .xlsx (zip) — chống zip bomb
-      max-errors: 200             # số lỗi dòng tối đa được hiển thị (tổng số lỗi vẫn được đếm)
+      max-errors: 200             # số lỗi dòng tối đa được lưu/hiển thị (tổng số lỗi vẫn được đếm)
+      # Thư mục giữ file đang chờ xử lý — KHÔNG nằm trong UPLOAD_DIR (public tại /uploads/**; app không khởi động nếu
+      # lồng nhau), file bị xoá khi lần import kết thúc. Nhiều instance: mọi instance mount CÙNG một thư mục dùng chung
+      dir: ${EXCEL_IMPORT_DIR:./import-tmp}
+      max-active-jobs-per-user: 3 # số lần import chưa xong tối đa của một admin
+      # Lần import chưa kết thúc sau khoảng này → đánh dấu thất bại; file tạm cũ hơn 2 lần khoảng này → xoá
+      stale-after: 30m
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy); dashboard từ chối (AbortPolicy) → /admin trả 503; outbox bỏ task (job gửi lại).
   async:

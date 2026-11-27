@@ -23,6 +23,10 @@ class ExcelConfigTest {
             assertThat(properties.imports().maxFileSize()).isEqualTo(DataSize.ofMegabytes(5));
             assertThat(properties.imports().maxUncompressedSize()).isEqualTo(DataSize.ofMegabytes(20));
             assertThat(properties.imports().maxErrors()).isEqualTo(200);
+            assertThat(properties.imports().dir()).isEqualTo("./import-tmp");
+            assertThat(properties.imports().directory()).isAbsolute().endsWith(java.nio.file.Path.of("import-tmp"));
+            assertThat(properties.imports().maxActiveJobsPerUser()).isEqualTo(3);
+            assertThat(properties.imports().staleAfter()).isEqualTo(java.time.Duration.ofMinutes(30));
         });
     }
 
@@ -57,6 +61,12 @@ class ExcelConfigTest {
         runner.withPropertyValues("app.excel.export.max-rows=2000000")
                 .run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("app.excel.import.max-errors=0")
+                .run(context -> assertThat(context).hasFailed());
+        runner.withPropertyValues("app.excel.import.dir= ")
+                .run(context -> assertThat(context).hasFailed());
+        runner.withPropertyValues("app.excel.import.stale-after=10s")
+                .run(context -> assertThat(context).hasFailed());
+        runner.withPropertyValues("app.excel.import.max-active-jobs-per-user=0")
                 .run(context -> assertThat(context).hasFailed());
     }
 }

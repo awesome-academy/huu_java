@@ -37,6 +37,9 @@ build/
 uploads/*
 logs/*
 !logs/.gitignore
+# File Excel đang chờ import (app.excel.import.dir) — chỉ giữ .gitignore để thư mục có sẵn khi clone (bind mount)
+import-tmp/*
+!import-tmp/.gitignore
 
 ### Secrets (Docker / spring.config.import) ###
 .env

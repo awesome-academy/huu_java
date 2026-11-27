@@ -5,79 +5,34 @@ import com.huuhv.foodsndrinks.dto.response.ImportRowErrorResDto;
 import com.huuhv.foodsndrinks.dto.response.ProductImportResDto;
 import com.huuhv.foodsndrinks.entity.Category;
 import com.huuhv.foodsndrinks.enums.ProductType;
-import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
-import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.service.CategoryService;
-import com.huuhv.foodsndrinks.service.ProductService;
-import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.excel.ExcelSheetWriter.Column;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * Import sản phẩm từ file Excel theo mẫu: kiểm tra file → đọc → validate mọi dòng → ghi.
+ * Phần "đọc + validate" của import sản phẩm từ Excel và file mẫu. Việc nhận file, chạy nền và ghi nằm ở
+ * {@link ImportJobService} / {@link ImportJobProcessor}.
  * <p>
  * <b>Chính sách ghi:</b> có bất kỳ dòng nào lỗi thì KHÔNG dòng nào được ghi (admin sửa file rồi import lại cả file);
- * không có lỗi thì mọi dòng được ghi trong một transaction ({@link ProductService#applyImport}). Đọc và validate chạy
+ * không có lỗi thì mọi dòng được ghi trong một transaction ({@code ProductService.applyImport}). Đọc và validate chạy
  * ngoài transaction ghi — lớp này cố ý không {@code @Transactional}.
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProductImportService {
 
     static final String TEMPLATE_FILENAME = "foodsndrinks-products-template.xlsx";
-    static final String DATA_CHANGED = "Dữ liệu sản phẩm hoặc danh mục vừa thay đổi trong lúc import. Vui lòng import lại!";
 
-    private final ExcelUploadValidator uploadValidator;
     private final ProductImportReader reader;
     private final ProductImportValidator validator;
-    private final ProductService productService;
     private final CategoryService categoryService;
     private final ExcelProperties properties;
-    private final AuditLogService auditLogService;
-
-    /**
-     * Import đồng bộ một file upload.
-     *
-     * @return kết quả: thành công (số sản phẩm thêm/cập nhật/không đổi) hoặc danh sách lỗi theo dòng (không ghi gì)
-     * @throws ExcelFileException file bị từ chối cả file (không phải .xlsx, quá lớn, sai mẫu, quá nhiều dòng...) hoặc dữ
-     *                            liệu đổi giữa lúc validate và lúc ghi — thông điệp hiển thị được cho admin
-     */
-    public ProductImportResDto importProducts(MultipartFile upload) {
-        uploadValidator.validate(upload);
-
-        ProductImportPlan plan;
-        Path file = copyToTempFile(upload);
-        try {
-            plan = plan(file);
-        } finally {
-            deleteQuietly(file);
-        }
-        if (plan.hasErrors()) {
-            return failed(plan);
-        }
-
-        try {
-            productService.applyImport(plan.commands());
-        } catch (DuplicateResourceException | ResourceNotFoundException e) {
-            // Transaction của applyImport đã rollback toàn bộ; import lại sẽ validate trên dữ liệu mới
-            throw new ExcelFileException(DATA_CHANGED, e);
-        }
-        auditLogService.productsImported(upload.getOriginalFilename(), plan.createCount(), plan.updateCount(),
-                plan.unchangedCount());
-        return new ProductImportResDto(plan.totalRows(), plan.createCount(), plan.updateCount(),
-                plan.unchangedCount(), 0, List.of());
-    }
 
     /** Số dòng dữ liệu tối đa của một file import — để trang import hiển thị đúng giới hạn đang cấu hình. */
     public int maxRows() {
@@ -142,28 +97,5 @@ public class ProductImportService {
             throw e;
         }
         return new ExcelFile(TEMPLATE_FILENAME, 0, sheet);
-    }
-
-    private static Path copyToTempFile(MultipartFile upload) {
-        Path file = null;
-        try {
-            // Tên file do JVM sinh trong thư mục tạm (không dùng tên client gửi), quyền chỉ chủ sở hữu đọc/ghi
-            file = Files.createTempFile("product-import-", ExcelUploadValidator.EXTENSION);
-            upload.transferTo(file);
-            return file;
-        } catch (IOException e) {
-            if (file != null) {
-                deleteQuietly(file);
-            }
-            throw new ExcelFileException("Không lưu được file tải lên. Vui lòng thử lại!", e);
-        }
-    }
-
-    private static void deleteQuietly(Path file) {
-        try {
-            Files.deleteIfExists(file);
-        } catch (IOException e) {
-            log.warn("Could not delete temporary import file {}", file.getFileName(), e);
-        }
     }
 }

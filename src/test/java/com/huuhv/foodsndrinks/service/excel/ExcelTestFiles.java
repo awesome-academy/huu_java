@@ -13,6 +13,7 @@ import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 
 /** Dựng file .xlsx và cấu hình Excel cho test — file được tạo bằng POI thật, đúng thứ Excel ghi ra. */
@@ -31,7 +32,19 @@ public final class ExcelTestFiles {
 
     public static ExcelProperties properties(int exportMaxRows, int importMaxRows) {
         return new ExcelProperties(new ExcelProperties.Export(exportMaxRows),
-                new ExcelProperties.Import(importMaxRows, DataSize.ofMegabytes(5), DataSize.ofMegabytes(20), 200));
+                importLimits(importMaxRows, DataSize.ofMegabytes(5), DataSize.ofMegabytes(20), "./import-tmp"));
+    }
+
+    /** Cấu hình mặc định, file import nằm trong {@code importDirectory}. */
+    public static ExcelProperties propertiesWithImportDir(Path importDirectory) {
+        return new ExcelProperties(new ExcelProperties.Export(50_000),
+                importLimits(1_000, DataSize.ofMegabytes(5), DataSize.ofMegabytes(20), importDirectory.toString()));
+    }
+
+    public static ExcelProperties.Import importLimits(int maxRows, DataSize maxFileSize, DataSize maxUncompressedSize,
+                                                      String directory) {
+        return new ExcelProperties.Import(maxRows, maxFileSize, maxUncompressedSize, 200, directory, 3,
+                Duration.ofMinutes(30));
     }
 
     /**

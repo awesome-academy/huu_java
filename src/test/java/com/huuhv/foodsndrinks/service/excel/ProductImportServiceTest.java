@@ -5,12 +5,8 @@ import com.huuhv.foodsndrinks.dto.request.ProductReqDto;
 import com.huuhv.foodsndrinks.dto.response.ImportRowErrorResDto;
 import com.huuhv.foodsndrinks.dto.response.ProductImportResDto;
 import com.huuhv.foodsndrinks.entity.Category;
-import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
-import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.service.CategoryService;
-import com.huuhv.foodsndrinks.service.ProductService;
-import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
@@ -18,10 +14,8 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -32,30 +26,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.IntStream;
 
-import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.productWorkbook;
-import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.row;
-import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.upload;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-/** Unit test {@link ProductImportService}: điều phối kiểm tra file → đọc → validate → ghi, và file mẫu. */
+/** Unit test {@link ProductImportService}: đọc → validate (không ghi), giới hạn số lỗi hiển thị, và file mẫu. */
 @ExtendWith(MockitoExtension.class)
 class ProductImportServiceTest {
 
-    private static final byte[] FILE = productWorkbook(row("Trà đào", "Đồ uống", "DRINK", 35000, null, "Có"));
-
-    @Mock private ExcelUploadValidator uploadValidator;
     @Mock private ProductImportReader reader;
     @Mock private ProductImportValidator validator;
-    @Mock private ProductService productService;
     @Mock private CategoryService categoryService;
-    @Mock private AuditLogService auditLogService;
 
     private ProductImportService service;
     private final List<ProductImportRow> rows = List.of(
@@ -63,96 +45,47 @@ class ProductImportServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ProductImportService(uploadValidator, reader, validator, productService, categoryService,
-                ExcelTestFiles.properties(), auditLogService);
+        service = new ProductImportService(reader, validator, categoryService, ExcelTestFiles.properties());
     }
 
     @Test
-    void validFile_isWrittenInOneCall_audited_andTheTemporaryCopyIsDeleted() {
-        List<ProductImportCommand> commands = List.of(command(null), command(null), command(7L));
-        ArgumentCaptor<Path> file = ArgumentCaptor.forClass(Path.class);
-        when(reader.read(file.capture())).thenReturn(rows);
-        when(validator.validate(rows)).thenReturn(new ProductImportPlan(5, commands, 2, List.of()));
-        MockMultipartFile upload = upload("san-pham.xlsx", FILE);
+    void plan_readsTheFile_thenValidatesItsRows_withoutWritingAnything() {
+        Path file = Path.of("some-import.xlsx");
+        ProductImportPlan plan = new ProductImportPlan(1, List.of(command(null)), 0, List.of());
+        when(reader.read(file)).thenReturn(rows);
+        when(validator.validate(rows)).thenReturn(plan);
 
-        ProductImportResDto result = service.importProducts(upload);
-
-        assertThat(result).isEqualTo(new ProductImportResDto(5, 2, 1, 2, 0, List.of()));
-        assertThat(result.isSuccess()).isTrue();
-        verify(uploadValidator).validate(upload);
-        verify(productService).applyImport(commands);
-        verify(auditLogService).productsImported("san-pham.xlsx", 2, 1, 2);
-        // File được đọc từ một bản sao tạm có tên do server đặt, và bản sao đã bị xoá
-        assertThat(file.getValue().getFileName().toString()).startsWith("product-import-").endsWith(".xlsx")
-                .doesNotContain("san-pham");
-        assertThat(Files.exists(file.getValue())).isFalse();
+        assertThat(service.plan(file)).isSameAs(plan);
     }
 
     @Test
-    void anyRowError_meansNothingIsWritten_andErrorsAreReturned() {
-        List<ImportRowErrorResDto> errors = List.of(new ImportRowErrorResDto(3, "Giá", "Giá phải lớn hơn 0!"));
-        when(reader.read(any())).thenReturn(rows);
-        when(validator.validate(rows)).thenReturn(new ProductImportPlan(4, List.of(), 0, errors));
+    void plan_rejectedFile_isNotValidated() {
+        Path file = Path.of("some-import.xlsx");
+        when(reader.read(file)).thenThrow(new ExcelFileException("File không đúng mẫu"));
 
-        ProductImportResDto result = service.importProducts(upload("san-pham.xlsx", FILE));
-
-        assertThat(result).isEqualTo(new ProductImportResDto(4, 0, 0, 0, 1, errors));
-        assertThat(result.isSuccess()).isFalse();
-        verify(productService, never()).applyImport(any());
-        verifyNoInteractions(auditLogService);
+        assertThatExceptionOfType(ExcelFileException.class).isThrownBy(() -> service.plan(file));
+        verifyNoInteractions(validator);
     }
 
     @Test
-    void manyErrors_areCountedInFull_butOnlyTheConfiguredNumberIsKeptForDisplay() {
+    void failed_countsEveryError_butKeepsOnlyTheConfiguredNumberForDisplay() {
         List<ImportRowErrorResDto> errors = new ArrayList<>(IntStream.rangeClosed(2, 301)
                 .mapToObj(rowNumber -> new ImportRowErrorResDto(rowNumber, "Giá", "Giá phải lớn hơn 0!")).toList());
-        when(reader.read(any())).thenReturn(rows);
-        when(validator.validate(rows)).thenReturn(new ProductImportPlan(300, List.of(), 0, errors));
 
-        ProductImportResDto result = service.importProducts(upload("san-pham.xlsx", FILE));
+        ProductImportResDto result = service.failed(new ProductImportPlan(300, List.of(), 0, errors));
 
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.totalRows()).isEqualTo(300);
         assertThat(result.errorCount()).isEqualTo(300);
         assertThat(result.errors()).hasSize(200).first().extracting(ImportRowErrorResDto::row).isEqualTo(2);
         assertThat(result.getHiddenErrorCount()).isEqualTo(100);
+        assertThat(result.created() + result.updated() + result.unchanged()).isZero();
     }
 
     @Test
-    void rejectedUpload_isNeitherCopiedNorRead() {
-        MockMultipartFile upload = upload("san-pham.xls", FILE);
-        doThrow(new ExcelFileException("Chỉ nhận file Excel có đuôi .xlsx!")).when(uploadValidator).validate(upload);
-
-        assertThatExceptionOfType(ExcelFileException.class)
-                .isThrownBy(() -> service.importProducts(upload))
-                .withMessage("Chỉ nhận file Excel có đuôi .xlsx!");
-        verifyNoInteractions(reader, validator, productService, auditLogService);
-    }
-
-    @Test
-    void unreadableFile_stillDeletesTheTemporaryCopy() {
-        ArgumentCaptor<Path> file = ArgumentCaptor.forClass(Path.class);
-        when(reader.read(file.capture())).thenThrow(new ExcelFileException("File không đúng mẫu"));
-
-        assertThatExceptionOfType(ExcelFileException.class)
-                .isThrownBy(() -> service.importProducts(upload("san-pham.xlsx", FILE)));
-        assertThat(Files.exists(file.getValue())).isFalse();
-        verifyNoInteractions(productService);
-    }
-
-    @Test
-    void dataChangedBetweenValidationAndWrite_isReportedAsRetryable_andNotAudited() {
-        List<ProductImportCommand> commands = List.of(command(null));
-        when(reader.read(any())).thenReturn(rows);
-        when(validator.validate(rows)).thenReturn(new ProductImportPlan(1, commands, 0, List.of()));
-
-        for (RuntimeException raced : List.of(new DuplicateResourceException("Tên sản phẩm đã tồn tại!"),
-                new ResourceNotFoundException("Không tìm thấy danh mục!"))) {
-            doThrow(raced).when(productService).applyImport(commands);
-
-            assertThatExceptionOfType(ExcelFileException.class)
-                    .isThrownBy(() -> service.importProducts(upload("san-pham.xlsx", FILE)))
-                    .withMessage(ProductImportService.DATA_CHANGED);
-        }
-        verifyNoInteractions(auditLogService);
+    void limits_areExposedForTheImportPage() {
+        assertThat(service.maxRows()).isEqualTo(1_000);
+        assertThat(service.maxFileSizeMb()).isEqualTo(5);
     }
 
     @Test

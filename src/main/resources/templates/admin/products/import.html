@@ -52,7 +52,7 @@
                                th:data-max-file-size="${maxUploadFileSize}"
                                class="form-control mb-3">
                         <button type="submit" class="btn btn-primary fw-bold">
-                            <i class="fa-solid fa-upload me-1"></i> Import
+                            <i class="fa-solid fa-upload me-1"></i> Tải lên và import
                         </button>
                     </form>
                 </div>
@@ -71,39 +71,51 @@
                             (danh mục, loại, giá, mô tả, còn bán; ảnh giữ nguyên). Tên chưa có → <strong>thêm mới</strong>.</li>
                         <li>Tên chỉ khác chữ hoa/thường hoặc dấu so với sản phẩm đã có → báo lỗi, không tự cập nhật.</li>
                         <li>Có <strong>một dòng lỗi</strong> thì <strong>không dòng nào được lưu</strong> — sửa file rồi import lại.</li>
+                        <li>File được <strong>xử lý nền</strong>: sau khi tải lên bạn được chuyển tới trang trạng thái, trang
+                            tự cập nhật tới khi xong (kết quả hoặc bảng lỗi theo dòng).</li>
                     </ul>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Bảng lỗi: file có dòng không hợp lệ → không lưu dòng nào -->
-    <div th:if="${importResult != null}" class="card shadow-sm border-0 mt-4" data-import-errors>
-        <div class="card-header fw-bold bg-white border-bottom text-danger">
-            <i class="fa-solid fa-triangle-exclamation me-1"></i>
-            File có <span th:text="${importResult.errorCount()}">0</span> lỗi trên
-            <span th:text="${importResult.totalRows()}">0</span> dòng dữ liệu — chưa lưu dòng nào
-        </div>
+    <!-- 10 lần import gần nhất (của mọi admin) -->
+    <div class="card shadow-sm border-0 mt-4" th:if="${recentImports != null and !#lists.isEmpty(recentImports)}"
+         data-recent-imports>
+        <div class="card-header fw-bold bg-white border-bottom">Lần import gần đây</div>
         <div class="card-body p-0 table-responsive">
-            <table class="table table-sm table-striped m-0 align-middle">
+            <table class="table table-sm table-hover m-0 align-middle">
                 <thead class="table-dark">
                 <tr>
-                    <th class="px-3 py-2">Dòng</th>
-                    <th class="py-2">Cột</th>
-                    <th class="py-2">Nội dung lỗi</th>
+                    <th class="px-3 py-2">#</th>
+                    <th class="py-2">File</th>
+                    <th class="py-2">Trạng thái</th>
+                    <th class="py-2">Kết quả</th>
+                    <th class="py-2">Người tải lên</th>
+                    <th class="py-2">Lúc</th>
                 </tr>
                 </thead>
                 <tbody>
-                <tr th:each="error : ${importResult.errors()}">
-                    <td class="px-3 fw-medium" th:text="${error.row()}"></td>
-                    <td th:text="${error.column()}"></td>
-                    <td th:text="${error.message()}"></td>
+                <tr th:each="job : ${recentImports}">
+                    <td class="px-3 fw-bold">
+                        <a th:href="@{/admin/products/import/{id}(id=${job.id()})}" th:text="'#' + ${job.id()}"
+                           class="text-decoration-none"></a>
+                    </td>
+                    <td th:text="${job.fileName()}"></td>
+                    <td><span class="badge" th:classappend="${job.badgeClass()}" th:text="${job.statusLabel()}"></span></td>
+                    <td class="small">
+                        <span th:if="${job.status().name() == 'COMPLETED'}"
+                              th:text="'thêm ' + ${job.created()} + ' · cập nhật ' + ${job.updated()} + ' · không đổi ' + ${job.unchanged()}"></span>
+                        <span th:if="${job.status().name() == 'FAILED' and job.errorCount() > 0}"
+                              th:text="${job.errorCount()} + ' lỗi'"></span>
+                        <span th:if="${job.status().name() == 'FAILED' and job.errorCount() == 0}">không xử lý được file</span>
+                    </td>
+                    <td th:text="${job.createdBy()}"></td>
+                    <td class="text-muted small text-nowrap"
+                        th:text="${job.createdAt() != null ? #temporals.format(job.createdAt(), 'dd/MM/yyyy HH:mm') : '—'}"></td>
                 </tr>
                 </tbody>
             </table>
-        </div>
-        <div class="card-footer text-muted small" th:if="${importResult.getHiddenErrorCount() > 0}">
-            … và <span th:text="${importResult.getHiddenErrorCount()}">0</span> lỗi khác chưa hiển thị.
         </div>
     </div>
 

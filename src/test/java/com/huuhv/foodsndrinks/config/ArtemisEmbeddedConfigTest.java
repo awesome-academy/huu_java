@@ -104,8 +104,45 @@ class ArtemisEmbeddedConfigTest {
     }
 
     @Test
+    void productionFile_declaresExcelImportAsADurableAnycastQueue_withRetryThenItsOwnDeadLetterQueue() {
+        ConfigurationImpl configuration = apply(PRODUCTION_FILE);
+
+        // Point-to-point: một queue ANYCAST cùng tên address, tạo sẵn — message gửi khi chưa có consumer vẫn được giữ
+        CoreAddressConfiguration address = address(configuration, Destinations.EXCEL_IMPORT);
+        assertThat(address.getRoutingTypes()).containsExactly(RoutingType.ANYCAST);
+        assertThat(address.getQueueConfigs()).singleElement().satisfies(queue -> {
+            assertThat(queue.getName().toString()).isEqualTo(Destinations.EXCEL_IMPORT);
+            assertThat(queue.getAddress().toString()).isEqualTo(Destinations.EXCEL_IMPORT);
+            assertThat(queue.getRoutingType()).isEqualTo(RoutingType.ANYCAST);
+            assertThat(queue.isDurable()).isTrue();
+        });
+        AddressSettings settings = configuration.getAddressSettings().get(Destinations.EXCEL_IMPORT);
+        assertThat(settings.getMaxDeliveryAttempts()).isEqualTo(5);
+        assertThat(settings.getRedeliveryDelay()).isEqualTo(2000);
+        assertThat(settings.getRedeliveryMultiplier()).isEqualTo(2.0);
+        assertThat(settings.getMaxRedeliveryDelay()).isEqualTo(30000);
+        assertThat(settings.getDeadLetterAddress().toString()).isEqualTo(Destinations.EXCEL_IMPORT_DLQ);
+        // Gửi qua outbox: address đầy → lỗi ngay, bản ghi giữ PENDING
+        assertThat(settings.getAddressFullMessagePolicy()).isEqualTo(AddressFullMessagePolicy.FAIL);
+
+        CoreAddressConfiguration dlq = address(configuration, Destinations.EXCEL_IMPORT_DLQ);
+        assertThat(dlq.getRoutingTypes()).containsExactly(RoutingType.ANYCAST);
+        assertThat(dlq.getQueueConfigs()).singleElement().satisfies(queue -> {
+            assertThat(queue.getName().toString()).isEqualTo(Destinations.EXCEL_IMPORT_DLQ);
+            assertThat(queue.getRoutingType()).isEqualTo(RoutingType.ANYCAST);
+        });
+        AddressSettings dlqSettings = configuration.getAddressSettings().get(Destinations.EXCEL_IMPORT_DLQ);
+        assertThat(dlqSettings.getMaxDeliveryAttempts()).isEqualTo(-1);
+        assertThat(dlqSettings.getRedeliveryDelay()).isPositive();
+    }
+
+    @Test
     void laterFile_overridesKeysOfEarlierFile() {
         ConfigurationImpl configuration = apply(PRODUCTION_FILE, "classpath:artemis/broker-test.properties");
+
+        assertThat(configuration.getAddressSettings().get(Destinations.EXCEL_IMPORT).getRedeliveryDelay()).isEqualTo(100);
+        assertThat(configuration.getAddressSettings().get(Destinations.EXCEL_IMPORT).getMaxDeliveryAttempts())
+                .isEqualTo(5);
 
         AddressSettings topic = configuration.getAddressSettings().get(Destinations.ORDER_PLACED);
         assertThat(topic.getRedeliveryDelay()).isEqualTo(100);

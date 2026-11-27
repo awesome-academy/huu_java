@@ -28,6 +28,15 @@ public final class Destinations {
     public static final String ORDER_PLACED_EMAIL_SUBSCRIPTION = "order-placed-email";
     public static final String ORDER_PLACED_SLACK_SUBSCRIPTION = "order-placed-slack";
 
+    /**
+     * Queue (anycast, point-to-point): một message mỗi lần import Excel cần xử lý — đúng MỘT consumer (của một instance
+     * bất kỳ) nhận mỗi message. Queue cùng tên được tạo sẵn trong {@code artemis/broker.properties}.
+     */
+    public static final String EXCEL_IMPORT = "excel.import";
+
+    /** Queue (anycast) nhận message của {@link #EXCEL_IMPORT} đã hết số lần giao lại. */
+    public static final String EXCEL_IMPORT_DLQ = "DLQ.excel-import";
+
     private Destinations() {
     }
 }

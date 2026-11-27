@@ -84,6 +84,25 @@ class OutboxPublisherTest {
     }
 
     @Test
+    void publish_queueType_isSentWithTheQueueTemplate_notPublishedToATopic() throws Exception {
+        // excelImport là loại point-to-point: gửi bằng template topic thì message tới một address MULTICAST không ai nghe
+        when(repository.lockDueById(8L)).thenReturn(Optional.of(row(8L, MessageTypes.EXCEL_IMPORT, 0)));
+
+        assertThat(publisher.publish(8L)).isTrue();
+
+        ArgumentCaptor<MessageCreator> creator = ArgumentCaptor.forClass(MessageCreator.class);
+        verify(queueJmsTemplate).send(eq(Destinations.EXCEL_IMPORT), creator.capture());
+        Session session = mock(Session.class);
+        TextMessage jms = mock(TextMessage.class);
+        when(session.createTextMessage("{\"orderId\":8}")).thenReturn(jms);
+        creator.getValue().createMessage(session);
+        verify(jms).setStringProperty(MessageTypes.TYPE_ID_PROPERTY, MessageTypes.EXCEL_IMPORT);
+        verify(jms).setLongProperty(MessageTypes.OUTBOX_ID_PROPERTY, 8L);
+        verify(repository).markSent(8L);
+        verifyNoInteractions(topicJmsTemplate);
+    }
+
+    @Test
     void publish_alreadySentOrLockedElsewhere_doesNothing() {
         when(repository.lockDueById(7L)).thenReturn(Optional.empty());
 

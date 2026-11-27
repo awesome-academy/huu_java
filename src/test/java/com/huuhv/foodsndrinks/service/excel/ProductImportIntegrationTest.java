@@ -13,16 +13,17 @@ import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import com.huuhv.foodsndrinks.service.ProductService;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
 import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.productWorkbook;
 import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.row;
-import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.upload;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
@@ -39,6 +40,8 @@ class ProductImportIntegrationTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private CategoryRepository categoryRepository;
 
+    @TempDir Path directory;
+
     private final String uid = UUID.randomUUID().toString().substring(0, 8);
 
     @Test
@@ -49,12 +52,12 @@ class ProductImportIntegrationTest {
         importOk(row("Trà đào " + uid, drinks.getName(), "Đồ uống", 30000, "cũ", "Có"),
                 row("Cơm tấm " + uid, foods.getName(), "Đồ ăn", 45000, null, "Có"));
 
-        ProductImportResDto result = importService.importProducts(upload("san-pham.xlsx", productWorkbook(
+        ProductImportResDto result = importFile(productWorkbook(
                 // đổi giá, danh mục, mô tả, ngừng bán
                 row("Trà đào " + uid, foods.getName(), "Đồ uống", 35000.5, "mới", "Không"),
                 // giống hệt sản phẩm đang có
                 row("Cơm tấm " + uid, foods.getName(), "FOOD", 45000, null, null),
-                row("Bánh mì " + uid, foods.getName(), "Đồ ăn", 20000, "=1+1", "Có"))));
+                row("Bánh mì " + uid, foods.getName(), "Đồ ăn", 20000, "=1+1", "Có")));
 
         assertThat(result).isEqualTo(new ProductImportResDto(3, 1, 1, 1, 0, List.of()));
 
@@ -78,10 +81,10 @@ class ProductImportIntegrationTest {
     void oneBadRow_meansNoRowIsSaved_andEveryErrorIsReportedWithItsRowAndColumn() {
         Category foods = category("Món chính " + uid);
 
-        ProductImportResDto result = importService.importProducts(upload("san-pham.xlsx", productWorkbook(
+        ProductImportResDto result = importFile(productWorkbook(
                 row("Hợp lệ " + uid, foods.getName(), "Đồ ăn", 10000, null, "Có"),
                 row("Sai giá " + uid, foods.getName(), "Đồ ăn", 0, null, "Có"),
-                row("Sai danh mục " + uid, "Không có " + uid, "Nước", "abc", null, "Có"))));
+                row("Sai danh mục " + uid, "Không có " + uid, "Nước", "abc", null, "Có")));
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.totalRows()).isEqualTo(3);
@@ -106,9 +109,9 @@ class ProductImportIntegrationTest {
                 .extracting(ProductImportMatch::name).containsExactly("Bò kho " + uid);
         assertThat(productRepository.findImportMatchesByName("Bơ khô " + uid)).hasSize(1);
 
-        ProductImportResDto result = importService.importProducts(upload("san-pham.xlsx", productWorkbook(
+        ProductImportResDto result = importFile(productWorkbook(
                 row("Bơ khô " + uid, foods.getName(), "Đồ ăn", 99000, null, "Có"),
-                row("Mới " + uid, foods.getName(), "Đồ ăn", 1000, null, "Có"))));
+                row("Mới " + uid, foods.getName(), "Đồ ăn", 1000, null, "Có")));
 
         assertThat(result.errors()).singleElement().satisfies(error -> {
             assertThat(error.row()).isEqualTo(2);
@@ -142,8 +145,19 @@ class ProductImportIntegrationTest {
         }
     }
 
+    /** Như {@code ImportJobProcessor}: đọc + validate file thật, không lỗi thì ghi trong một transaction. */
+    private ProductImportResDto importFile(byte[] content) {
+        ProductImportPlan plan = importService.plan(ExcelTestFiles.write(directory, content));
+        if (plan.hasErrors()) {
+            return importService.failed(plan);
+        }
+        productService.applyImport(plan.commands());
+        return new ProductImportResDto(plan.totalRows(), plan.createCount(), plan.updateCount(), plan.unchangedCount(),
+                0, List.of());
+    }
+
     private void importOk(Object[]... rows) {
-        ProductImportResDto result = importService.importProducts(upload("du-lieu-san.xlsx", productWorkbook(rows)));
+        ProductImportResDto result = importFile(productWorkbook(rows));
         assertThat(result.errors()).isEmpty();
         assertThat(result.created()).isEqualTo(rows.length);
     }
