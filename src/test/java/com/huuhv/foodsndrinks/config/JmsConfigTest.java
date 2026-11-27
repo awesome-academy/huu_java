@@ -1,12 +1,15 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.service.messaging.Destinations;
+import com.huuhv.foodsndrinks.service.websocket.RealtimeSubscriptionRestoredEvent;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
 import jakarta.jms.TextMessage;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.jms.ConnectionFactoryUnwrapper;
 import org.springframework.boot.artemis.autoconfigure.ArtemisAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
@@ -14,6 +17,7 @@ import org.springframework.boot.jms.autoconfigure.JmsAutoConfiguration;
 import org.springframework.boot.test.context.assertj.AssertableApplicationContext;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.EventListener;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.config.JmsListenerEndpointRegistry;
 import org.springframework.jms.core.JmsTemplate;
@@ -106,6 +110,65 @@ class JmsConfigTest {
     }
 
     @Test
+    void broadcastTopic_everyInstanceGetsACopy_andFailuresAreNotRedelivered() {
+        // Hai listener trên factory broadcast = hai instance của app: subscription non-durable không shared mỗi bên
+        runner.withUserConfiguration(BroadcastListeners.class).run(context -> {
+            BroadcastListeners listeners = context.getBean(BroadcastListeners.class);
+            awaitSubscriptionsRegistered(context);
+
+            context.getBean(JmsConfig.TOPIC_JMS_TEMPLATE, JmsTemplate.class)
+                    .send(Destinations.ORDER_PLACED, session -> session.createTextMessage("order-2"));
+
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+                assertThat(listeners.instanceA).containsExactly("order-2");
+                assertThat(listeners.instanceB).containsExactly("order-2");
+                assertThat(listeners.failingAttempts).hasValue(1);
+            });
+            // Không transacted: lỗi không làm broker giao lại (redelivery delay của test là 100ms)
+            Thread.sleep(500);
+            assertThat(listeners.failingAttempts).hasValue(1);
+        });
+    }
+
+    @Test
+    void broadcastFactory_isNonDurableNonSharedAndNotTransacted() {
+        runner.withUserConfiguration(BroadcastListeners.class).run(context -> {
+            awaitSubscriptionsRegistered(context);
+            DefaultMessageListenerContainer container = (DefaultMessageListenerContainer) context
+                    .getBean(JmsListenerEndpointRegistry.class).getListenerContainer(BroadcastListeners.INSTANCE_A);
+            assertThat(container.isPubSubDomain()).isTrue();
+            assertThat(container.isSubscriptionDurable()).isFalse();
+            assertThat(container.isSubscriptionShared()).isFalse();
+            assertThat(container.isSessionTransacted()).isFalse();
+            assertThat(container.getMaxConcurrentConsumers()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void broadcastSubscriptionRecreatedAfterBrokerConnectionLoss_publishesRestoredEvent_andReceivesAgain() {
+        runner.withUserConfiguration(BroadcastListeners.class, RestoredEvents.class).run(context -> {
+            awaitSubscriptionsRegistered(context);
+            RestoredEvents restored = context.getBean(RestoredEvents.class);
+            assertThat(restored.events).as("first subscription at startup is not a restore").isEmpty();
+
+            // Mất kết nối broker: subscription non-durable biến mất, DMLC tạo lại consumer sau recovery interval
+            context.getBean(EmbeddedActiveMQ.class).getActiveMQServer().getRemotingService().getConnections()
+                    .forEach(connection -> connection.fail(new ActiveMQException("simulated connection loss")));
+
+            await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> assertThat(restored.events)
+                    .extracting(RealtimeSubscriptionRestoredEvent::destination).contains(Destinations.ORDER_PLACED));
+            awaitSubscriptionsRegistered(context);
+            JmsTemplate sender = new JmsTemplate(ConnectionFactoryUnwrapper.unwrap(context.getBean(ConnectionFactory.class)));
+            sender.setPubSubDomain(true);
+            sender.send(Destinations.ORDER_PLACED, session -> session.createTextMessage("after-restore"));
+
+            BroadcastListeners listeners = context.getBean(BroadcastListeners.class);
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(listeners.instanceA).contains("after-restore"));
+        });
+    }
+
+    @Test
     void nativeMode_withEmbeddedBrokerStillEnabled_failsStartup() {
         runner.withPropertyValues("spring.artemis.mode=native").run(context -> {
             assertThat(context).hasFailed();
@@ -154,6 +217,44 @@ class JmsConfigTest {
                 containerFactory = JmsConfig.TOPIC_FACTORY)
         void ok(TextMessage message) throws JMSException {
             received.add(message.getText());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class RestoredEvents {
+
+        final List<RealtimeSubscriptionRestoredEvent> events = new CopyOnWriteArrayList<>();
+
+        @EventListener
+        void on(RealtimeSubscriptionRestoredEvent event) {
+            events.add(event);
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class BroadcastListeners {
+
+        static final String INSTANCE_A = "broadcast-a";
+
+        final List<String> instanceA = new CopyOnWriteArrayList<>();
+        final List<String> instanceB = new CopyOnWriteArrayList<>();
+        final AtomicInteger failingAttempts = new AtomicInteger();
+
+        @JmsListener(id = INSTANCE_A, destination = Destinations.ORDER_PLACED,
+                containerFactory = JmsConfig.TOPIC_BROADCAST_FACTORY)
+        void a(TextMessage message) throws JMSException {
+            instanceA.add(message.getText());
+        }
+
+        @JmsListener(destination = Destinations.ORDER_PLACED, containerFactory = JmsConfig.TOPIC_BROADCAST_FACTORY)
+        void b(TextMessage message) throws JMSException {
+            instanceB.add(message.getText());
+        }
+
+        @JmsListener(destination = Destinations.ORDER_PLACED, containerFactory = JmsConfig.TOPIC_BROADCAST_FACTORY)
+        void failing(Message message) {
+            failingAttempts.incrementAndGet();
+            throw new IllegalStateException("simulated failure");
         }
     }
 }

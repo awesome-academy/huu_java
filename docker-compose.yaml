@@ -144,6 +144,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # Unit test JS (src/test/js, test runner có sẵn của Node — không npm, không node_modules): nạp từng file static/js vào
+  # một context vm với DOM/STOMP giả. Mount chỉ đọc, không mạng.
+  #   docker compose run --rm js-test
+  js-test:
+    image: node:22-alpine
+    profiles: ["tools"]
+    working_dir: /workspace
+    network_mode: none
+    command: ["node", "--test", "src/test/js/**/*.test.mjs"]
+    volumes:
+      - .:/workspace:ro
+
 volumes:
   mysql-data:
   artemis-instance:

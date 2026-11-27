@@ -10,6 +10,13 @@ public final class Destinations {
     /** Topic (multicast): một message mỗi đơn hàng vừa đặt, mỗi kênh thông báo là một shared durable subscription. */
     public static final String ORDER_PLACED = "order.placed";
 
+    /**
+     * Topic (multicast): một message mỗi lần admin đổi trạng thái đơn. Chỉ có subscription non-durable của từng instance
+     * (đẩy WebSocket tới chủ đơn + admin) — không có hàng đợi tạo sẵn, không retry/DLQ: là tín hiệu làm mới, trang tự tải
+     * lại trạng thái khi kết nối lại.
+     */
+    public static final String ORDER_STATUS_CHANGED = "order.status-changed";
+
     /** Queue (anycast) nhận message của {@link #ORDER_PLACED} đã hết số lần giao lại. */
     public static final String ORDER_PLACED_DLQ = "DLQ.order-placed";
 

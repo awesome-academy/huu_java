@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<!-- Realtime trạng thái đơn cho trang lịch sử/chi tiết đơn (static/js/web/order-status.js). Badge cần cập nhật khai báo
+     data-order-status-badge="<id>", data-status, data-badge-class. Đích STOMP = StompDestinations.USER_ORDERS (literal:
+     Thymeleaf 3.1 cấm T(...) — OrderControllerTest đối chiếu). -->
+<html lang="vi" xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<div th:fragment="config" id="orderRealtime" hidden
+     th:data-ws-url="@{/ws-stomp}"
+     th:data-csrf-token-url="@{/csrf-token}"
+     data-destination="/user/queue/orders"
+     th:data-statuses-url="@{/orders/statuses}"></div>
+
+<th:block th:fragment="scripts">
+    <script th:src="@{/webjars/stomp__stompjs/bundles/stomp.umd.min.js}"></script>
+    <script th:src="@{/js/realtime.js}"></script>
+    <script th:src="@{/js/web/order-status.js}"></script>
+</th:block>
+
+</body>
+</html>

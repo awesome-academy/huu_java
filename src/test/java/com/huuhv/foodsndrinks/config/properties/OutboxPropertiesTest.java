@@ -13,15 +13,16 @@ class OutboxPropertiesTest {
     void retryDelayLongerThanPollInterval_isRejected() {
         // Lần thử sau sẽ không rơi vào chu kỳ kế tiếp của job → broker sống lại mà bản ghi vẫn chờ thêm
         assertThatIllegalArgumentException().isThrownBy(() ->
-                        new OutboxProperties(Duration.ofMinutes(1), Duration.ofMinutes(2), 5, 100, Duration.ofDays(7)))
+                        new OutboxProperties(Duration.ofMinutes(1), Duration.ofMinutes(2), 5, 100, Duration.ofDays(7),
+                                Duration.ofHours(1)))
                 .withMessageContaining("retry-delay");
     }
 
     @Test
     void retryDelayUpToPollInterval_isAccepted() {
         assertThatNoException().isThrownBy(() ->
-                new OutboxProperties(Duration.ofMinutes(1), Duration.ofMinutes(1), 5, 100, Duration.ofDays(7)));
+                new OutboxProperties(Duration.ofMinutes(1), Duration.ofMinutes(1), 5, 100, Duration.ofDays(7), Duration.ofHours(1)));
         assertThatNoException().isThrownBy(() ->
-                new OutboxProperties(Duration.ofHours(24), Duration.ZERO, 5, 100, Duration.ofDays(7)));
+                new OutboxProperties(Duration.ofHours(24), Duration.ZERO, 5, 100, Duration.ofDays(7), Duration.ofHours(1)));
     }
 }

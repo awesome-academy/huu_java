@@ -58,6 +58,19 @@ class ArtemisEmbeddedConfigTest {
     }
 
     @Test
+    void productionFile_declaresOrderStatusChangedTopic_withoutQueues_andRejectsSendsWhenFull() {
+        ConfigurationImpl configuration = apply(PRODUCTION_FILE);
+
+        // Chỉ subscription non-durable của từng instance: không tạo queue sẵn, không DLQ
+        CoreAddressConfiguration address = address(configuration, Destinations.ORDER_STATUS_CHANGED);
+        assertThat(address.getRoutingTypes()).containsExactly(RoutingType.MULTICAST);
+        assertThat(address.getQueueConfigs()).isEmpty();
+        // Gửi qua outbox: address đầy → lỗi ngay, bản ghi giữ PENDING (không treo thread outbox-*)
+        AddressSettings settings = configuration.getAddressSettings().get(Destinations.ORDER_STATUS_CHANGED);
+        assertThat(settings.getAddressFullMessagePolicy()).isEqualTo(AddressFullMessagePolicy.FAIL);
+    }
+
+    @Test
     void productionFile_predeclaresDurableQueueOfEverySubscription() {
         ConfigurationImpl configuration = apply(PRODUCTION_FILE);
 

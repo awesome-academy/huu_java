@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
 import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
+import com.huuhv.foodsndrinks.service.DashboardChartCache;
 import com.huuhv.foodsndrinks.service.DashboardService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 public class AdminController {
 
     private final DashboardService dashboardService;
+    private final DashboardChartCache dashboardChartCache;
 
     @GetMapping({"", "/", "/dashboard"})
     public String dashboard(Model model) {
@@ -27,6 +29,6 @@ public class AdminController {
     @GetMapping(value = "/dashboard/charts", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
     public DashboardChartResDto dashboardCharts() {
-        return dashboardService.getChartData();
+        return dashboardChartCache.get();
     }
 }

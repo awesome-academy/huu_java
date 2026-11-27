@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.task.TaskExecutionAutoConfiguration;
+import org.springframework.boot.autoconfigure.task.TaskSchedulingAutoConfiguration;
 import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -24,7 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MdcTaskDecoratorTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class))
+            // TaskScheduling: AsyncConfig khai báo bean taskScheduler từ ThreadPoolTaskSchedulerBuilder của Boot
+            .withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class,
+                    TaskSchedulingAutoConfiguration.class))
             .withUserConfiguration(AsyncConfig.class);
 
     @AfterEach

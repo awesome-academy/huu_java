@@ -5,13 +5,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title layout:title-pattern="$CONTENT_TITLE - Admin F&B">Admin Dashboard</title>
+    <!-- Token CSRF cho fetch() và frame CONNECT của STOMP (static/js/realtime.js) -->
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
 
     <link rel="stylesheet" th:href="@{/webjars/bootstrap/css/bootstrap.min.css}">
     <link rel="stylesheet" th:href="@{/webjars/font-awesome/css/all.min.css}">
 
     <link rel="stylesheet" th:href="@{/css/admin/style.css}">
 </head>
-<body class="d-flex">
+<!-- Realtime (static/js/admin/realtime.js): URL theo context path, đích STOMP = StompDestinations.ADMIN_ORDERS -->
+<body class="d-flex"
+      th:data-ws-url="@{/ws-stomp}"
+      th:data-csrf-token-url="@{/csrf-token}"
+      data-admin-orders-destination="/topic/admin/orders"
+      th:data-orders-url="@{/admin/orders}"
+      th:data-pending-count-url="@{/admin/orders/pending-count}">
 
 <div class="sidebar d-flex flex-column" style="width: 250px;">
     <div class="text-center py-4 fs-4 fw-bold border-bottom border-secondary">
@@ -36,6 +45,10 @@
         <a th:href="@{/admin/orders}"
            th:classappend="${#strings.startsWith(currentPath, '/admin/orders')} ? ' active'">
             <i class="fa-solid fa-cart-shopping me-2"></i> Manage Orders
+            <!-- Số đơn chờ xác nhận: PendingOrderCountInterceptor, cập nhật realtime bằng realtime.js -->
+            <span id="pendingOrderBadge" class="badge rounded-pill bg-danger ms-1" title="Đơn chờ xác nhận"
+                  th:text="${pendingOrderCount}"
+                  th:hidden="${pendingOrderCount == null || pendingOrderCount == 0}">0</span>
         </a>
 
         <a th:href="@{/admin/users}"
@@ -80,9 +93,16 @@
     </footer>
 </div>
 
+<!-- Toast thông báo realtime (đơn mới) — nội dung do realtime.js tạo bằng textContent -->
+<div id="adminToastContainer" class="toast-container position-fixed bottom-0 end-0 p-3"
+     aria-live="polite" aria-atomic="false"></div>
+
 <script th:src="@{/webjars/bootstrap/js/bootstrap.bundle.min.js}"></script>
+<script th:src="@{/webjars/stomp__stompjs/bundles/stomp.umd.min.js}"></script>
+<script th:src="@{/js/realtime.js}"></script>
 
 <script th:src="@{/js/admin/main.js}"></script>
+<script th:src="@{/js/admin/realtime.js}"></script>
 <th:block layout:fragment="scripts"></th:block>
 </body>
 </html>

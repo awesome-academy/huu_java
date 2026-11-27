@@ -77,7 +77,11 @@
         </div>
     </div>
 
-    <!-- Charts row — dữ liệu lấy qua JSON (static/js/admin/dashboard.js), không inline script (CSP) -->
+    <!-- Charts — dữ liệu lấy qua JSON (static/js/admin/dashboard.js), không inline script (CSP); tự tải lại khi có
+         sự kiện đơn hàng qua STOMP (static/js/admin/realtime.js) -->
+    <div id="dashboardChartsError" class="alert alert-warning small py-2" role="status" hidden>
+        <i class="fa-solid fa-triangle-exclamation me-1"></i>Không tải được dữ liệu biểu đồ — sẽ thử lại khi có cập nhật.
+    </div>
     <div class="row g-3 mb-4" id="dashboardCharts" th:data-charts-url="@{/admin/dashboard/charts}">
         <div class="col-lg-8">
             <div class="card border-0 shadow-sm h-100">
@@ -96,7 +100,7 @@
                 </div>
                 <div class="card-body d-flex flex-column align-items-center justify-content-center">
                     <canvas id="statusChart" style="max-height:200px"></canvas>
-                    <div class="mt-3 w-100">
+                    <div class="mt-3 w-100" id="statusCountList">
                         <div th:each="entry : ${stats.statusCounts}"
                              class="d-flex justify-content-between small text-muted mb-1">
                             <span th:text="${entry.key}"></span>
@@ -166,26 +170,14 @@
                     <span><i class="fa-solid fa-trophy text-warning me-2"></i>Top sản phẩm bán chạy</span>
                     <a th:href="@{/admin/products}" class="btn btn-sm btn-outline-primary">Xem tất cả</a>
                 </div>
-                <div class="card-body p-0">
-                    <div th:if="${#lists.isEmpty(stats.topProducts)}"
-                         class="text-center py-4 text-muted small">Chưa có dữ liệu bán hàng.</div>
-                    <ul class="list-group list-group-flush">
-                        <li class="list-group-item d-flex justify-content-between align-items-center px-4"
-                            th:each="p, iter : ${stats.topProducts}">
-                            <div class="d-flex align-items-center gap-2">
-                                <span class="badge rounded-pill"
-                                      th:classappend="${iter.index == 0} ? 'bg-warning text-dark' :
-                                                      (${iter.index == 1} ? 'bg-secondary' :
-                                                      (${iter.index == 2} ? 'bg-danger bg-opacity-75' : 'bg-light text-dark border'))"
-                                      th:text="${iter.index + 1}">
-                                </span>
-                                <span class="small fw-medium" th:text="${p.name}"></span>
-                            </div>
-                            <span class="badge bg-primary rounded-pill"
-                                  th:text="${p.totalQuantity + ' đã bán'}">
-                            </span>
-                        </li>
-                    </ul>
+                <div class="card-body">
+                    <!-- Cột ngang top 5 theo số lượng bán (chỉ đơn hoàn thành) — dashboard.js vẽ, ẩn/hiện theo dữ liệu -->
+                    <div id="topProductsChartWrapper" hidden>
+                        <canvas id="topProductsChart" height="220"></canvas>
+                    </div>
+                    <p id="topProductsEmpty" class="text-center py-4 text-muted small mb-0" hidden>
+                        Chưa có dữ liệu bán hàng.
+                    </p>
                 </div>
             </div>
         </div>

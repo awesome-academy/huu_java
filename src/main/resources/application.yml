@@ -8,12 +8,13 @@ spring:
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
   # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
-  # (2) + listener JMS (3) + sched-* (2) = 11 — không được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không
-  # khởi động), nửa còn lại cho request web. Nhiều instance: số instance × maximum-pool-size < max_connections của MySQL
-  # (mặc định 151). minimum-idle: không giữ sẵn cả 24 connection khi rảnh.
+  # (2) + listener JMS (5: email, Slack, DLQ, WebSocket đơn mới, WebSocket đổi trạng thái) + sched-* (2) = 13 — không
+  # được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không khởi động), nửa còn lại cho request web. Nhiều
+  # instance: số
+  # instance × maximum-pool-size < max_connections của MySQL (mặc định 151). minimum-idle: không giữ sẵn cả pool khi rảnh.
   datasource:
     hikari:
-      maximum-pool-size: 24
+      maximum-pool-size: 28
       minimum-idle: 5
   servlet:
     multipart:
@@ -154,6 +155,19 @@ app:
     # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
     # Không chấp nhận '*' (app không khởi động).
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  # WebSocket/STOMP (config/WebSocketConfig, config/properties/WebSocketProperties)
+  websocket:
+    # Origin (scheme://host[:port], cách nhau bởi dấu phẩy) được mở WebSocket /ws-stomp. Rỗng = chỉ same-origin.
+    # Prod bắt buộc khai báo origin public (config/WebSocketOriginCheck). Không chấp nhận '*'.
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
+    # Chu kỳ đóng các kết nối đang mở của tài khoản bị khoá/đổi role hoặc session HTTP đã kết thúc
+    revalidate-interval: ${WEBSOCKET_REVALIDATE_INTERVAL:60s}
+    # Heartbeat STOMP hai chiều — idle timeout của load balancer phải > 2 lần giá trị này
+    heartbeat: 10s
+    # Chống DoS: số SUBSCRIBE tối đa mỗi kết nối (trang thật dùng 1; SUBSCRIBE trùng đích luôn bị từ chối) và số kết nối
+    # tối đa mỗi user trên một instance (≈ số tab). Vượt → frame ERROR / đóng kết nối.
+    max-subscriptions-per-session: 5
+    max-connections-per-user: 10
   # Định danh instance khi chạy nhiều instance sau load balancer: in trong mỗi dòng log, là field service.node.name
   # của audit.log, và (profile prod) là tên thư mục log riêng logs/<instance-id>/ để các instance không ghi chung file.
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
@@ -173,6 +187,13 @@ app:
     max-attempts: 5
     batch-size: 100       # số bản ghi tối đa mỗi lần job chạy
     retention: 7d         # bản ghi SENT cũ hơn thì bị xoá
+    unknown-type-grace: 1h  # loại message instance không biết (rolling deploy) được hoãn không tính lần thử trong 1h
+                            # kể từ lúc ghi; quá hạn (không instance nào biết — rollback) → tính lần thử → FAILED
+  dashboard:
+    # Cache dữ liệu biểu đồ /admin/dashboard/charts trong bộ nhớ mỗi instance (service/DashboardChartCache): mọi dashboard
+    # đang mở tải lại sau mỗi sự kiện đơn hàng → một lần tính cho tất cả. Bị xoá ngay khi instance nhận sự kiện đơn hàng;
+    # TTL chỉ giới hạn độ trễ của thay đổi không có sự kiện (đổi tên sản phẩm). 0s = tắt.
+    chart-cache-ttl: 30s
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy); dashboard từ chối (AbortPolicy) → /admin trả 503; outbox bỏ task (job gửi lại).
   async:

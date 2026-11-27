@@ -16,6 +16,11 @@
         <a href="/menu" class="btn btn-primary mt-3">Khám phá thực đơn</a>
     </div>
 
+    <!-- Chỉ nối WebSocket khi trang có đơn để cập nhật -->
+    <th:block th:unless="${orderPage.empty}">
+        <div th:replace="~{web/fragments/order-status-realtime :: config}"></div>
+    </th:block>
+
     <div th:if="${!orderPage.empty}" class="card shadow-sm border-0">
         <div class="table-responsive">
             <table class="table align-middle mb-0">
@@ -33,7 +38,9 @@
                     <td class="fw-bold" th:text="'#' + ${order.id}">#1</td>
                     <td th:text="${#temporals.format(order.orderedAt != null ? order.orderedAt : order.createdAt, 'dd/MM/yyyy HH:mm')}">01/01/2026</td>
                     <td class="text-center">
-                        <span class="badge" th:classappend="${order.status.badgeClass}" th:text="${order.status.label}">Trạng thái</span>
+                        <span class="badge" th:classappend="${order.status.badgeClass}" th:text="${order.status.label}"
+                              th:data-order-status-badge="${order.id}" th:data-status="${order.status}"
+                              th:data-badge-class="${order.status.badgeClass}">Trạng thái</span>
                     </td>
                     <td class="text-end fw-bold" th:text="${#numbers.formatDecimal(order.totalPrice, 1, 'POINT', 0, 'COMMA') + ' đ'}">0 đ</td>
                     <td class="text-end">
@@ -60,6 +67,12 @@
         </ul>
     </nav>
 </div>
+
+<th:block layout:fragment="scripts">
+    <th:block th:unless="${orderPage.empty}">
+        <th:block th:replace="~{web/fragments/order-status-realtime :: scripts}"></th:block>
+    </th:block>
+</th:block>
 
 </body>
 </html>

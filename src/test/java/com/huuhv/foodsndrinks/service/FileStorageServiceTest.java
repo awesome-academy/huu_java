@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
+import com.huuhv.foodsndrinks.config.properties.UploadProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,7 +37,7 @@ class FileStorageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FileStorageService(uploadDir.toString());
+        service = new FileStorageService(new UploadProperties(uploadDir.toString()));
     }
 
     private static MockMultipartFile file(String name, String contentType, byte[] content) {

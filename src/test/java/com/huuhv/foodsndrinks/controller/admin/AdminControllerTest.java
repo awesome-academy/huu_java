@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
 import com.huuhv.foodsndrinks.exception.DashboardUnavailableException;
+import com.huuhv.foodsndrinks.service.DashboardChartCache;
 import com.huuhv.foodsndrinks.service.DashboardService;
 import com.huuhv.foodsndrinks.support.SecuredWebMvcTest;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class AdminControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @MockitoBean private DashboardService dashboardService;
+    @MockitoBean private DashboardChartCache dashboardChartCache;
 
     @Test
     void anonymous_isRedirectedToLogin() throws Exception {

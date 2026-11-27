@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 
 import java.util.Arrays;
 import java.util.Optional;
@@ -12,7 +13,9 @@ import java.util.Optional;
  */
 public enum OutboxType {
 
-    ORDER_PLACED(MessageTypes.ORDER_PLACED, OrderPlacedMessage.class, Destinations.ORDER_PLACED, true);
+    ORDER_PLACED(MessageTypes.ORDER_PLACED, OrderPlacedMessage.class, Destinations.ORDER_PLACED, true),
+    ORDER_STATUS_CHANGED(MessageTypes.ORDER_STATUS_CHANGED, OrderStatusChangedMessage.class,
+            Destinations.ORDER_STATUS_CHANGED, true);
 
     private final String alias;
     private final Class<?> payloadType;

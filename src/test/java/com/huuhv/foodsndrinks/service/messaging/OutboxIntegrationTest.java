@@ -122,20 +122,41 @@ class OutboxIntegrationTest extends AbstractMessagingIntegrationTest {
     }
 
     @Test
-    void brokenRecord_doesNotBlockOtherRecords() {
-        long brokenOrderId = newOrderId();
+    void recordOfTypeUnknownToThisInstance_isPostponedWithoutAttempt_andDoesNotBlockOtherRecords() {
+        long newerOrderId = newOrderId();
         long orderId = newOrderId();
-        // Loại không còn trong OutboxType (vd. rollback bản deploy): lỗi riêng của bản ghi, broker vẫn sống
-        jdbcTemplate.update("INSERT INTO outbox_messages (type, payload) VALUES (?, ?)", "renamedType",
-                jsonMapper.writeValueAsString(message(brokenOrderId)));
+        // Rolling deploy: loại do phiên bản mới hơn ghi, instance (cũ) này chưa biết
+        jdbcTemplate.update("INSERT INTO outbox_messages (type, payload) VALUES (?, ?)", "typeFromNewerVersion",
+                jsonMapper.writeValueAsString(message(newerOrderId)));
         jdbcTemplate.update("INSERT INTO outbox_messages (type, payload) VALUES (?, ?)",
                 OutboxType.ORDER_PLACED.alias(), jsonMapper.writeValueAsString(message(orderId)));
 
-        assertThat(outboxPublisher.publishDue()).isEqualTo(1);
+        for (int cycle = 0; cycle < 6; cycle++) {
+            outboxPublisher.publishDue();
+        }
 
         assertThat(outboxStatusOf(orderId)).isEqualTo("SENT");
-        assertThat(outboxStatusOf(brokenOrderId)).isEqualTo("PENDING");
-        assertThat(attemptsOf(brokenOrderId)).isEqualTo(1);
+        // Qua nhiều chu kỳ vẫn PENDING, 0 lần thử → instance mới gửi được, không bị đánh FAILED
+        assertThat(outboxStatusOf(newerOrderId)).isEqualTo("PENDING");
+        assertThat(attemptsOf(newerOrderId)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT last_error FROM outbox_messages WHERE id = ?", String.class,
+                outboxIdOf(newerOrderId))).isEqualTo(OutboxPublisher.UNKNOWN_TYPE_ERROR);
+    }
+
+    @Test
+    void recordOfUnknownTypeOlderThanGracePeriod_countsAttempts_untilFailed() {
+        long orderId = newOrderId();
+        // Không instance nào biết loại này sau app.outbox.unknown-type-grace (1h): rollback bản deploy
+        jdbcTemplate.update("INSERT INTO outbox_messages (type, payload, created_at) "
+                        + "VALUES (?, ?, DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 2 HOUR))", "typeFromRolledBackVersion",
+                jsonMapper.writeValueAsString(message(orderId)));
+
+        for (int cycle = 0; cycle < 5; cycle++) {   // retry-delay 0s ở profile test, max-attempts 5
+            outboxPublisher.publishDue();
+        }
+
+        assertThat(outboxStatusOf(orderId)).isEqualTo("FAILED");
+        assertThat(attemptsOf(orderId)).isEqualTo(5);
     }
 
     @Test

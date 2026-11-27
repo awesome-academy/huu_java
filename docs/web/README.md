@@ -23,6 +23,7 @@ Trang bán hàng cho người dùng cuối, render phía server bằng Thymeleaf
 | GET | `/login` | Trang đăng nhập (form + nút social login) |
 | GET / POST | `/register` | Đăng ký tài khoản (check trùng, check password nhập lại) → redirect `/login` |
 | POST | `/logout` | Đăng xuất → `/login?logout=true`, xóa session + remember-me cookie |
+| GET | `/csrf-token` | (`CsrfTokenController`, cần đăng nhập) JSON `{"headerName", "token"}` — token CSRF đã mask của session hiện tại; `static/js/realtime.js` gọi trước mỗi lần nối lại WebSocket vì session có thể đã đổi từ lúc render trang. Chưa đăng nhập → `/login`. Không cache, không mở CORS |
 
 Sau khi login: `ADMIN` → `/admin`, `USER` → `/` (hoặc quay lại trang yêu cầu trước đó).
 
@@ -74,6 +75,19 @@ Các endpoint AJAX vẫn thuộc chain web (session + CSRF token), không phải
 |---|---|---|---|
 | GET | `/orders` | USER | Lịch sử đơn hàng của tôi (phân trang) |
 | GET | `/orders/{id}` | USER | Chi tiết đơn hàng (chỉ đơn của chính mình) |
+| GET | `/orders/statuses?ids=1&ids=2` | USER | (`OrderStatusController`) JSON trạng thái hiện tại của tối đa 20 đơn — chỉ đơn của chính mình, id của người khác bị bỏ qua (chống IDOR). Thiếu/sai định dạng/quá 20 mã → 400; lỗi khác → 404/500 không body (không trả trang HTML cho `fetch()`) |
+
+### Trạng thái đơn realtime
+
+Trang `/orders` (khi có đơn) và `/orders/{id}` nối WebSocket `/ws-stomp` và SUBSCRIBE `/user/queue/orders` (`static/js/web/order-status.js` + `static/js/realtime.js`, cấu hình trong fragment `web/fragments/order-status-realtime.html`). Admin đổi trạng thái đơn → sau khi transaction commit (outbox → topic JMS `order.status-changed`), chủ đơn thấy badge trạng thái đổi (chữ + màu) và toast "Đơn #id: <trạng thái>", không cần tải lại trang.
+
+- **Chỉ chủ đơn nhận:** server gửi bằng `convertAndSendToUser(<username chủ đơn lấy từ DB>, "/queue/orders", ...)`; Spring chỉ chuyển tới phiên WebSocket có cùng tên principal — username local với mọi kiểu đăng nhập (form, remember-me, Google/Facebook/X). User khác đang online không nhận; SUBSCRIBE `/user/<tên khác>/queue/orders` hay `/queue/...` trực tiếp bị từ chối (`Access denied`).
+- **Luôn là trạng thái mới nhất:** mỗi lần đổi trạng thái là một message riêng, có thể tới sai thứ tự (gửi lại sau khi broker lỗi). Server không dùng trạng thái trong message mà đọc trạng thái hiện tại của đơn từ DB lúc gửi (lọc theo chủ đơn), nên trang không bao giờ lùi về trạng thái cũ.
+- SUBSCRIBE `/user/queue/orders` lần thứ hai trên cùng kết nối, hoặc mở quá 10 kết nối/tab trên một instance → bị từ chối (chống DoS).
+- Transaction đổi trạng thái rollback → không ai nhận. Không phát cho giỏ hàng (`CART`).
+- Sau mỗi lần kết nối — kể cả lần đầu (sự kiện giữa lúc tải trang và lúc kết nối xong) và khi nối lại (mất mạng, instance tắt/rolling deploy) — trang gọi `GET /orders/statuses` cho các đơn đang hiện để bù sự kiện lỡ, không toast; gọi thêm một lần sau 1,5s vì server đăng ký SUBSCRIBE bất đồng bộ. Session hết hạn hoặc quá số tab → dừng và hiện thông báo "Tải lại trang" (như trang admin); lỗi mạng → thử lại mãi, tab hiện lại thì nối ngay.
+- Toast chỉ hiện khi trạng thái khác trạng thái trang đang biết của đơn đó — hai lần đổi liên tiếp có thể tới thành hai sự kiện cùng mang trạng thái mới nhất, chỉ báo một lần.
+- Payload: `{orderId, status, statusLabel, badgeClass}` (`OrderStatusEventResDto`) — không có dữ liệu cá nhân.
 
 ### Đánh giá sản phẩm — `RatingController`
 

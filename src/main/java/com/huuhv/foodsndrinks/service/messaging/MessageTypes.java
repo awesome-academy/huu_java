@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 
 import java.util.Map;
 
@@ -27,9 +28,13 @@ public final class MessageTypes {
     /** {@link OrderPlacedMessage} trên topic {@code order.placed}. */
     public static final String ORDER_PLACED = "orderPlaced";
 
+    /** {@link OrderStatusChangedMessage} trên topic {@code order.status-changed}. */
+    public static final String ORDER_STATUS_CHANGED = "orderStatusChanged";
+
     /** alias → class payload. */
     public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of(
-            ORDER_PLACED, OrderPlacedMessage.class);
+            ORDER_PLACED, OrderPlacedMessage.class,
+            ORDER_STATUS_CHANGED, OrderStatusChangedMessage.class);
 
     private MessageTypes() {
     }

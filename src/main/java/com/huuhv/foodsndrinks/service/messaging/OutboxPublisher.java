@@ -42,9 +42,15 @@ import java.util.function.Supplier;
  *       một kết nối mới tới broker không mở được ({@link JmsBrokerProbe}; không tin connection đã cache): KHÔNG tính lần
  *       thử, bản ghi giữ PENDING tới khi broker hoạt động lại — broker chết/treo bao lâu cũng không làm mất thông báo. Job
  *       dừng chu kỳ ngay (gửi tiếp chỉ tốn thêm timeout).</li>
- *   <li><b>Lỗi riêng của bản ghi</b> (broker vẫn trả lời: loại không còn trong {@link OutboxType}, message bị broker từ
- *       chối…): tính một lần thử; đủ {@code app.outbox.max-attempts} → {@code FAILED} + log ERROR. Job chuyển sang bản ghi
- *       kế tiếp, một bản ghi hỏng không chặn các bản ghi khác.</li>
+ *   <li><b>Lỗi riêng của bản ghi</b> (broker vẫn trả lời, message bị broker từ chối…): tính một lần thử; đủ
+ *       {@code app.outbox.max-attempts} → {@code FAILED} + log ERROR. Job chuyển sang bản ghi kế tiếp, một bản ghi hỏng
+ *       không chặn các bản ghi khác.</li>
+ *   <li><b>Loại không có trong {@link OutboxType} của instance này</b> — trong lúc rolling deploy, bản ghi do phiên bản
+ *       MỚI hơn ghi (alias của loại đã dùng không bao giờ bị đổi/xoá): KHÔNG tính lần thử, hoãn
+ *       {@code app.outbox.retry-delay} ({@code last_error} = {@value #UNKNOWN_TYPE_ERROR}) để instance mới gửi; WARN mỗi
+ *       lần gặp. Chỉ hoãn trong {@code app.outbox.unknown-type-grace} kể từ lúc ghi: quá hạn thì không instance nào biết
+ *       loại đó (rollback bản deploy, cột {@code type} hỏng) → mỗi lần gặp tính một lần thử như lỗi riêng của bản ghi, đủ
+ *       số lần → {@code FAILED} + ERROR (một lần), không WARN mãi mỗi chu kỳ; đặt lại bằng tay sau khi deploy lại.</li>
  * </ul>
  * Gửi thành công mà commit DB lỗi (hiếm) thì bản ghi còn PENDING và được gửi lại — consumer idempotent
  * ({@code notification_logs}) nên không gửi thông báo lần hai. Broker chặn producer (đĩa đầy, address {@code BLOCK})
@@ -65,9 +71,10 @@ public class OutboxPublisher {
 
     /** {@code last_error} chỉ chứa tên loại lỗi (không chứa thông điệp có thể kèm host/dữ liệu). */
     static final int MAX_ERROR_LENGTH = 255;
+    static final String UNKNOWN_TYPE_ERROR = "UnknownOutboxType";
 
     /** Kết quả gửi một bản ghi. */
-    enum Outcome { SENT, RECORD_FAILED, BROKER_UNAVAILABLE }
+    enum Outcome { SENT, RECORD_FAILED, POSTPONED, BROKER_UNAVAILABLE }
 
     private final OutboxMessageRepository repository;
     /** {@code @Primary} — destination kiểu queue. */
@@ -132,7 +139,16 @@ public class OutboxPublisher {
     private Outcome send(OutboxMessage message) {
         Optional<OutboxType> type = OutboxType.fromAlias(message.getType());
         if (type.isEmpty()) {
-            return recordFailure(message, new IllegalStateException("Unknown outbox type"));
+            // Do phiên bản mới hơn ghi (rolling deploy): không tính lần thử — để instance biết loại này gửi
+            if (repository.postpone(message.getId(), properties.retryDelay().toMillis(),
+                    properties.unknownTypeGrace().toSeconds(), UNKNOWN_TYPE_ERROR) > 0) {
+                log.warn("Outbox message #{} has type {} unknown to this instance (written by a newer version?), "
+                        + "left PENDING for an instance that knows it", message.getId(),
+                        LogSanitizer.sanitize(message.getType()));
+                return Outcome.POSTPONED;
+            }
+            // Quá thời gian hoãn: không instance nào biết loại này → lỗi của bản ghi
+            return recordFailure(message, UNKNOWN_TYPE_ERROR, null);
         }
         OutboxType outboxType = type.get();
         try {
@@ -150,9 +166,9 @@ public class OutboxPublisher {
                         ex.getClass().getSimpleName(), message.getId());
                 return Outcome.BROKER_UNAVAILABLE;
             }
-            return recordFailure(message, ex);
+            return recordFailure(message, ex.getClass().getSimpleName(), ex);
         } catch (RuntimeException ex) {
-            return recordFailure(message, ex);
+            return recordFailure(message, ex.getClass().getSimpleName(), ex);
         }
         repository.markSent(message.getId());
         log.debug("Outbox message #{} ({}) sent", message.getId(), outboxType.alias());
@@ -176,10 +192,14 @@ public class OutboxPublisher {
         return false;
     }
 
-    private Outcome recordFailure(OutboxMessage message, RuntimeException ex) {
+    /**
+     * @param errorName tên loại lỗi (ghi vào {@code last_error})
+     * @param ex        exception gốc để log stack trace ở lần cuối, {@code null} nếu không có
+     */
+    private Outcome recordFailure(OutboxMessage message, String errorName, RuntimeException ex) {
         long id = message.getId();
         int attempt = (message.getAttempts() == null ? 0 : message.getAttempts()) + 1;
-        String error = LogSanitizer.truncate(ex.getClass().getSimpleName(), MAX_ERROR_LENGTH);
+        String error = LogSanitizer.truncate(errorName, MAX_ERROR_LENGTH);
         repository.markAttemptFailed(id, properties.maxAttempts(), properties.retryDelay().toMillis(), error);
         String type = LogSanitizer.sanitize(message.getType());
         if (attempt >= properties.maxAttempts()) {
