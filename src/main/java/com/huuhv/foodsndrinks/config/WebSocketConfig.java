@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
 import com.huuhv.foodsndrinks.security.StompErrorHandler;
+import com.huuhv.foodsndrinks.security.StompSubscriptionLimitInterceptor;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.websocket.HttpSessionLookup;
 import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
@@ -11,6 +12,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
@@ -101,6 +103,18 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .setTaskScheduler(messageBrokerTaskScheduler);
         registry.setApplicationDestinationPrefixes(StompDestinations.APP_PREFIX);
         registry.setUserDestinationPrefix(StompDestinations.USER_PREFIX);
+        // Kênh outbound mặc định là pool nhiều thread: hai message cho cùng một client có thể tới sai thứ tự (badge đơn
+        // chờ/trạng thái đơn lùi về giá trị cũ). Giữ thứ tự gửi theo từng session.
+        registry.setPreservePublishOrder(true);
+    }
+
+    /**
+     * Sau các interceptor phân quyền của {@code @EnableWebSocketSecurity} (configurer của Spring Security có
+     * {@code @Order} cao hơn class này): giới hạn SUBSCRIBE mỗi kết nối — chống DoS bằng hàng loạt SUBSCRIBE.
+     */
+    @Override
+    public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.interceptors(new StompSubscriptionLimitInterceptor(properties.maxSubscriptionsPerSession()));
     }
 
     @Override

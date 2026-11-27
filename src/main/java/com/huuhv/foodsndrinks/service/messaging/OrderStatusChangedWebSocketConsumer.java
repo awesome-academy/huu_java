@@ -12,6 +12,7 @@ import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -19,9 +20,10 @@ import java.util.stream.Collectors;
  * của topic {@code order.status-changed} ({@link JmsBrokerProperties#TOPIC_BROADCAST_LISTENER_FACTORY}), như
  * {@link OrderPlacedWebSocketConsumer}: mỗi instance nhận một bản và đẩy cho client nối vào chính nó.
  * <p>
- * Gửi cho chủ đơn trước (không đụng DB), rồi mới tới admin (đếm đơn chờ — cần DB): DB lỗi không làm mất thông báo của
- * chủ đơn. Không giao lại/DLQ — lỡ sự kiện thì trang tự tải lại trạng thái khi kết nối lại. Message không hợp lệ → WARN
- * (chỉ tên field) rồi bỏ.
+ * Message chỉ là tín hiệu "đơn này vừa đổi": cả hai bên đọc số liệu hiện tại từ DB lúc gửi ({@link OrderStatusNotifier}:
+ * trạng thái của đơn; {@link AdminOrderNotifier}: số đơn chờ), nên message tới sai thứ tự vẫn cho kết quả đúng. Hai bước
+ * độc lập: bước này lỗi (vd. DB) vẫn chạy bước kia, rồi WARN. Không giao lại/DLQ — lỡ sự kiện thì trang tự tải lại khi
+ * kết nối lại. Message không hợp lệ → WARN (chỉ tên field) rồi bỏ.
  */
 @Slf4j
 @Component
@@ -48,7 +50,16 @@ public class OrderStatusChangedWebSocketConsumer {
             log.warn("Ignoring invalid {} message (websocket): invalid {}", Destinations.ORDER_STATUS_CHANGED, fields);
             return;
         }
-        orderStatusNotifier.notifyOwner(message);
-        adminOrderNotifier.orderStatusChanged(message);
+        notify("owner", message, orderStatusNotifier::notifyOwner);
+        notify("admins", message, adminOrderNotifier::orderStatusChanged);
+    }
+
+    private static void notify(String target, OrderStatusChangedMessage message,
+                               Consumer<OrderStatusChangedMessage> notifier) {
+        try {
+            notifier.accept(message);
+        } catch (RuntimeException ex) {
+            log.warn("Could not push status change of order #{} to {}", message.orderId(), target, ex);
+        }
     }
 }

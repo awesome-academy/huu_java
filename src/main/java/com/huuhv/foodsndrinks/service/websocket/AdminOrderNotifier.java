@@ -10,7 +10,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 
 /**
  * Đẩy sự kiện đơn hàng tới admin đang mở trang quản trị ({@value StompDestinations#ADMIN_ORDERS}) trên instance này.
@@ -19,6 +21,12 @@ import org.springframework.transaction.annotation.Transactional;
  * Đếm đơn chờ bằng {@link OrderRepository} (cùng truy vấn với {@code OrderService.countPendingOrders}) thay vì gọi
  * {@code OrderService}: {@code service} đã phụ thuộc {@code service.messaging} (outbox), consumer ở
  * {@code service.messaging} gọi lớp này — gọi ngược {@code OrderService} sẽ tạo vòng phụ thuộc giữa package.
+ * <p>
+ * <b>Đếm + gửi nằm trong cùng một khoá</b>: hai listener (đơn mới, đổi trạng thái) chạy trên hai thread; không khoá thì
+ * số đếm sớm hơn có thể được gửi SAU số đếm muộn hơn → badge của admin lùi về giá trị cũ. Có khoá, thứ tự gửi = thứ tự
+ * đếm, và kênh outbound giữ thứ tự theo session ({@code preservePublishOrder}) nên giá trị cuối admin nhận là mới nhất.
+ * Mỗi lần đếm là một truy vấn riêng trong khoá (không {@code @Transactional} bao quanh method: transaction mở trước khi
+ * vào khoá có thể giữ snapshot REPEATABLE READ cũ).
  */
 @Slf4j
 @Service
@@ -27,27 +35,31 @@ public class AdminOrderNotifier {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final OrderRepository orderRepository;
+    private final ReentrantLock sendLock = new ReentrantLock();
 
-    @Transactional(readOnly = true)
     public void orderPlaced(OrderPlacedMessage message) {
         int itemCount = message.items().stream().mapToInt(OrderPlacedMessage.OrderLineItem::quantity).sum();
-        AdminOrderEventResDto event = new AdminOrderEventResDto(AdminOrderEventType.ORDER_PLACED, message.orderId(),
-                itemCount, message.totalPrice(), orderRepository.countByStatus(OrderStatus.PENDING));
-        send(event);
+        countAndSend(pendingCount -> new AdminOrderEventResDto(AdminOrderEventType.ORDER_PLACED, message.orderId(),
+                itemCount, message.totalPrice(), pendingCount));
     }
 
     /**
      * Một admin đổi trạng thái đơn → mọi admin đang online cập nhật badge "chờ xác nhận" (đếm lại từ DB) và dashboard tải
      * lại biểu đồ (doanh thu/top sản phẩm chỉ tính đơn hoàn thành nên chỉ đổi qua sự kiện này).
      */
-    @Transactional(readOnly = true)
     public void orderStatusChanged(OrderStatusChangedMessage message) {
-        send(new AdminOrderEventResDto(AdminOrderEventType.ORDER_STATUS_CHANGED, message.orderId(), null, null,
-                orderRepository.countByStatus(OrderStatus.PENDING)));
+        countAndSend(pendingCount -> new AdminOrderEventResDto(AdminOrderEventType.ORDER_STATUS_CHANGED,
+                message.orderId(), null, null, pendingCount));
     }
 
-    private void send(AdminOrderEventResDto event) {
-        messagingTemplate.convertAndSend(StompDestinations.ADMIN_ORDERS, event);
-        log.debug("Sent {} for order #{} to {}", event.type(), event.orderId(), StompDestinations.ADMIN_ORDERS);
+    private void countAndSend(Function<Long, AdminOrderEventResDto> eventFactory) {
+        sendLock.lock();
+        try {
+            AdminOrderEventResDto event = eventFactory.apply(orderRepository.countByStatus(OrderStatus.PENDING));
+            messagingTemplate.convertAndSend(StompDestinations.ADMIN_ORDERS, event);
+            log.debug("Sent {} for order #{} to {}", event.type(), event.orderId(), StompDestinations.ADMIN_ORDERS);
+        } finally {
+            sendLock.unlock();
+        }
     }
 }

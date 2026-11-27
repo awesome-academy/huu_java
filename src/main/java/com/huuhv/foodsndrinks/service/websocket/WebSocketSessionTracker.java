@@ -1,5 +1,8 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
+import com.huuhv.foodsndrinks.logging.LogSanitizer;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.security.core.Authentication;
@@ -18,6 +21,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -38,41 +42,78 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * Một socket chỉ rời danh sách khi đã thật sự đóng ({@code afterConnectionClosed}): đóng thất bại thì job thử lại ở chu kỳ
  * sau thay vì bỏ sót.
+ * <p>
+ * Chống DoS: mỗi user tối đa {@code app.websocket.max-connections-per-user} kết nối trên instance này; kết nối vượt (hoặc
+ * không có principal đã xác thực) bị đóng ngay và KHÔNG được chuyển cho handler STOMP — không tốn bộ nhớ/thread nào.
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory {
 
     /** Mã đóng 1008: client không tự kết nối lại được bằng session cũ (handshake bị chuyển hướng tới /login). */
     public static final CloseStatus REVOKED = CloseStatus.POLICY_VIOLATION.withReason("Session revoked");
+    /** Mã đóng 1008: user đã mở quá số kết nối cho phép trên instance này. */
+    public static final CloseStatus TOO_MANY_CONNECTIONS = CloseStatus.POLICY_VIOLATION.withReason("Too many connections");
 
+    private final WebSocketProperties properties;
     private final Map<String, TrackedSession> sessions = new ConcurrentHashMap<>();
+    /** Socket bị từ chối lúc mở: không chuyển tiếp cả sự kiện đóng của nó cho handler STOMP (handler chưa biết socket). */
+    private final Set<String> rejected = ConcurrentHashMap.newKeySet();
 
     @Override
     public WebSocketHandler decorate(WebSocketHandler handler) {
         return new WebSocketHandlerDecorator(handler) {
             @Override
             public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-                register(session);
-                super.afterConnectionEstablished(session);
+                if (register(session)) {
+                    super.afterConnectionEstablished(session);
+                }
             }
 
             @Override
             public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) throws Exception {
+                if (rejected.remove(session.getId())) {
+                    return;
+                }
                 sessions.remove(session.getId());
                 super.afterConnectionClosed(session, closeStatus);
             }
         };
     }
 
-    void register(WebSocketSession session) {
+    /**
+     * Ghi nhận socket vừa mở. {@code synchronized}: đếm rồi thêm phải nguyên tử, không thì nhiều handshake song song của
+     * cùng user vượt được giới hạn.
+     *
+     * @return {@code false} nếu socket bị từ chối (đã đóng)
+     */
+    synchronized boolean register(WebSocketSession session) {
         // Handshake chỉ qua được khi đã đăng nhập (SecurityConfig), principal là Authentication của session HTTP
-        if (session.getPrincipal() instanceof Authentication authentication) {
-            sessions.put(session.getId(), new TrackedSession(session, authentication.getName(),
-                    List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session)));
-        } else {
+        if (!(session.getPrincipal() instanceof Authentication authentication)) {
             log.warn("WebSocket session without authenticated principal, closing it");
-            close(session);
+            reject(session, REVOKED);
+            return false;
+        }
+        String username = authentication.getName();
+        long open = sessions.values().stream().filter(tracked -> tracked.username().equals(username)).count();
+        if (open >= properties.maxConnectionsPerUser()) {
+            log.warn("User {} already has {} open WebSocket connections on this instance, rejecting a new one",
+                    LogSanitizer.sanitize(username), open);
+            reject(session, TOO_MANY_CONNECTIONS);
+            return false;
+        }
+        sessions.put(session.getId(), new TrackedSession(session, username,
+                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session)));
+        return true;
+    }
+
+    private void reject(WebSocketSession session, CloseStatus status) {
+        rejected.add(session.getId());
+        try {
+            session.close(status);
+        } catch (IOException | IllegalStateException ex) {
+            log.warn("Closing rejected WebSocket session {} failed: {}", session.getId(), ex.toString());
         }
     }
 

@@ -26,13 +26,22 @@ class WebSocketPropertiesTest {
             assertThat(properties.allowedOrigins()).isEmpty();
             assertThat(properties.revalidateInterval()).isEqualTo(Duration.ofSeconds(60));
             assertThat(properties.heartbeat()).isEqualTo(Duration.ofSeconds(10));
+            assertThat(properties.maxSubscriptionsPerSession()).isEqualTo(5);
+            assertThat(properties.maxConnectionsPerUser()).isEqualTo(10);
         });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"app.websocket.max-subscriptions-per-session=0", "app.websocket.max-subscriptions-per-session=51",
+            "app.websocket.max-connections-per-user=0", "app.websocket.max-connections-per-user=101"})
+    void limitsOutOfRange_failStartup(String property) {
+        runner.withPropertyValues(property).run(context -> assertThat(context).hasFailed());
     }
 
     @Test
     void origins_areNormalized() {
         assertThat(new WebSocketProperties(List.of(" HTTPS://Shop.Example.com ", "", "https://shop.example.com",
-                "http://localhost:8080"), Duration.ofMinutes(1), Duration.ofSeconds(10)).allowedOrigins())
+                "http://localhost:8080"), Duration.ofMinutes(1), Duration.ofSeconds(10), 5, 10).allowedOrigins())
                 .containsExactly("https://shop.example.com", "http://localhost:8080");
     }
 
@@ -41,7 +50,7 @@ class WebSocketPropertiesTest {
             "shop.example.com"})
     void invalidOrigin_isRejected_withVariableName(String origin) {
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new WebSocketProperties(List.of(origin), Duration.ofMinutes(1), Duration.ofSeconds(10)))
+                .isThrownBy(() -> new WebSocketProperties(List.of(origin), Duration.ofMinutes(1), Duration.ofSeconds(10), 5, 10))
                 .withMessageContaining("WEBSOCKET_ALLOWED_ORIGINS");
     }
 

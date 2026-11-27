@@ -15,7 +15,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -24,7 +24,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
- * Message hợp lệ → chủ đơn trước, admin sau (DB lỗi khi đếm đơn chờ không làm mất thông báo của chủ đơn); message
+ * Message hợp lệ → chủ đơn rồi admin, bên này lỗi không chặn bên kia; message
  * rỗng/không hợp lệ bị bỏ, log chỉ có tên field.
  */
 @ExtendWith(OutputCaptureExtension.class)
@@ -55,13 +55,15 @@ class OrderStatusChangedWebSocketConsumerTest {
     }
 
     @Test
-    void adminNotificationFailure_doesNotPreventOwnerNotification() {
+    void failureOfOneSide_doesNotPreventTheOther() {
         OrderStatusChangedMessage message = new OrderStatusChangedMessage(42L, "alice", OrderStatus.CANCELLED);
+        doThrow(new IllegalStateException("db down")).when(ownerNotifier).notifyOwner(any());
         doThrow(new IllegalStateException("db down")).when(adminNotifier).orderStatusChanged(any());
 
-        assertThatThrownBy(() -> consumer.onOrderStatusChanged(message)).isInstanceOf(IllegalStateException.class);
+        assertThatNoException().isThrownBy(() -> consumer.onOrderStatusChanged(message));
 
         verify(ownerNotifier).notifyOwner(message);
+        verify(adminNotifier).orderStatusChanged(message);
     }
 
     @Test

@@ -82,6 +82,8 @@ Các endpoint AJAX vẫn thuộc chain web (session + CSRF token), không phải
 Trang `/orders` (khi có đơn) và `/orders/{id}` nối WebSocket `/ws-stomp` và SUBSCRIBE `/user/queue/orders` (`static/js/web/order-status.js` + `static/js/realtime.js`, cấu hình trong fragment `web/fragments/order-status-realtime.html`). Admin đổi trạng thái đơn → sau khi transaction commit (outbox → topic JMS `order.status-changed`), chủ đơn thấy badge trạng thái đổi (chữ + màu) và toast "Đơn #id: <trạng thái>", không cần tải lại trang.
 
 - **Chỉ chủ đơn nhận:** server gửi bằng `convertAndSendToUser(<username chủ đơn lấy từ DB>, "/queue/orders", ...)`; Spring chỉ chuyển tới phiên WebSocket có cùng tên principal — username local với mọi kiểu đăng nhập (form, remember-me, Google/Facebook/X). User khác đang online không nhận; SUBSCRIBE `/user/<tên khác>/queue/orders` hay `/queue/...` trực tiếp bị từ chối (`Access denied`).
+- **Luôn là trạng thái mới nhất:** mỗi lần đổi trạng thái là một message riêng, có thể tới sai thứ tự (gửi lại sau khi broker lỗi). Server không dùng trạng thái trong message mà đọc trạng thái hiện tại của đơn từ DB lúc gửi (lọc theo chủ đơn), nên trang không bao giờ lùi về trạng thái cũ.
+- SUBSCRIBE `/user/queue/orders` lần thứ hai trên cùng kết nối, hoặc mở quá 10 kết nối/tab trên một instance → bị từ chối (chống DoS).
 - Transaction đổi trạng thái rollback → không ai nhận. Không phát cho giỏ hàng (`CART`).
 - Kết nối lại (mất mạng, instance tắt/rolling deploy): trang gọi `GET /orders/statuses` cho các đơn đang hiện để bù sự kiện lỡ. Session hết hạn → dừng (như trang admin).
 - Payload: `{orderId, status, statusLabel, badgeClass}` (`OrderStatusEventResDto`) — không có dữ liệu cá nhân.

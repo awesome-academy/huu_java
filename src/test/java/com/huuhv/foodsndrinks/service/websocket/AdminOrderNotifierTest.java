@@ -13,10 +13,20 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
+import org.mockito.InOrder;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -50,5 +60,43 @@ class AdminOrderNotifierTest {
 
         verify(messagingTemplate).convertAndSend(StompDestinations.ADMIN_ORDERS, new AdminOrderEventResDto(
                 AdminOrderEventType.ORDER_STATUS_CHANGED, 42L, null, null, 2L));
+    }
+
+    @Test
+    void concurrentEvents_areSentInTheOrderTheyWereCounted() throws Exception {
+        // Listener "đơn mới" và "đổi trạng thái" chạy trên 2 thread: số đếm sớm (3) không được gửi sau số đếm muộn (4)
+        CountDownLatch firstCounting = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        AtomicInteger counts = new AtomicInteger();
+        when(orderRepository.countByStatus(OrderStatus.PENDING)).thenAnswer(invocation -> {
+            if (counts.incrementAndGet() == 1) {
+                firstCounting.countDown();
+                releaseFirst.await(5, TimeUnit.SECONDS);
+                return 3L;
+            }
+            return 4L;
+        });
+        OrderStatusChangedMessage message = new OrderStatusChangedMessage(42L, "alice", OrderStatus.COMPLETED);
+        ExecutorService threads = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> first = threads.submit(() -> notifier.orderStatusChanged(message));
+            assertThat(firstCounting.await(5, TimeUnit.SECONDS)).isTrue();
+            Future<?> second = threads.submit(() -> notifier.orderStatusChanged(message));
+
+            // Thread 2 phải chờ khoá: chưa được đếm khi thread 1 còn giữ khoá
+            Thread.sleep(200);
+            assertThat(counts.get()).isEqualTo(1);
+            releaseFirst.countDown();
+            first.get(5, TimeUnit.SECONDS);
+            second.get(5, TimeUnit.SECONDS);
+        } finally {
+            threads.shutdownNow();
+        }
+
+        InOrder order = inOrder(messagingTemplate);
+        order.verify(messagingTemplate).convertAndSend(StompDestinations.ADMIN_ORDERS, new AdminOrderEventResDto(
+                AdminOrderEventType.ORDER_STATUS_CHANGED, 42L, null, null, 3L));
+        order.verify(messagingTemplate).convertAndSend(StompDestinations.ADMIN_ORDERS, new AdminOrderEventResDto(
+                AdminOrderEventType.ORDER_STATUS_CHANGED, 42L, null, null, 4L));
     }
 }

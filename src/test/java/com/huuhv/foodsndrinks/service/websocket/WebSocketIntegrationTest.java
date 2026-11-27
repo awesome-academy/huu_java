@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
@@ -10,6 +11,7 @@ import com.huuhv.foodsndrinks.service.messaging.Destinations;
 import com.huuhv.foodsndrinks.support.BrowserSession;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.broker.SimpleBrokerMessageHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -29,6 +31,7 @@ class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
     @Autowired private WebSocketSessionRevalidationJob revalidationJob;
     @Autowired private OrderService orderService;
     @Autowired private TransactionTemplate transactionTemplate;
+    @Autowired private SimpleBrokerMessageHandler simpleBroker;
 
     @Test
     void admin_receivesNewOrder_withPendingCount_andNoCustomerData() throws Exception {
@@ -191,6 +194,38 @@ class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
         // IDOR: user khác đang online cùng đích /user/queue/orders không nhận gì
         assertThat(otherEvents.poll(1, TimeUnit.SECONDS)).isNull();
         assertThat(ownerEvents.poll(500, TimeUnit.MILLISECONDS)).as("exactly one event").isNull();
+    }
+
+    @Test
+    void staleStatusEventDeliveredLate_ownerStillGetsCurrentStatusFromDb() throws Exception {
+        User owner = createUser(Role.ROLE_USER);
+        Order order = createOrder(owner, OrderStatus.COMPLETED);
+        BlockingQueue<Map<String, Object>> ownerEvents =
+                track(login(owner).connect()).subscribe(StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, owner.getUsername(), StompDestinations.USER_ORDERS);
+
+        // Message của lần đổi trước (PROCESSING) tới sau cùng (gửi lại bởi OutboxRelayJob) trong khi DB đã COMPLETED
+        topicJmsTemplate.convertAndSend(Destinations.ORDER_STATUS_CHANGED,
+                new OrderStatusChangedMessage(order.getId(), owner.getUsername(), OrderStatus.PROCESSING));
+
+        Map<String, Object> event = ownerEvents.poll(BrowserSession.WAIT.toSeconds(), TimeUnit.SECONDS);
+        assertThat(event).isNotNull().containsEntry("status", "COMPLETED");
+        // Thứ tự gửi tới từng client được giữ (kênh outbound mặc định là pool nhiều thread)
+        assertThat(simpleBroker.isPreservePublishOrder()).isTrue();
+    }
+
+    @Test
+    void floodOfSubscribes_isCutOff_atDuplicateDestination() throws Exception {
+        User user = createUser(Role.ROLE_USER);
+        BrowserSession.Stomp stomp = track(login(user).connect());
+        stomp.subscribe(StompDestinations.USER_ORDERS);
+        awaitSubscribed(userRegistry, user.getUsername(), StompDestinations.USER_ORDERS);
+
+        // SUBSCRIBE thứ hai cùng đích (id mới): simple broker sẽ thêm bản ghi và nhân số message — bị từ chối, đóng kết nối
+        stomp.subscribe(StompDestinations.USER_ORDERS);
+
+        assertThat(stomp.nextError().getFirst("message")).isEqualTo("Message could not be processed");
+        assertThat(stomp.awaitClosed()).isTrue();
     }
 
     @Test

@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
  */
 class WebSocketSessionRevalidationJobTest {
 
-    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker();
+    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker(WebSocketSessionTrackerTest.properties(10));
     private final WebSocketHandler decorated = tracker.decorate(mock(WebSocketHandler.class));
     private final HttpSessionLookup httpSessionLookup = mock(HttpSessionLookup.class);
     private final AccountStatusService accountStatusService = mock(AccountStatusService.class);

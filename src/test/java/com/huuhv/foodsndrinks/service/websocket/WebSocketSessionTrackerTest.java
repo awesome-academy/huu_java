@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.TestingAuthenticationToken;
@@ -10,11 +11,14 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.security.Principal;
+import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -29,9 +33,44 @@ import static org.mockito.Mockito.when;
  */
 class WebSocketSessionTrackerTest {
 
-    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker();
+    private static final int MAX_CONNECTIONS = 2;
+
+    private final WebSocketSessionTracker tracker = new WebSocketSessionTracker(properties(MAX_CONNECTIONS));
     private final WebSocketHandler delegate = mock(WebSocketHandler.class);
     private final WebSocketHandler decorated = tracker.decorate(delegate);
+
+    static WebSocketProperties properties(int maxConnectionsPerUser) {
+        return new WebSocketProperties(List.of(), Duration.ofSeconds(60), Duration.ofSeconds(10), 5,
+                maxConnectionsPerUser);
+    }
+
+    @Test
+    void connectionsBeyondPerUserLimit_areClosed_withoutReachingStompHandler() throws Exception {
+        WebSocketSession tab1 = socket("ws-a1", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        WebSocketSession tab2 = socket("ws-a2", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        WebSocketSession tab3 = socket("ws-a3", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        WebSocketSession bob = socket("ws-b1", "http-b", new TestingAuthenticationToken("bob", "n/a", "ROLE_USER"));
+        decorated.afterConnectionEstablished(tab1);
+        decorated.afterConnectionEstablished(tab2);
+
+        decorated.afterConnectionEstablished(tab3);
+        decorated.afterConnectionEstablished(bob);
+
+        verify(tab3).close(WebSocketSessionTracker.TOO_MANY_CONNECTIONS);
+        // Socket bị từ chối không tới handler STOMP — cả lúc mở lẫn lúc đóng
+        verify(delegate, never()).afterConnectionEstablished(tab3);
+        verify(delegate, never()).afterConnectionClosed(eq(tab3), any());
+        // Giới hạn theo từng user
+        verify(delegate).afterConnectionEstablished(bob);
+        assertThat(tracker.snapshot()).extracting(WebSocketSessionTracker.TrackedSession::username)
+                .containsExactlyInAnyOrder("alice", "alice", "bob");
+
+        // Đóng một tab trả lại chỗ
+        decorated.afterConnectionClosed(tab1, CloseStatus.NORMAL);
+        WebSocketSession tab4 = socket("ws-a4", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        decorated.afterConnectionEstablished(tab4);
+        verify(delegate).afterConnectionEstablished(tab4);
+    }
 
     @Test
     void openedSession_isTracked_withUserAndHttpSession_untilClosed() throws Exception {
@@ -59,6 +98,8 @@ class WebSocketSessionTrackerTest {
 
         assertThat(tracker.snapshot()).isEmpty();
         verify(socket).close(WebSocketSessionTracker.REVOKED);
+        verify(delegate, never()).afterConnectionEstablished(socket);
+        verify(delegate, never()).afterConnectionClosed(eq(socket), any());
     }
 
     @Test
