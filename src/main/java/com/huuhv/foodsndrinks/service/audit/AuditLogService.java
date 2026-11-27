@@ -226,6 +226,20 @@ public class AuditLogService {
                 .with("export.rows", rows));
     }
 
+    /**
+     * Import sản phẩm từ Excel đã ghi xong (thay đổi hàng loạt). Gọi sau khi transaction ghi đã commit.
+     *
+     * @param fileName tên file admin tải lên (dữ liệu người dùng — được cắt ngắn, encoder của log làm sạch ký tự ngắt dòng)
+     */
+    public void productsImported(String fileName, int created, int updated, int unchanged) {
+        write(event(Level.INFO, "Products imported", "PRODUCTS_IMPORTED", "success")
+                .with("actor", currentActor())
+                .with("import.file", fileName)
+                .with("import.created", created)
+                .with("import.updated", updated)
+                .with("import.unchanged", unchanged));
+    }
+
     // -------------------------------------------------------
     // Helpers
     // -------------------------------------------------------

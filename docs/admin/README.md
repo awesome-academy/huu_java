@@ -36,8 +36,19 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 | GET | `/admin/products/edit/{id}` | Form sửa sản phẩm |
 | POST | `/admin/products/edit/{id}` | Cập nhật (thêm/xóa ảnh, chọn ảnh đại diện) |
 | POST | `/admin/products/{id}/delete` | Xóa sản phẩm |
+| GET | `/admin/products/import` | Trang import sản phẩm từ Excel (`ProductExcelController`): nút tải file mẫu + form upload |
+| GET | `/admin/products/import/template` | Tải file mẫu `foodsndrinks-products-template.xlsx` (cột Tên, Danh mục, Loại, Giá, Mô tả, Còn bán; danh sách chọn cho Loại / Còn bán; sheet "Hướng dẫn" kèm danh mục hiện có) |
+| POST | `/admin/products/import` | Upload file `.xlsx` (`file`, multipart + CSRF). Hợp lệ → lưu tất cả, quay lại trang import kèm số sản phẩm thêm / cập nhật / không đổi. Có dòng lỗi → không lưu dòng nào, hiển thị bảng lỗi (dòng, cột, nội dung). `ROLE_USER` → 403, thiếu CSRF → 403 |
 
 Ảnh upload lưu tại thư mục `UPLOAD_DIR` (mặc định `./uploads`), serve qua `/uploads/**` (cấu hình trong `WebMvcConfig`). Chỉ nhận PNG, JPEG — nội dung file (magic bytes) phải khớp đuôi file, `Content-Type` do trình duyệt gửi không được dùng. Ảnh được decode rồi encode lại (bỏ EXIF/GPS và dữ liệu thừa, áp hướng xoay EXIF, từ chối ảnh trên 40 triệu pixel, thu nhỏ cạnh dài về 2048px); tên file lưu là UUID. GIF/WEBP không được nhận vì JDK không có codec WebP và encode lại GIF làm mất animation.
+
+**Import sản phẩm từ Excel** (Apache POI — `service/excel/ProductImportService`):
+
+- **File được nhận:** chỉ `.xlsx` thật (đuôi file + magic bytes; `Content-Type` của trình duyệt không được tin), tối đa `app.excel.import.max-file-size` (5 MB), `max-rows` (1.000 dòng dữ liệu) và `max-uncompressed-size` (20 MB sau khi giải nén — chống zip bomb). Chỉ sheet đầu tiên được đọc; dòng đầu phải đúng 6 cột của file mẫu. File sai → thông báo lỗi, không đọc tiếp. File được đọc kiểu streaming, công thức trong ô không bao giờ được tính (chỉ dùng giá trị đã lưu).
+- **Validate:** mỗi dòng qua đúng ràng buộc của form thêm sản phẩm (`ProductReqDto`): tên bắt buộc ≤ 255 ký tự, danh mục phải tồn tại (theo tên), loại là `Đồ ăn`/`Đồ uống` (hoặc `FOOD`/`DRINK`), giá > 0 và ≤ 99.999.999,99 với tối đa 2 chữ số thập phân, mô tả ≤ 16.000 ký tự, "Còn bán" là `Có`/`Không` (trống = Có). Thông báo lỗi không lặp lại nội dung ô.
+- **Thêm mới hay cập nhật (upsert theo tên):** tên trùng **chính xác** một sản phẩm đã có → cập nhật sản phẩm đó (danh mục, loại, giá, mô tả, còn bán — mô tả để trống sẽ xoá mô tả cũ; tên, slug và ảnh giữ nguyên); dòng giống hệt sản phẩm đang có → bỏ qua ("không đổi"); tên chưa có → thêm mới (slug sinh tự động). MySQL so sánh tên không phân biệt hoa/thường và dấu, nên tên chỉ "gần trùng" (vd. `Bơ khô` khi đã có `Bò kho`) là **lỗi dòng** — không bao giờ tự cập nhật một sản phẩm trông khác tên. Trùng tên giữa hai dòng trong file cũng là lỗi.
+- **Tất cả hoặc không:** có một dòng lỗi thì không dòng nào được lưu; không có lỗi thì mọi dòng được ghi trong một transaction. Dữ liệu đổi giữa lúc kiểm tra và lúc ghi (người khác vừa tạo sản phẩm cùng tên, xoá danh mục) → rollback cả file, báo "import lại".
+- Mỗi lần import thành công ghi audit `PRODUCTS_IMPORTED` (người import, tên file, số thêm / cập nhật / không đổi).
 
 ### Quản lý danh mục — `CategoryAdminController` (`/admin/categories`)
 

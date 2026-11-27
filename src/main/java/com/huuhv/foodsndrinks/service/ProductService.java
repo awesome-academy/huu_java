@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
+import com.huuhv.foodsndrinks.dto.request.ProductImportCommand;
 import com.huuhv.foodsndrinks.dto.request.ProductReqDto;
 import com.huuhv.foodsndrinks.dto.response.ProductResDto;
 import com.huuhv.foodsndrinks.entity.Category;
@@ -11,6 +12,7 @@ import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -22,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -167,6 +171,46 @@ public class ProductService {
         product.setDescription(dto.getDescription());
         product.setIsAvailable(dto.getIsAvailable() != null && dto.getIsAvailable());
         productRepository.save(product);
+    }
+
+    // -------------------------------------------------------
+    // Import Excel (service/excel)
+    // -------------------------------------------------------
+
+    /**
+     * Với mỗi tên trong {@code names}: các sản phẩm đã có mà MySQL coi là trùng tên (theo collation của cột — xem
+     * {@link ProductRepository#findImportMatchesByName}). Tra từng tên một (đi trên index {@code idx_products_name}) trong
+     * MỘT transaction read-only: chỉ MySQL biết chính xác hai tên có "bằng nhau" theo collation hay không, gộp thành một
+     * câu {@code IN} thì phía Java không ghép lại được dòng nào khớp sản phẩm nào.
+     *
+     * @return map theo đúng chuỗi tên đã truyền vào; tên không trùng sản phẩm nào → danh sách rỗng
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<ProductImportMatch>> findImportMatches(Collection<String> names) {
+        Map<String, List<ProductImportMatch>> matches = new HashMap<>();
+        for (String name : names) {
+            matches.computeIfAbsent(name, productRepository::findImportMatchesByName);
+        }
+        return matches;
+    }
+
+    /**
+     * Ghi toàn bộ một file import trong MỘT transaction: hoặc mọi dòng được ghi, hoặc không dòng nào. Mỗi dòng đi qua
+     * đúng {@link #createProduct} / {@link #updateProduct} của form admin (cùng kiểm tra trùng tên, sinh slug) — không ghi
+     * thẳng repository. Ảnh của sản phẩm không bị đụng tới.
+     *
+     * @throws DuplicateResourceException hoặc {@link ResourceNotFoundException} khi dữ liệu đã đổi kể từ lúc validate
+     *                                    (sản phẩm cùng tên vừa được tạo, sản phẩm/danh mục vừa bị xoá) → rollback cả file
+     */
+    @Transactional
+    public void applyImport(List<ProductImportCommand> commands) {
+        for (ProductImportCommand command : commands) {
+            if (command.isCreate()) {
+                createProduct(command.product(), null, 0);
+            } else {
+                updateProduct(command.productId(), command.product(), null, null, null);
+            }
+        }
     }
 
     @Transactional

@@ -4,14 +4,12 @@ import com.huuhv.foodsndrinks.config.properties.LoginAttemptProperties;
 import com.huuhv.foodsndrinks.exception.LoginThrottledException;
 import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.utils.CollationKeys;
 import com.huuhv.foodsndrinks.utils.RequestUtils;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.regex.Pattern;
 
 /**
  * Chống brute-force đăng nhập (form + API) và dò mật khẩu hiện tại khi đổi mật khẩu ({@link LoginAttemptProperties}).
@@ -40,8 +38,6 @@ public class LoginAttemptService {
     static final String SCOPE_IP_USER = "IP_USER";
     static final String SCOPE_ACCOUNT = "ACCOUNT";
     static final String SCOPE_PASSWORD_CHANGE = "PASSWORD_CHANGE";
-
-    private static final Pattern COMBINING_MARKS = Pattern.compile("\\p{M}+");
 
     private final AuditLogService auditLogService;
     private final AttemptLimiter ipLimiter;
@@ -186,13 +182,9 @@ public class LoginAttemptService {
         passwordChangeLimiter.reset(String.valueOf(userId));
     }
 
-    /** NFKD + bỏ dấu + viết thường, gần với cách collation {@code utf8mb4_0900_ai_ci} so sánh. */
+    /** NFKD + bỏ dấu + viết thường, gần với cách collation {@code utf8mb4_0900_ai_ci} so sánh ({@link CollationKeys}). */
     static String normalize(String loginId) {
-        if (loginId == null) {
-            return "";
-        }
-        String decomposed = Normalizer.normalize(loginId.strip(), Normalizer.Form.NFKD);
-        return COMBINING_MARKS.matcher(decomposed).replaceAll("").toLowerCase(Locale.ROOT);
+        return CollationKeys.of(loginId);
     }
 
     /** Trạng thái của một lần đăng nhập đang chạy (các phạm vi đã giữ chỗ). Không dùng chung giữa các thread. */

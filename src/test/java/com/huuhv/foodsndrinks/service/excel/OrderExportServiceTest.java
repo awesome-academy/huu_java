@@ -1,6 +1,5 @@
 package com.huuhv.foodsndrinks.service.excel;
 
-import com.huuhv.foodsndrinks.config.properties.ExcelProperties;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.service.OrderService;
@@ -44,8 +43,7 @@ class OrderExportServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OrderExportService(orderService, new ExcelProperties(new ExcelProperties.Export(MAX_ROWS)),
-                auditLogService);
+        service = new OrderExportService(orderService, ExcelTestFiles.properties(MAX_ROWS, 1_000), auditLogService);
     }
 
     @Test

@@ -199,6 +199,12 @@ app:
     export:
       # Số dòng dữ liệu tối đa của một file export. Bộ lọc khớp nhiều hơn → báo lỗi, không tạo file
       max-rows: 50000
+    # Import sản phẩm từ .xlsx (trang /admin/products/import). Vượt giới hạn nào thì cả file bị từ chối
+    import:
+      max-rows: 1000              # số dòng dữ liệu (không tính dòng tiêu đề)
+      max-file-size: 5MB          # phải ≤ spring.servlet.multipart.max-file-size (lớn hơn → app không khởi động)
+      max-uncompressed-size: 20MB # tổng dung lượng sau khi giải nén file .xlsx (zip) — chống zip bomb
+      max-errors: 200             # số lỗi dòng tối đa được hiển thị (tổng số lỗi vẫn được đếm)
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
   # (CallerRunsPolicy); dashboard từ chối (AbortPolicy) → /admin trả 503; outbox bỏ task (job gửi lại).
   async:

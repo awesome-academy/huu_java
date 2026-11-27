@@ -4,9 +4,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.SpreadsheetVersion;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataValidationHelper;
 import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.util.CellRangeAddressList;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 
 import java.io.IOException;
@@ -45,29 +47,59 @@ public final class ExcelSheetWriter implements AutoCloseable {
     }
 
     private final SXSSFWorkbook workbook = new SXSSFWorkbook(ROW_WINDOW);
-    private final Sheet sheet;
+    private final CellStyle headerStyle;
     private final CellStyle guardedTextStyle;
     private final CellStyle dateTimeStyle;
     private final CellStyle integerStyle;
     private final CellStyle moneyStyle;
 
+    private Sheet sheet;
     private Row currentRow;
     private int nextRowIndex;
     private int nextColumnIndex;
 
     public ExcelSheetWriter(String sheetName, List<Column> columns) {
         try {
-            sheet = workbook.createSheet(sheetName);
+            headerStyle = workbook.createCellStyle();
+            Font bold = workbook.createFont();
+            bold.setBold(true);
+            headerStyle.setFont(bold);
             guardedTextStyle = workbook.createCellStyle();
             guardedTextStyle.setQuotePrefixed(true);
             dateTimeStyle = numberStyle("dd/mm/yyyy hh:mm");
             integerStyle = numberStyle("0");
             moneyStyle = numberStyle("#,##0");
-            writeHeader(columns);
+            newSheet(sheetName, columns);
         } catch (RuntimeException e) {
             close();
             throw e;
         }
+    }
+
+    /**
+     * Thêm một sheet nữa (sau các sheet đã có) với dòng tiêu đề {@code columns}; các lệnh {@link #row()} tiếp theo ghi vào
+     * sheet này. Sheet đầu tiên vẫn là sheet mở ra khi người dùng mở file.
+     */
+    public ExcelSheetWriter newSheet(String sheetName, List<Column> columns) {
+        sheet = workbook.createSheet(sheetName);
+        nextRowIndex = 0;
+        writeHeader(columns);
+        return this;
+    }
+
+    /**
+     * Gắn danh sách chọn (data validation) cho một cột của sheet hiện tại, từ dòng dữ liệu đầu tiên tới dòng
+     * {@code lastDataRow} — chỉ là gợi ý cho người nhập, server vẫn validate lại mọi giá trị.
+     *
+     * @param columnIndex cột tính từ 0
+     * @param lastDataRow số dòng dữ liệu được gắn danh sách (không tính dòng tiêu đề)
+     */
+    public ExcelSheetWriter dropdown(int columnIndex, int lastDataRow, List<String> options) {
+        DataValidationHelper helper = sheet.getDataValidationHelper();
+        sheet.addValidationData(helper.createValidation(
+                helper.createExplicitListConstraint(options.toArray(String[]::new)),
+                new CellRangeAddressList(1, lastDataRow, columnIndex, columnIndex)));
+        return this;
     }
 
     /** Bắt đầu một dòng dữ liệu mới; các lệnh ghi ô tiếp theo điền lần lượt từ cột đầu tiên. */
@@ -118,7 +150,7 @@ public final class ExcelSheetWriter implements AutoCloseable {
         return this;
     }
 
-    /** Số dòng dữ liệu đã ghi (không tính dòng tiêu đề). */
+    /** Số dòng dữ liệu đã ghi vào sheet hiện tại (không tính dòng tiêu đề). */
     public int dataRowCount() {
         return nextRowIndex - 1;
     }
@@ -144,11 +176,6 @@ public final class ExcelSheetWriter implements AutoCloseable {
     }
 
     private void writeHeader(List<Column> columns) {
-        CellStyle headerStyle = workbook.createCellStyle();
-        Font bold = workbook.createFont();
-        bold.setBold(true);
-        headerStyle.setFont(bold);
-
         row();
         for (int i = 0; i < columns.size(); i++) {
             Column column = columns.get(i);

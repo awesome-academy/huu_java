@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.enums.ProductType;
+import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -20,6 +22,20 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     boolean existsBySlugAndIdNot(String slug, Long id);
 
     long countByIsAvailableTrue();
+
+    /**
+     * Sản phẩm trùng tên với {@code name} THEO COLLATION của cột (mặc định {@code utf8mb4_0900_ai_ci}: không phân biệt
+     * hoa/thường và dấu — "Bò kho" khớp cả "bo kho" lẫn "Bơ khô"), đúng quy tắc của {@link #existsByName}. Import Excel
+     * dùng để quyết định thêm mới / cập nhật: người gọi phải tự so khớp CHÍNH XÁC trước khi cập nhật.
+     */
+    @Query("""
+            SELECT new com.huuhv.foodsndrinks.repository.projection.ProductImportMatch(
+                       p.id, p.name, c.id, p.type, p.price, p.description, p.isAvailable)
+            FROM Product p LEFT JOIN p.category c
+            WHERE p.name = :name
+            ORDER BY p.id
+            """)
+    List<ProductImportMatch> findImportMatchesByName(@Param("name") String name);
 
     @Query(value = """
             SELECT p FROM Product p LEFT JOIN FETCH p.category c
