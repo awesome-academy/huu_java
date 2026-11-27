@@ -1,7 +1,8 @@
 // Realtime cho mọi trang admin: nhận sự kiện đơn hàng qua STOMP (/topic/admin/orders), cập nhật badge "đơn chờ xác nhận"
 // ở sidebar và hiện toast khi có đơn mới. Phát CustomEvent cho script của từng trang (dashboard.js):
 //   - "admin:orders-changed"  (detail = payload) mỗi sự kiện;
-//   - "admin:realtime-resync" (detail = {initial}) sau mỗi lần SUBSCRIBE xong — kết nối lại thì tải lại số liệu.
+//   - "admin:realtime-resync" (detail = {initial}) sau mỗi lần SUBSCRIBE xong, kể cả lần đầu (sự kiện giữa lúc render
+//     trang và lúc SUBSCRIBE xong bị lỡ) → tải lại số liệu.
 // Mọi dữ liệu đưa vào DOM bằng textContent/thuộc tính, không innerHTML.
 (function () {
     "use strict";
@@ -100,10 +101,8 @@
         csrfTokenUrl: body.dataset.csrfTokenUrl,
         subscriptions: [{destination: body.dataset.adminOrdersDestination, onMessage: onOrderEvent}],
         onResync: function (initial) {
-            // Lần đầu: badge vừa được server render. Từ lần kết nối lại: có thể đã lỡ sự kiện → tải lại
-            if (!initial) {
-                refreshPendingCount();
-            }
+            // Kể cả lần đầu: badge được render trước khi SUBSCRIBE xong — đơn đặt trong khoảng đó không có sự kiện nào
+            refreshPendingCount();
             document.dispatchEvent(new CustomEvent("admin:realtime-resync", {detail: {initial: initial}}));
         }
     });

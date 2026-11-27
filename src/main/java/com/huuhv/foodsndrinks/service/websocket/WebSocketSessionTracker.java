@@ -40,8 +40,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * id ({@code ChangeSessionIdAuthenticationStrategy}) → {@link HttpSessionIdChangedEvent}: socket mở trước đó mang danh
  * tính lúc handshake, nên bị đóng; client nối lại bằng danh tính mới của session.
  * <p>
- * Một socket chỉ rời danh sách khi đã thật sự đóng ({@code afterConnectionClosed}): đóng thất bại thì job thử lại ở chu kỳ
- * sau thay vì bỏ sót.
+ * Một socket chỉ rời danh sách khi đã thật sự đóng ({@code afterConnectionClosed}). Socket đã bị thu hồi ({@link #revoke})
+ * được đánh dấu {@link TrackedSession#revoked()}: đóng thất bại thì job đóng lại ở chu kỳ sau dù lý do thu hồi không còn
+ * kiểm tra lại được (vd. đổi id session — object {@code HttpSession} vẫn sống, username vẫn hợp lệ), và lý do chỉ được
+ * audit một lần ({@link #revoke} trả {@code true} đúng lần đầu).
  * <p>
  * Chống DoS: mỗi user tối đa {@code app.websocket.max-connections-per-user} kết nối trên instance này; kết nối vượt (hoặc
  * không có principal đã xác thực) bị đóng ngay và KHÔNG được chuyển cho handler STOMP — không tốn bộ nhớ/thread nào.
@@ -104,7 +106,7 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
             return false;
         }
         sessions.put(session.getId(), new TrackedSession(session, username,
-                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session)));
+                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session), false));
         return true;
     }
 
@@ -123,19 +125,36 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
     }
 
     /**
-     * Đóng kết nối. Bản ghi được gỡ ở {@code afterConnectionClosed}; socket đã đóng sẵn thì gỡ ngay. Đóng thất bại (vd.
-     * container đang ghi frame khác) → WARN, socket còn trong danh sách để lần kiểm tra sau đóng lại.
+     * Thu hồi kết nối: đánh dấu {@link TrackedSession#revoked()} rồi đóng (1008). Bản ghi được gỡ ở
+     * {@code afterConnectionClosed}; socket đã đóng sẵn thì gỡ ngay. Đóng thất bại (vd. container đang ghi frame khác)
+     * → WARN, socket còn trong danh sách với dấu thu hồi để job đóng lại ở chu kỳ sau.
+     *
+     * @return {@code true} nếu đây là lần đầu socket bị thu hồi — người gọi ghi audit đúng một lần
      */
-    public void close(WebSocketSession session) {
+    public boolean revoke(WebSocketSession session) {
+        boolean first = markRevoked(session.getId());
         if (!session.isOpen()) {
             sessions.remove(session.getId());
-            return;
+            return first;
         }
         try {
             session.close(REVOKED);
         } catch (IOException | IllegalStateException ex) {
             log.warn("Closing WebSocket session {} failed, will retry: {}", session.getId(), ex.toString());
         }
+        return first;
+    }
+
+    private boolean markRevoked(String sessionId) {
+        boolean[] first = {false};
+        sessions.computeIfPresent(sessionId, (id, tracked) -> {
+            if (tracked.revoked()) {
+                return tracked;
+            }
+            first[0] = true;
+            return tracked.asRevoked();
+        });
+        return first[0];
     }
 
     @EventListener
@@ -152,7 +171,7 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
         int closed = 0;
         for (TrackedSession tracked : snapshot()) {
             if (Objects.equals(tracked.httpSessionId(), httpSessionId)) {
-                close(tracked.session());
+                revoke(tracked.session());
                 closed++;
             }
         }
@@ -165,8 +184,14 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
      * @param username      {@code Authentication#getName()} lúc handshake (username local với mọi kiểu đăng nhập)
      * @param authorities   quyền lúc handshake — so với DB để phát hiện đổi role
      * @param httpSessionId id session HTTP lúc handshake (không bao giờ ghi ra log)
+     * @param revoked       đã bị thu hồi nhưng chưa đóng được — chỉ còn việc đóng lại, không kiểm tra/audit lại
      */
     public record TrackedSession(WebSocketSession session, String username,
-                                 Collection<? extends GrantedAuthority> authorities, String httpSessionId) {
+                                 Collection<? extends GrantedAuthority> authorities, String httpSessionId,
+                                 boolean revoked) {
+
+        TrackedSession asRevoked() {
+            return new TrackedSession(session, username, authorities, httpSessionId, true);
+        }
     }
 }

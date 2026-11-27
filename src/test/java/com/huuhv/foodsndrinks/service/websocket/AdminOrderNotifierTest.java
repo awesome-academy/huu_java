@@ -11,6 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import org.mockito.InOrder;
@@ -26,6 +27,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,6 +39,7 @@ class AdminOrderNotifierTest {
 
     @Mock private SimpMessagingTemplate messagingTemplate;
     @Mock private OrderRepository orderRepository;
+    @Mock private ApplicationEventPublisher eventPublisher;
     @InjectMocks private AdminOrderNotifier notifier;
 
     @Test
@@ -60,6 +64,18 @@ class AdminOrderNotifierTest {
 
         verify(messagingTemplate).convertAndSend(StompDestinations.ADMIN_ORDERS, new AdminOrderEventResDto(
                 AdminOrderEventType.ORDER_STATUS_CHANGED, 42L, null, null, 2L));
+    }
+
+    @Test
+    void cachesAreClearedBeforeAdminsAreNotified() {
+        when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(2L);
+
+        notifier.orderStatusChanged(new OrderStatusChangedMessage(42L, "alice", OrderStatus.COMPLETED));
+
+        // DashboardChartCache xoá dữ liệu TRƯỚC khi client nhận sự kiện và tải lại biểu đồ
+        InOrder order = inOrder(eventPublisher, messagingTemplate);
+        order.verify(eventPublisher).publishEvent(new OrdersChangedEvent(42L));
+        order.verify(messagingTemplate).convertAndSend(eq(StompDestinations.ADMIN_ORDERS), any(Object.class));
     }
 
     @Test

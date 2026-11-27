@@ -8,8 +8,9 @@
 //   từ chối mãi. Token mới được ghi lại vào meta cho các fetch() khác của trang.
 // - Session hết hạn/bị thu hồi: csrfTokenUrl bị chuyển hướng tới /login (hoặc 401/403) → dừng hẳn, không thử nữa.
 // - Mất kết nối (instance tắt/rolling deploy, mạng): tự nối lại, thời gian chờ tăng gấp đôi tới 60s + jitter ngẫu nhiên
-//   0–3s để client không dồn cùng lúc vào instance còn lại. Sau mỗi lần SUBSCRIBE xong gọi onResync() → trang tải lại số
-//   liệu qua JSON, bù sự kiện lỡ trong lúc mất kết nối.
+//   0–3s để client không dồn cùng lúc vào instance còn lại. Sau mỗi lần SUBSCRIBE xong — KỂ CẢ lần đầu — gọi onResync()
+//   → trang tải lại số liệu qua JSON, bù sự kiện lỡ trong lúc mất kết nối, và ở lần đầu là sự kiện xảy ra giữa lúc server
+//   render trang và lúc SUBSCRIBE xong (không ai gửi lại chúng).
 // - Bộ đếm lỗi chỉ về 0 khi kết nối giữ được STABLE_MS: SUBSCRIBE bị từ chối (ERROR rồi đóng ngay sau CONNECTED) vẫn
 //   tính là lỗi → dừng hẳn sau MAX_FAILURES lần liên tiếp, không lặp vô hạn.
 // - Trang vào bfcache (pagehide) thì ngắt; quay lại (pageshow persisted) thì nối lại + resync.

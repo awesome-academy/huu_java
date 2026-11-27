@@ -3,6 +3,7 @@ package com.huuhv.foodsndrinks.controller.web;
 import com.huuhv.foodsndrinks.dto.response.OrderStatusEventResDto;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.UserService;
 import com.huuhv.foodsndrinks.support.SecuredWebMvcTest;
@@ -81,5 +82,26 @@ class OrderStatusControllerTest {
         mockMvc.perform(get(URL).param("ids", tooMany)).andExpect(status().isBadRequest())
                 .andExpect(content().string(""));
         verify(orderService, never()).getOrderStatusesForUser(anyLong(), any());
+    }
+
+    @Test
+    @WithMockUser(username = "ghost", roles = "USER")
+    void userNoLongerExists_returns404_withoutHtmlErrorPage() throws Exception {
+        when(userService.getCurrentUser("ghost")).thenThrow(new ResourceNotFoundException("Không tìm thấy người dùng!"));
+
+        mockMvc.perform(get(URL).param("ids", "7"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string(""));
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "USER")
+    void unexpectedFailure_returns500_withoutHtmlErrorPageOrDetails() throws Exception {
+        when(orderService.getOrderStatusesForUser(anyLong(), any()))
+                .thenThrow(new IllegalStateException("jdbc:mysql://db-internal:3306 timed out"));
+
+        mockMvc.perform(get(URL).param("ids", "7"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().string(""));
     }
 }

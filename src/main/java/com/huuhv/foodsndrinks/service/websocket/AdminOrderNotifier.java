@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +28,9 @@ import java.util.function.Function;
  * đếm, và kênh outbound giữ thứ tự theo session ({@code preservePublishOrder}) nên giá trị cuối admin nhận là mới nhất.
  * Mỗi lần đếm là một truy vấn riêng trong khoá (không {@code @Transactional} bao quanh method: transaction mở trước khi
  * vào khoá có thể giữ snapshot REPEATABLE READ cũ).
+ * <p>
+ * Trước khi gửi, phát {@link OrdersChangedEvent} (đồng bộ): cache dẫn xuất từ đơn hàng của instance
+ * ({@code DashboardChartCache}) bị xoá TRƯỚC khi client nhận sự kiện và tải lại.
  */
 @Slf4j
 @Service
@@ -35,6 +39,7 @@ public class AdminOrderNotifier {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final OrderRepository orderRepository;
+    private final ApplicationEventPublisher eventPublisher;
     private final ReentrantLock sendLock = new ReentrantLock();
 
     public void orderPlaced(OrderPlacedMessage message) {
@@ -56,6 +61,7 @@ public class AdminOrderNotifier {
         sendLock.lock();
         try {
             AdminOrderEventResDto event = eventFactory.apply(orderRepository.countByStatus(OrderStatus.PENDING));
+            eventPublisher.publishEvent(new OrdersChangedEvent(event.orderId()));
             messagingTemplate.convertAndSend(StompDestinations.ADMIN_ORDERS, event);
             log.debug("Sent {} for order #{} to {}", event.type(), event.orderId(), StompDestinations.ADMIN_ORDERS);
         } finally {

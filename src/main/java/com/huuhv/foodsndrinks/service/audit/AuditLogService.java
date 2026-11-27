@@ -135,13 +135,20 @@ public class AuditLogService {
      * @param command     lệnh STOMP (CONNECT, SUBSCRIBE, SEND...)
      * @param destination đích của frame (đã cắt ngắn, bỏ ký tự ngắt dòng), {@code -} nếu không có
      * @param reason      mã lỗi, vd. ACCESS_DENIED, INVALID_CSRF_TOKEN, MISSING_CSRF_TOKEN
+     * @param suppressed  số frame bị từ chối của user này KHÔNG được ghi kể từ dòng trước (bị giới hạn tần suất —
+     *                    {@code StompErrorHandler}); chỉ thêm trường {@code event.suppressed} khi &gt; 0
      */
-    public void webSocketAccessDenied(String username, String command, String destination, String reason) {
-        write(event(Level.WARN, "WebSocket frame denied", "WEBSOCKET_ACCESS_DENIED", "failure")
+    public void webSocketAccessDenied(String username, String command, String destination, String reason,
+                                      long suppressed) {
+        AuditEvent event = event(Level.WARN, "WebSocket frame denied", "WEBSOCKET_ACCESS_DENIED", "failure")
                 .with("event.reason", reason)
                 .with("stomp.command", command)
                 .with("stomp.destination", destination)
-                .with("username", username));
+                .with("username", username);
+        if (suppressed > 0) {
+            event.with("event.suppressed", suppressed);
+        }
+        write(event);
     }
 
     // -------------------------------------------------------

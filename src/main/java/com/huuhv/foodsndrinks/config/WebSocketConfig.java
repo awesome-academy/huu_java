@@ -7,6 +7,7 @@ import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.websocket.HttpSessionLookup;
 import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
 import com.huuhv.foodsndrinks.service.websocket.WebSocketSessionTracker;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -52,6 +53,7 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
 @Configuration
 @EnableWebSocketMessageBroker
 @EnableConfigurationProperties(WebSocketProperties.class)
+@RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     static final int MESSAGE_SIZE_LIMIT = 8 * 1024;
@@ -62,18 +64,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final HttpSessionLookup httpSessionLookup;
     private final WebSocketSessionTracker sessionTracker;
     private final AuditLogService auditLogService;
+    /**
+     * {@code @Lazy}: bean scheduler được tạo bởi chính cấu hình WebSocket mà class này tham gia. {@code @Lazy} và
+     * {@code @Qualifier} được {@code lombok.config} chép sang tham số constructor.
+     */
+    @Lazy
+    @Qualifier("messageBrokerTaskScheduler")
     private final TaskScheduler messageBrokerTaskScheduler;
-
-    /** {@code @Lazy}: bean scheduler được tạo bởi chính cấu hình WebSocket mà class này tham gia. */
-    public WebSocketConfig(WebSocketProperties properties, HttpSessionLookup httpSessionLookup,
-                           WebSocketSessionTracker sessionTracker, AuditLogService auditLogService,
-                           @Lazy @Qualifier("messageBrokerTaskScheduler") TaskScheduler messageBrokerTaskScheduler) {
-        this.properties = properties;
-        this.httpSessionLookup = httpSessionLookup;
-        this.sessionTracker = sessionTracker;
-        this.auditLogService = auditLogService;
-        this.messageBrokerTaskScheduler = messageBrokerTaskScheduler;
-    }
 
     /**
      * Phát {@code HttpSessionDestroyedEvent} khi session HTTP bị huỷ/hết hạn — {@link WebSocketSessionTracker} đóng ngay

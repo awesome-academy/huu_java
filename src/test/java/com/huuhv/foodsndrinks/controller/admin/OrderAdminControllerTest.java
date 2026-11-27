@@ -196,4 +196,27 @@ class OrderAdminControllerTest {
         mockMvc.perform(post("/admin/orders/404/status").param("newStatus", "CANCELLED").with(csrf()))
                 .andExpect(status().isNotFound());
     }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void statusFilterAndDropdown_doNotOfferCart() throws Exception {
+        when(orderService.searchOrders(any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+
+        String html = mockMvc.perform(get("/admin/orders"))
+                .andExpect(model().attribute("orderStatuses", OrderStatus.placedStatuses()))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(html).contains("value=\"PENDING\"").doesNotContain("value=\"CART\"").doesNotContain("status=CART");
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void movingOrderToCart_isRejected_withFlashError() throws Exception {
+        doThrow(new IllegalArgumentException("Không thể chuyển đơn hàng về giỏ hàng"))
+                .when(orderService).updateStatus(5L, OrderStatus.CART);
+
+        mockMvc.perform(post("/admin/orders/5/status").param("newStatus", "CART").with(csrf()))
+                .andExpect(redirectedUrl("/admin/orders/5"))
+                .andExpect(flash().attribute("errorMessage", "Không thể chuyển đơn hàng về giỏ hàng"));
+    }
 }

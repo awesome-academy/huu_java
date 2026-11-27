@@ -151,13 +151,27 @@ class OutboxPublisherTest {
     }
 
     @Test
-    void unknownType_isRecordedAsFailure_notSent() {
-        when(repository.lockDueById(7L)).thenReturn(Optional.of(row(7L, "renamedType", 0)));
+    void unknownType_isPostponed_withoutCountingAnAttempt(CapturedOutput output) {
+        // Rolling deploy: bản ghi do phiên bản mới ghi, instance cũ chưa biết alias → để instance mới gửi
+        when(repository.lockDueById(7L)).thenReturn(Optional.of(row(7L, "typeFromNewerVersion", 4)));
 
         assertThat(publisher.publish(7L)).isFalse();
 
-        verify(repository).markAttemptFailed(eq(7L), anyInt(), anyLong(), eq("IllegalStateException"));
+        verify(repository).postpone(eq(7L), anyLong(), eq(OutboxPublisher.UNKNOWN_TYPE_ERROR));
+        verify(repository, never()).markAttemptFailed(anyLong(), anyInt(), anyLong(), anyString());
         verifyNoInteractions(topicJmsTemplate, queueJmsTemplate);
+        assertThat(output).contains("WARN").contains("typeFromNewerVersion").doesNotContain("FAILED");
+    }
+
+    @Test
+    void publishDue_skipsUnknownType_andContinuesWithNextRecord() {
+        when(repository.lockNextDueAfter(0L)).thenReturn(Optional.of(row(1L, "typeFromNewerVersion", 0)));
+        when(repository.lockNextDueAfter(1L)).thenReturn(Optional.of(row(2L, "orderPlaced", 0)));
+
+        assertThat(publisher.publishDue()).isEqualTo(1);
+
+        verify(repository).postpone(eq(1L), anyLong(), anyString());
+        verify(repository).markSent(2L);
     }
 
     @Test
@@ -174,9 +188,12 @@ class OutboxPublisherTest {
 
     @Test
     void publishDue_brokenRecord_doesNotBlockTheNextOnes() {
-        when(repository.lockNextDueAfter(0L)).thenReturn(Optional.of(row(1L, "renamedType", 0)));
+        when(repository.lockNextDueAfter(0L)).thenReturn(Optional.of(row(1L, "orderPlaced", 0)));
         when(repository.lockNextDueAfter(1L)).thenReturn(Optional.of(row(2L, "orderPlaced", 0)));
         when(repository.lockNextDueAfter(2L)).thenReturn(Optional.empty());
+        // Bản ghi 1 bị broker từ chối (broker vẫn sống) — lỗi riêng của bản ghi; bản ghi 2 gửi được
+        doThrow(new UncategorizedJmsException("message rejected")).doNothing()
+                .when(topicJmsTemplate).send(eq(Destinations.ORDER_PLACED), any(MessageCreator.class));
 
         assertThat(publisher.publishDue()).isEqualTo(1);
 

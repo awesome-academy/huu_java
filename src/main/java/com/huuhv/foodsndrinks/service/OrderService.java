@@ -59,10 +59,12 @@ public class OrderService {
                 .map(OrderResDto::forList);
     }
 
+    /** Chi tiết đơn cho admin. Giỏ hàng ({@code CART}) không phải đơn → 404 như mọi màn hình admin. */
     @Transactional(readOnly = true)
     public OrderResDto getOrderDetail(Long id) {
         // 1 query: order + user + orderDetails + products (FETCH JOIN, no lazy-load loops)
         Order order = orderRepository.findByIdWithDetailsAndProducts(id)
+                .filter(found -> found.getStatus() != OrderStatus.CART)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng #" + id));
         return buildOrderResDto(order, order.getOrderDetails());
     }
@@ -203,30 +205,31 @@ public class OrderService {
     /**
      * Đổi trạng thái đơn (admin). Cùng transaction: ghi outbox {@link OrderStatusChangedMessage} → chỉ gửi sau commit
      * (rollback thì không ai nhận), không mất khi broker chết. Chủ đơn đang mở trang đơn hàng và các admin đang online
-     * nhận qua WebSocket. Không phát cho giỏ hàng ({@code CART} ở trạng thái cũ hoặc mới — chưa phải đơn của khách).
+     * nhận qua WebSocket.
+     * <p>
+     * Giỏ hàng ({@code CART}) không phải đơn của khách: chỉ {@link #checkout} đưa nó sang {@code PENDING} (kiểm tồn kho,
+     * chụp giá, ghi {@code orderedAt}). Admin không thấy giỏ hàng ở mọi màn hình nên id của giỏ hàng → 404 như đơn không
+     * tồn tại; đích {@code CART} bị từ chối — kéo đơn về giỏ sẽ trộn nó vào giỏ đang dùng của khách (một user chỉ có
+     * một {@code CART}).
      */
     @Transactional
     public void updateStatus(Long id, OrderStatus newStatus) {
+        if (newStatus == OrderStatus.CART) {
+            throw new IllegalArgumentException("Không thể chuyển đơn hàng về giỏ hàng");
+        }
         Order order = orderRepository.findByIdWithUser(id)
+                .filter(found -> found.getStatus() != OrderStatus.CART)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng #" + id));
 
         OrderStatus current = order.getStatus();
         if (current == newStatus) return;
 
-        // Set orderedAt when transitioning from CART → PENDING
-        if (current == OrderStatus.CART && newStatus == OrderStatus.PENDING
-                && order.getOrderedAt() == null) {
-            order.setOrderedAt(LocalDateTime.now());
-        }
-
         order.setStatus(newStatus);
         orderRepository.save(order);
         auditLogService.orderStatusChanged(id, current, newStatus);
-        if (current != OrderStatus.CART && newStatus != OrderStatus.CART) {
-            // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn
-            outboxService.enqueue(OutboxType.ORDER_STATUS_CHANGED,
-                    new OrderStatusChangedMessage(id, order.getUser().getUsername(), newStatus));
-        }
+        // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn
+        outboxService.enqueue(OutboxType.ORDER_STATUS_CHANGED,
+                new OrderStatusChangedMessage(id, order.getUser().getUsername(), newStatus));
     }
 
     private OrderResDto buildOrderResDto(Order order, List<OrderDetail> details) {

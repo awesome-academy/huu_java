@@ -2,8 +2,9 @@
 // GET /admin/dashboard/charts (URL trong data-charts-url) thay vì inline script — CSP không có 'unsafe-inline'.
 //
 // Realtime: static/js/admin/realtime.js phát "admin:orders-changed" (mỗi sự kiện đơn hàng qua STOMP) và
-// "admin:realtime-resync" (sau khi kết nối lại) → tải lại dữ liệu từ server, không cộng dồn từ payload (mọi dashboard ở
-// mọi instance hội tụ cùng số liệu DB).
+// "admin:realtime-resync" (sau mỗi lần SUBSCRIBE xong, kể cả lần đầu — sự kiện giữa lần tải đầu và lúc SUBSCRIBE xong bị
+// lỡ) → tải lại dữ liệu từ server, không cộng dồn từ payload (mọi dashboard ở mọi instance hội tụ cùng số liệu DB). Server
+// cache dữ liệu biểu đồ tới sự kiện đơn hàng kế tiếp (DashboardChartCache) nên lần tải không có gì đổi không tốn query.
 // - Gộp: sự kiện đầu tiên hẹn 1 lần tải sau 1s + jitter 0–2s; sự kiện tới trong lúc chờ không hẹn thêm; đang tải thì
 //   ghi nhận để tải thêm đúng 1 lần sau. N dashboard (nhiều admin, nhiều instance) không cùng bắn query vào DB một lúc.
 // - Tab ẩn: không tải, đánh dấu cũ; hiện lại thì tải 1 lần.
@@ -231,11 +232,8 @@
     document.addEventListener("admin:orders-changed", function () {
         scheduleRefresh();
     });
-    document.addEventListener("admin:realtime-resync", function (event) {
-        // Lần kết nối đầu của trang: dữ liệu vừa tải ở dưới — chỉ tải lại khi nối lại (có thể đã lỡ sự kiện)
-        if (!event.detail || !event.detail.initial) {
-            scheduleRefresh();
-        }
+    document.addEventListener("admin:realtime-resync", function () {
+        scheduleRefresh();
     });
     document.addEventListener("visibilitychange", function () {
         if (!document.hidden && staleWhileHidden) {

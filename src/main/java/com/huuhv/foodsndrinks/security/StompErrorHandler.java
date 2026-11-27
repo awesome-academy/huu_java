@@ -12,6 +12,9 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.socket.messaging.StompSubProtocolErrorHandler;
 
 import java.security.Principal;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.OptionalLong;
 
 /**
  * Lỗi khi xử lý frame STOMP của client → frame ERROR với thông điệp CỐ ĐỊNH; Spring đóng kết nối sau đó.
@@ -24,18 +27,29 @@ import java.security.Principal;
  *       {@code WEBSOCKET_ACCESS_DENIED} (lệnh, đích đã làm sạch, user).</li>
  *   <li>Lỗi khác → {@value #PROCESSING_FAILED}, log WARN kèm loại exception (không stack trace của frame client).</li>
  * </ul>
+ * Mỗi user ghi tối đa {@value #MAX_LOGGED_PER_WINDOW} dòng (audit + WARN) mỗi phút trên mỗi instance — Spring xử lý tiếp
+ * mọi frame còn lại của message WebSocket sau frame lỗi, client có thể nhồi hàng trăm frame bị từ chối vào một message
+ * rồi handshake lại ({@link StompErrorLogThrottle}). Phần vượt chỉ log DEBUG; dòng kế tiếp mang số lần đã bỏ qua.
  */
 @Slf4j
 public class StompErrorHandler extends StompSubProtocolErrorHandler {
 
     static final String ACCESS_DENIED = "Access denied";
     static final String PROCESSING_FAILED = "Message could not be processed";
+    static final int MAX_LOGGED_PER_WINDOW = 5;
+    static final Duration LOG_WINDOW = Duration.ofMinutes(1);
     private static final byte[] EMPTY_PAYLOAD = new byte[0];
 
     private final AuditLogService auditLogService;
+    private final StompErrorLogThrottle throttle;
 
     public StompErrorHandler(AuditLogService auditLogService) {
+        this(auditLogService, Clock.systemUTC());
+    }
+
+    StompErrorHandler(AuditLogService auditLogService, Clock clock) {
         this.auditLogService = auditLogService;
+        this.throttle = new StompErrorLogThrottle(MAX_LOGGED_PER_WINDOW, LOG_WINDOW, clock);
     }
 
     @Override
@@ -46,11 +60,17 @@ public class StompErrorHandler extends StompSubProtocolErrorHandler {
         String command = command(clientHeaders);
         String destination = clientHeaders == null ? "-" : LogSanitizer.sanitize(clientHeaders.getDestination());
         String username = username(clientMessage);
-        if (denied != null) {
-            auditLogService.webSocketAccessDenied(username, command, destination, AuditLogService.toReasonCode(denied));
+        String errorType = ex == null ? "-" : ex.getClass().getSimpleName();
+        OptionalLong permit = throttle.tryAcquire(username);
+        if (permit.isEmpty()) {
+            log.debug("STOMP {} frame to {} from {} failed: {} (log rate limit reached)", command, destination,
+                    username, errorType);
+        } else if (denied != null) {
+            auditLogService.webSocketAccessDenied(username, command, destination,
+                    AuditLogService.toReasonCode(denied), permit.getAsLong());
         } else {
-            log.warn("STOMP {} frame to {} from {} failed: {}", command, destination, username,
-                    ex == null ? "-" : ex.getClass().getSimpleName());
+            log.warn("STOMP {} frame to {} from {} failed: {} ({} earlier errors not logged)", command, destination,
+                    username, errorType, permit.getAsLong());
         }
         StompHeaderAccessor error = StompHeaderAccessor.create(StompCommand.ERROR);
         error.setMessage(denied != null ? ACCESS_DENIED : PROCESSING_FAILED);

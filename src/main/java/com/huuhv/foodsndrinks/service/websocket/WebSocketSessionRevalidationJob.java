@@ -54,20 +54,25 @@ public class WebSocketSessionRevalidationJob {
         if (sessions.isEmpty()) {
             return 0;
         }
-        Map<String, UserAccountStatus> statuses = accountStatusService.findAccountStatuses(
-                sessions.stream().map(TrackedSession::username).toList());
+        List<String> usernames = sessions.stream().filter(tracked -> !tracked.revoked())
+                .map(TrackedSession::username).distinct().toList();
+        Map<String, UserAccountStatus> statuses = usernames.isEmpty() ? Map.of()
+                : accountStatusService.findAccountStatuses(usernames);
         int closed = 0;
         for (TrackedSession tracked : sessions) {
-            if (!httpSessionLookup.isAlive(tracked.session())) {
-                tracker.close(tracked.session());
+            // Đã thu hồi mà chưa đóng được (chu kỳ trước, đổi id session...) → chỉ đóng lại: lý do có thể không còn kiểm
+            // tra được nữa và đã được audit. Session HTTP kết thúc → đóng, không audit.
+            if (tracked.revoked() || !httpSessionLookup.isAlive(tracked.session())) {
+                tracker.revoke(tracked.session());
                 closed++;
                 continue;
             }
             Optional<String> reason = AccountStatusService.revocationReason(
                     statuses.get(tracked.username()), tracked.authorities());
             if (reason.isPresent()) {
-                auditLogService.webSocketSessionRevoked(tracked.username(), reason.get());
-                tracker.close(tracked.session());
+                if (tracker.revoke(tracked.session())) {
+                    auditLogService.webSocketSessionRevoked(tracked.username(), reason.get());
+                }
                 closed++;
             }
         }

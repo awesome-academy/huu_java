@@ -75,7 +75,7 @@ Các endpoint AJAX vẫn thuộc chain web (session + CSRF token), không phải
 |---|---|---|---|
 | GET | `/orders` | USER | Lịch sử đơn hàng của tôi (phân trang) |
 | GET | `/orders/{id}` | USER | Chi tiết đơn hàng (chỉ đơn của chính mình) |
-| GET | `/orders/statuses?ids=1&ids=2` | USER | (`OrderStatusController`) JSON trạng thái hiện tại của tối đa 20 đơn — chỉ đơn của chính mình, id của người khác bị bỏ qua (chống IDOR). Thiếu/sai định dạng/quá 20 mã → 400 |
+| GET | `/orders/statuses?ids=1&ids=2` | USER | (`OrderStatusController`) JSON trạng thái hiện tại của tối đa 20 đơn — chỉ đơn của chính mình, id của người khác bị bỏ qua (chống IDOR). Thiếu/sai định dạng/quá 20 mã → 400; lỗi khác → 404/500 không body (không trả trang HTML cho `fetch()`) |
 
 ### Trạng thái đơn realtime
 
@@ -85,7 +85,8 @@ Trang `/orders` (khi có đơn) và `/orders/{id}` nối WebSocket `/ws-stomp` v
 - **Luôn là trạng thái mới nhất:** mỗi lần đổi trạng thái là một message riêng, có thể tới sai thứ tự (gửi lại sau khi broker lỗi). Server không dùng trạng thái trong message mà đọc trạng thái hiện tại của đơn từ DB lúc gửi (lọc theo chủ đơn), nên trang không bao giờ lùi về trạng thái cũ.
 - SUBSCRIBE `/user/queue/orders` lần thứ hai trên cùng kết nối, hoặc mở quá 10 kết nối/tab trên một instance → bị từ chối (chống DoS).
 - Transaction đổi trạng thái rollback → không ai nhận. Không phát cho giỏ hàng (`CART`).
-- Kết nối lại (mất mạng, instance tắt/rolling deploy): trang gọi `GET /orders/statuses` cho các đơn đang hiện để bù sự kiện lỡ. Session hết hạn → dừng (như trang admin).
+- Sau mỗi lần kết nối — kể cả lần đầu (sự kiện giữa lúc tải trang và lúc kết nối xong) và khi nối lại (mất mạng, instance tắt/rolling deploy) — trang gọi `GET /orders/statuses` cho các đơn đang hiện để bù sự kiện lỡ, không toast. Session hết hạn → dừng (như trang admin).
+- Toast chỉ hiện khi trạng thái khác trạng thái trang đang biết của đơn đó — hai lần đổi liên tiếp có thể tới thành hai sự kiện cùng mang trạng thái mới nhất, chỉ báo một lần.
 - Payload: `{orderId, status, statusLabel, badgeClass}` (`OrderStatusEventResDto`) — không có dữ liệu cá nhân.
 
 ### Đánh giá sản phẩm — `RatingController`

@@ -4,8 +4,11 @@
 //
 // - SUBSCRIBE /user/queue/orders: server chỉ gửi trạng thái đơn của chính người đăng nhập (convertAndSendToUser theo
 //   username của chủ đơn) → đổi chữ + class của mọi badge [data-order-status-badge="<id>"] và hiện toast.
-// - Kết nối lại (lỡ sự kiện khi mất mạng/đổi instance): GET /orders/statuses?ids=... (≤ 20 mã đang hiện trên trang,
-//   server lọc theo chủ đơn) rồi cập nhật badge, không toast.
+// - Toast chỉ khi trạng thái khác trạng thái đã biết của đơn đó (badge trên trang, sự kiện/resync trước): server gửi
+//   trạng thái HIỆN TẠI đọc từ DB lúc gửi, nên hai lần đổi liên tiếp có thể tới thành hai sự kiện cùng trạng thái.
+// - Sau mỗi lần SUBSCRIBE xong (kể cả lần đầu — sự kiện giữa lúc render trang và lúc SUBSCRIBE xong bị lỡ; nối lại khi
+//   mất mạng/đổi instance): GET /orders/statuses?ids=... (≤ 20 mã đang hiện trên trang, server lọc theo chủ đơn) rồi
+//   cập nhật badge, không toast.
 // - Dữ liệu đưa vào DOM bằng textContent/classList; class badge lấy từ server nhưng vẫn chỉ nhận token [A-Za-z0-9_-].
 (function () {
     "use strict";
@@ -17,6 +20,15 @@
     if (!window.Realtime || !root || !root.dataset.wsUrl || !root.dataset.destination) {
         return;
     }
+
+    /** orderId → trạng thái đã hiện/đã báo cho khách (chống toast lặp). */
+    const knownStatus = new Map();
+    document.querySelectorAll("[data-order-status-badge]").forEach(function (badge) {
+        const id = Number(badge.dataset.orderStatusBadge);
+        if (Number.isInteger(id) && badge.dataset.status) {
+            knownStatus.set(id, badge.dataset.status);
+        }
+    });
 
     function classTokens(value) {
         return String(value || "").split(/\s+/).filter(function (token) {
@@ -30,9 +42,10 @@
                 && typeof event.badgeClass === "string";
     }
 
-    /** @returns {boolean} true nếu trang có badge của đơn này và trạng thái thực sự đổi */
+    /** Cập nhật mọi badge của đơn và ghi nhận trạng thái. @returns {boolean} true nếu trạng thái khác trạng thái đã biết */
     function applyStatus(event) {
-        let changed = false;
+        const changed = knownStatus.get(event.orderId) !== event.status;
+        knownStatus.set(event.orderId, event.status);
         // orderId đã kiểm là số nguyên → an toàn khi ghép vào selector
         document.querySelectorAll('[data-order-status-badge="' + event.orderId + '"]').forEach(function (badge) {
             if (badge.dataset.status === event.status) {
@@ -49,7 +62,6 @@
             badge.dataset.badgeClass = newClasses.join(" ");
             badge.dataset.status = event.status;
             badge.textContent = event.statusLabel;
-            changed = true;
         });
         return changed;
     }
@@ -58,8 +70,7 @@
         if (!isStatusEvent(event)) {
             return;
         }
-        applyStatus(event);
-        if (typeof showToast === "function") {
+        if (applyStatus(event) && typeof showToast === "function") {
             showToast("Đơn #" + event.orderId + ": " + event.statusLabel, false);
         }
     }
@@ -108,11 +119,6 @@
         url: root.dataset.wsUrl,
         csrfTokenUrl: root.dataset.csrfTokenUrl,
         subscriptions: [{destination: root.dataset.destination, onMessage: onStatusEvent}],
-        onResync: function (initial) {
-            // Lần đầu: badge vừa được server render. Kết nối lại: có thể đã lỡ sự kiện → hỏi lại server
-            if (!initial) {
-                resync();
-            }
-        }
+        onResync: resync
     });
 })();

@@ -139,21 +139,39 @@ class WebSocketSessionTrackerTest {
         decorated.afterConnectionEstablished(socket);
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).when(socket).close(any(CloseStatus.class));
 
-        tracker.close(socket);
+        // Lần đầu → true (người gọi audit), lần thử lại → false (không audit trùng)
+        assertThat(tracker.revoke(socket)).isTrue();
 
-        assertThat(tracker.snapshot()).extracting(WebSocketSessionTracker.TrackedSession::username).containsExactly("alice");
+        assertThat(tracker.snapshot()).singleElement().satisfies(tracked -> {
+            assertThat(tracked.username()).isEqualTo("alice");
+            assertThat(tracked.revoked()).isTrue();
+        });
 
-        tracker.close(socket);
+        assertThat(tracker.revoke(socket)).isFalse();
         verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
     }
 
     @Test
-    void closingAlreadyClosedSocket_isIgnored_andUntracked() throws Exception {
+    void failedCloseAfterSessionIdChange_staysMarkedRevoked_soJobCanRetry() throws Exception {
+        WebSocketSession socket = socket("ws-10", "http-old", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
+        decorated.afterConnectionEstablished(socket);
+        doThrow(new IllegalStateException("TEXT_FULL_WRITING")).when(socket).close(any(CloseStatus.class));
+
+        tracker.onHttpSessionIdChanged(new HttpSessionIdChangedEvent(new MockHttpSession(null, "http-new"), "http-old"));
+
+        // Object HttpSession vẫn sống và username vẫn hợp lệ: chỉ dấu thu hồi cho job biết phải đóng lại
+        assertThat(tracker.snapshot()).singleElement()
+                .extracting(WebSocketSessionTracker.TrackedSession::revoked).isEqualTo(true);
+        verify(delegate, never()).afterConnectionClosed(eq(socket), any());
+    }
+
+    @Test
+    void revokingAlreadyClosedSocket_isIgnored_andUntracked() throws Exception {
         WebSocketSession socket = socket("ws-6", "http-6", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
         decorated.afterConnectionEstablished(socket);
         when(socket.isOpen()).thenReturn(false);
 
-        tracker.close(socket);
+        tracker.revoke(socket);
 
         verify(socket, never()).close(WebSocketSessionTracker.REVOKED);
         assertThat(tracker.snapshot()).isEmpty();

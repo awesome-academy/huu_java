@@ -5,7 +5,10 @@ import com.huuhv.foodsndrinks.repository.projection.UserAccountStatus;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import org.junit.jupiter.api.Test;
+import org.mockito.stubbing.Answer;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.web.session.HttpSessionIdChangedEvent;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
@@ -19,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -101,6 +105,43 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     @Test
+    void failedClose_isRetriedNextCycle_butAuditedOnlyOnce() throws Exception {
+        WebSocketSession locked = open("ws-1", "locked", "ROLE_USER");
+        doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(locked))
+                .when(locked).close(any(CloseStatus.class));
+        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(accountStatusService.findAccountStatuses(anyCollection()))
+                .thenReturn(Map.of("locked", new Status(false, Role.ROLE_USER)));
+
+        job.revalidateOpenSessions();
+        assertThat(tracker.snapshot()).singleElement()
+                .extracting(WebSocketSessionTracker.TrackedSession::revoked).isEqualTo(true);
+
+        job.revalidateOpenSessions();
+
+        verify(locked, times(2)).close(WebSocketSessionTracker.REVOKED);
+        verify(auditLogService, times(1)).webSocketSessionRevoked("locked", AccountStatusService.DISABLED);
+        // Chu kỳ 2 chỉ còn socket đã thu hồi → không query DB
+        verify(accountStatusService, times(1)).findAccountStatuses(anyCollection());
+    }
+
+    @Test
+    void socketRevokedBySessionIdChange_whoseCloseFailed_isClosedByJob_withoutAudit() throws Exception {
+        WebSocketSession socket = open("ws-1", "alice", "ROLE_USER");
+        doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
+                .when(socket).close(any(CloseStatus.class));
+        tracker.onHttpSessionIdChanged(new HttpSessionIdChangedEvent(new MockHttpSession(null, "http-new"), "http-ws-1"));
+        // Object HttpSession vẫn sống, tài khoản vẫn hợp lệ
+        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+
+        verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
+        assertThat(tracker.snapshot()).isEmpty();
+        verifyNoInteractions(auditLogService, accountStatusService);
+    }
+
+    @Test
     void databaseFailure_keepsSessions_andDoesNotThrow() throws Exception {
         WebSocketSession alice = open("ws-1", "alice", "ROLE_USER");
         when(accountStatusService.findAccountStatuses(anyCollection())).thenThrow(new IllegalStateException("db down"));
@@ -119,13 +160,17 @@ class WebSocketSessionRevalidationJobTest {
         when(socket.getPrincipal()).thenReturn(new TestingAuthenticationToken(username, "n/a", List.of(
                 new org.springframework.security.core.authority.SimpleGrantedAuthority(role))));
         when(socket.isOpen()).thenReturn(true);
-        // Như container: close() thành công → afterConnectionClosed (tracker gỡ bản ghi ở đó)
-        doAnswer(invocation -> {
+        doAnswer(closesLikeContainer(socket)).when(socket).close(any(CloseStatus.class));
+        decorated.afterConnectionEstablished(socket);
+        return socket;
+    }
+
+    /** Như container: close() thành công → afterConnectionClosed (tracker gỡ bản ghi ở đó). */
+    private Answer<Void> closesLikeContainer(WebSocketSession socket) {
+        return invocation -> {
             when(socket.isOpen()).thenReturn(false);
             decorated.afterConnectionClosed(socket, invocation.getArgument(0));
             return null;
-        }).when(socket).close(any(CloseStatus.class));
-        decorated.afterConnectionEstablished(socket);
-        return socket;
+        };
     }
 }

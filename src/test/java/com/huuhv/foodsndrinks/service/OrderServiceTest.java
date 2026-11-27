@@ -314,18 +314,18 @@ class OrderServiceTest {
     class UpdateStatus {
 
         @Test
-        void cartToPending_setsOrderedAt_andWritesAudit() {
-            Order order = cartOf(alice, OrderStatus.CART);
-            when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(order));
+        void cartOrder_isNotFound_forAdmin_andUntouched() {
+            Order cart = cartOf(alice, OrderStatus.CART);
+            when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(cart));
 
-            orderService.updateStatus(100L, OrderStatus.PENDING);
+            // Chỉ checkout đưa giỏ sang PENDING (kiểm tồn kho, chụp giá, orderedAt) — admin không thấy giỏ hàng
+            assertThatThrownBy(() -> orderService.updateStatus(100L, OrderStatus.PENDING))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
-            assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
-            assertThat(order.getOrderedAt()).isNotNull();
-            verify(orderRepository).save(order);
-            verify(auditLogService).orderStatusChanged(100L, OrderStatus.CART, OrderStatus.PENDING);
-            // Giỏ hàng chưa phải đơn của khách: không phát sự kiện đổi trạng thái
-            verifyNoInteractions(outboxService);
+            assertThat(cart.getStatus()).isEqualTo(OrderStatus.CART);
+            assertThat(cart.getOrderedAt()).isNull();
+            verify(orderRepository, never()).save(any());
+            verifyNoInteractions(auditLogService, outboxService);
         }
 
         @Test
@@ -340,12 +340,11 @@ class OrderServiceTest {
         }
 
         @Test
-        void movingOrderBackToCart_doesNotNotify() {
-            when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(cartOf(alice, OrderStatus.PENDING)));
+        void movingOrderBackToCart_isRejected_withoutQuery() {
+            // Đơn về CART sẽ trộn vào giỏ đang dùng của khách (một user chỉ có một CART)
+            assertThatIllegalArgumentException().isThrownBy(() -> orderService.updateStatus(100L, OrderStatus.CART));
 
-            orderService.updateStatus(100L, OrderStatus.CART);
-
-            verifyNoInteractions(outboxService);
+            verifyNoInteractions(orderRepository, auditLogService, outboxService);
         }
 
         @Test
@@ -431,6 +430,20 @@ class OrderServiceTest {
 
         assertThatThrownBy(() -> orderService.getOrderDetailForUser(100L, 2L))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void adminOrderDetail_ofCart_isNotFound() {
+        when(orderRepository.findByIdWithDetailsAndProducts(100L)).thenReturn(Optional.of(cartOf(alice, OrderStatus.CART)));
+
+        assertThatThrownBy(() -> orderService.getOrderDetail(100L)).isInstanceOf(ResourceNotFoundException.class);
+        verifyNoInteractions(productImageRepository);
+    }
+
+    @Test
+    void placedStatuses_excludeCart() {
+        assertThat(OrderStatus.placedStatuses())
+                .containsExactly(OrderStatus.PENDING, OrderStatus.PROCESSING, OrderStatus.COMPLETED, OrderStatus.CANCELLED);
     }
 
     @Test

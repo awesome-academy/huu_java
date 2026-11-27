@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.AsyncProperties;
+import com.huuhv.foodsndrinks.config.properties.DashboardProperties;
 import com.huuhv.foodsndrinks.logging.MdcTaskDecorator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
@@ -41,7 +42,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Configuration
 @EnableAsync
 @EnableScheduling
-@EnableConfigurationProperties(AsyncProperties.class)
+@EnableConfigurationProperties({AsyncProperties.class, DashboardProperties.class})
 public class AsyncConfig implements AsyncConfigurer {
 
     /** Hằng số ở {@link AsyncProperties} để service dùng mà không import {@code config}. */

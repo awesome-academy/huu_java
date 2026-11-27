@@ -66,6 +66,19 @@ public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Lo
                           @Param("retryDelayMillis") long retryDelayMillis, @Param("error") String error);
 
     /**
+     * Hoãn bản ghi mà KHÔNG tính lần thử (instance này không gửi được, instance khác có thể gửi — vd. loại message do
+     * phiên bản mới hơn ghi trong lúc rolling deploy).
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE outbox_messages
+            SET next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL :retryDelayMillis * 1000 MICROSECOND),
+                last_error = :error
+            WHERE id = :id AND status = 'PENDING'
+            """, nativeQuery = true)
+    int postpone(@Param("id") long id, @Param("retryDelayMillis") long retryDelayMillis, @Param("error") String error);
+
+    /**
      * Message của bản ghi SENT đã vào DLQ: chuyển sang DEAD_LETTERED để job dọn dẹp không xoá (còn gửi lại được). Chỉ đổi
      * từ SENT — bản ghi đã đặt lại về PENDING hay đã đánh dấu thì giữ nguyên.
      */

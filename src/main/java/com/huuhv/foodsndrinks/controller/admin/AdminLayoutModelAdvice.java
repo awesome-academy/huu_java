@@ -11,6 +11,8 @@ import org.springframework.util.unit.DataSize;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ModelAttribute;
 
+import java.util.List;
+
 @ControllerAdvice(basePackages = "com.huuhv.foodsndrinks.controller.admin")
 public class AdminLayoutModelAdvice {
 
@@ -38,7 +40,7 @@ public class AdminLayoutModelAdvice {
     public ProductType[] productTypes() { return ProductType.values(); }
 
     @ModelAttribute("orderStatuses")
-    public OrderStatus[] orderStatuses() { return OrderStatus.values(); }
+    public List<OrderStatus> orderStatuses() { return OrderStatus.placedStatuses(); }
 
     @ModelAttribute("roles")
     public Role[] roles() { return Role.values(); }

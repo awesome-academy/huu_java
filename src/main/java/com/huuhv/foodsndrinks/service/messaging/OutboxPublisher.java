@@ -42,9 +42,14 @@ import java.util.function.Supplier;
  *       một kết nối mới tới broker không mở được ({@link JmsBrokerProbe}; không tin connection đã cache): KHÔNG tính lần
  *       thử, bản ghi giữ PENDING tới khi broker hoạt động lại — broker chết/treo bao lâu cũng không làm mất thông báo. Job
  *       dừng chu kỳ ngay (gửi tiếp chỉ tốn thêm timeout).</li>
- *   <li><b>Lỗi riêng của bản ghi</b> (broker vẫn trả lời: loại không còn trong {@link OutboxType}, message bị broker từ
- *       chối…): tính một lần thử; đủ {@code app.outbox.max-attempts} → {@code FAILED} + log ERROR. Job chuyển sang bản ghi
- *       kế tiếp, một bản ghi hỏng không chặn các bản ghi khác.</li>
+ *   <li><b>Lỗi riêng của bản ghi</b> (broker vẫn trả lời, message bị broker từ chối…): tính một lần thử; đủ
+ *       {@code app.outbox.max-attempts} → {@code FAILED} + log ERROR. Job chuyển sang bản ghi kế tiếp, một bản ghi hỏng
+ *       không chặn các bản ghi khác.</li>
+ *   <li><b>Loại không có trong {@link OutboxType} của instance này</b> — trong lúc rolling deploy, bản ghi do phiên bản
+ *       MỚI hơn ghi (alias của loại đã dùng không bao giờ bị đổi/xoá): KHÔNG tính lần thử, hoãn
+ *       {@code app.outbox.retry-delay} ({@code last_error} = {@value #UNKNOWN_TYPE_ERROR}) để instance mới gửi; WARN mỗi
+ *       lần gặp. Nếu không instance nào biết loại đó (rollback bản deploy) thì bản ghi nằm PENDING và WARN lặp lại mỗi chu
+ *       kỳ — xử lý bằng tay (README).</li>
  * </ul>
  * Gửi thành công mà commit DB lỗi (hiếm) thì bản ghi còn PENDING và được gửi lại — consumer idempotent
  * ({@code notification_logs}) nên không gửi thông báo lần hai. Broker chặn producer (đĩa đầy, address {@code BLOCK})
@@ -65,9 +70,10 @@ public class OutboxPublisher {
 
     /** {@code last_error} chỉ chứa tên loại lỗi (không chứa thông điệp có thể kèm host/dữ liệu). */
     static final int MAX_ERROR_LENGTH = 255;
+    static final String UNKNOWN_TYPE_ERROR = "UnknownOutboxType";
 
     /** Kết quả gửi một bản ghi. */
-    enum Outcome { SENT, RECORD_FAILED, BROKER_UNAVAILABLE }
+    enum Outcome { SENT, RECORD_FAILED, POSTPONED, BROKER_UNAVAILABLE }
 
     private final OutboxMessageRepository repository;
     /** {@code @Primary} — destination kiểu queue. */
@@ -132,7 +138,12 @@ public class OutboxPublisher {
     private Outcome send(OutboxMessage message) {
         Optional<OutboxType> type = OutboxType.fromAlias(message.getType());
         if (type.isEmpty()) {
-            return recordFailure(message, new IllegalStateException("Unknown outbox type"));
+            // Do phiên bản mới hơn ghi (rolling deploy): không tính lần thử — để instance biết loại này gửi
+            repository.postpone(message.getId(), properties.retryDelay().toMillis(), UNKNOWN_TYPE_ERROR);
+            log.warn("Outbox message #{} has type {} unknown to this instance (written by a newer version?), "
+                    + "left PENDING for an instance that knows it", message.getId(),
+                    LogSanitizer.sanitize(message.getType()));
+            return Outcome.POSTPONED;
         }
         OutboxType outboxType = type.get();
         try {

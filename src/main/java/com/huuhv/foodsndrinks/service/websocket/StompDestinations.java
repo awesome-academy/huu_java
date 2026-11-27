@@ -4,7 +4,7 @@ package com.huuhv.foodsndrinks.service.websocket;
  * Đường dẫn WebSocket/STOMP — nguồn duy nhất cho {@code config/WebSocketConfig}, {@code config/WebSocketSecurityConfig}
  * và service gửi message. Đặt ở {@code service} để service dùng được mà không import {@code config}. Template truyền
  * đích cho JS qua thuộc tính {@code data-*} (Thymeleaf 3.1 không cho gọi {@code T(...)} trong template) — đổi ở đây thì
- * đổi cả template ({@code WebSocketLayoutTest} kiểm tra).
+ * đổi cả template ({@code OrderAdminControllerTest}, {@code OrderControllerTest} kiểm tra).
  */
 public final class StompDestinations {
 
