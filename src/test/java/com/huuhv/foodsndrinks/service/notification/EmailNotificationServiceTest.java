@@ -1,6 +1,8 @@
 package com.huuhv.foodsndrinks.service.notification;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.NotificationDeliveryException;
 import jakarta.mail.BodyPart;
 import jakarta.mail.Multipart;
 import jakarta.mail.Part;
@@ -12,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.thymeleaf.spring6.SpringTemplateEngine;
@@ -26,6 +29,9 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -92,9 +98,9 @@ class EmailNotificationServiceTest {
     @Test
     void newOrderEmail_omitsOptionalRows_whenPhoneAndNoteMissing() throws Exception {
         MimeMessage message = stubMimeMessage();
-        OrderPlacedEvent event = new OrderPlacedEvent(7L, "B", "b@example.com", null, "HN", " ",
+        OrderPlacedMessage event = new OrderPlacedMessage(7L, "B", "b@example.com", null, "HN", " ",
                 new BigDecimal("10000"), null, List.of(
-                new OrderPlacedEvent.OrderLineItem("Cà phê", 1, new BigDecimal("10000"), new BigDecimal("10000"))));
+                new OrderPlacedMessage.OrderLineItem("Cà phê", 1, new BigDecimal("10000"), new BigDecimal("10000"))));
 
         service.sendNewOrderEmail(event);
 
@@ -106,8 +112,8 @@ class EmailNotificationServiceTest {
     @Test
     void fractionalAmount_isFormattedIdentically_inHtmlPlainTextAndSlack() throws Exception {
         MimeMessage message = stubMimeMessage();
-        OrderPlacedEvent event = new OrderPlacedEvent(9L, "C", "c@example.com", null, "HN", null,
-                new BigDecimal("150000.50"), null, List.of(new OrderPlacedEvent.OrderLineItem(
+        OrderPlacedMessage event = new OrderPlacedMessage(9L, "C", "c@example.com", null, "HN", null,
+                new BigDecimal("150000.50"), null, List.of(new OrderPlacedMessage.OrderLineItem(
                 "Trà", 1, new BigDecimal("150000.50"), new BigDecimal("150000.50"))));
 
         service.sendNewOrderEmail(event);
@@ -136,10 +142,33 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    void disabled_sendsNothing() {
+    void isEnabled_requiresFlagAndAdminEmail() {
+        assertThat(service.isEnabled()).isTrue();
+
+        ReflectionTestUtils.setField(service, "enabled", false);
+        assertThat(service.isEnabled()).isFalse();
+
+        ReflectionTestUtils.setField(service, "enabled", true);
+        ReflectionTestUtils.setField(service, "adminEmail", "");
+        assertThat(service.isEnabled()).isFalse();
+    }
+
+    @Test
+    void newOrderEmail_smtpError_isThrown_soBrokerRedelivers() {
+        stubMimeMessage();
+        doThrow(new MailSendException("smtp down")).when(mailSender).send(any(MimeMessage.class));
+
+        assertThatThrownBy(() -> service.sendNewOrderEmail(order(null)))
+                .isInstanceOf(NotificationDeliveryException.class)
+                .hasMessageContaining("#42")
+                .hasCauseInstanceOf(MailSendException.class);
+    }
+
+    @Test
+    void monthlyStatistics_disabled_sendsNothing() {
         ReflectionTestUtils.setField(service, "enabled", false);
 
-        service.sendNewOrderEmail(order(null));
+        service.sendMonthlyStatistics(2026, 3, BigDecimal.ZERO, 0, Map.of());
 
         verifyNoInteractions(mailSender);
     }
@@ -152,11 +181,11 @@ class EmailNotificationServiceTest {
         return message;
     }
 
-    private static OrderPlacedEvent order(String note) {
-        return new OrderPlacedEvent(42L, "Nguyễn Văn A", "a@example.com", "0901234567", "12 Lê Lợi, Q1",
+    private static OrderPlacedMessage order(String note) {
+        return new OrderPlacedMessage(42L, "Nguyễn Văn A", "a@example.com", "0901234567", "12 Lê Lợi, Q1",
                 note, new BigDecimal("120000"), LocalDateTime.of(2026, 11, 20, 9, 30), List.of(
-                new OrderPlacedEvent.OrderLineItem("Trà sữa trân châu", 2, new BigDecimal("35000"), new BigDecimal("70000")),
-                new OrderPlacedEvent.OrderLineItem("Bánh mì", 1, new BigDecimal("50000"), new BigDecimal("50000"))));
+                new OrderPlacedMessage.OrderLineItem("Trà sữa trân châu", 2, new BigDecimal("35000"), new BigDecimal("70000")),
+                new OrderPlacedMessage.OrderLineItem("Bánh mì", 1, new BigDecimal("50000"), new BigDecimal("50000"))));
     }
 
     /** Nội dung các phần text của email theo MIME type (text/plain, text/html), duyệt cả multipart lồng nhau. */

@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.notification;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,7 +24,7 @@ final class SlackMessageBuilder {
     private SlackMessageBuilder() {
     }
 
-    static Map<String, Object> orderPlaced(OrderPlacedEvent event) {
+    static Map<String, Object> orderPlaced(OrderPlacedMessage event) {
         String total = OrderMessageFormatter.formatMoney(event.totalPrice()) + " ₫";
 
         List<Map<String, Object>> blocks = new ArrayList<>();
@@ -67,12 +68,12 @@ final class SlackMessageBuilder {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    private static String itemLines(OrderPlacedEvent event) {
+    private static String itemLines(OrderPlacedMessage event) {
         StringBuilder sb = new StringBuilder("*Chi tiết đơn hàng:*");
-        List<OrderPlacedEvent.OrderLineItem> items = event.items();
+        List<OrderPlacedMessage.OrderLineItem> items = event.items();
         int shown = Math.min(items.size(), MAX_ITEM_LINES);
         for (int i = 0; i < shown; i++) {
-            OrderPlacedEvent.OrderLineItem item = items.get(i);
+            OrderPlacedMessage.OrderLineItem item = items.get(i);
             sb.append("\n• ").append(escape(item.productName()))
                     .append(" × ").append(item.quantity())
                     .append(" — ").append(OrderMessageFormatter.formatMoney(item.subtotal())).append(" ₫");

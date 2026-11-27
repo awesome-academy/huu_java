@@ -7,6 +7,14 @@ spring:
     # Secret cho môi trường local nằm trong file .env (git-ignore, mẫu ở .env.example) ở thư mục chạy app.
     # Biến môi trường của hệ điều hành / container vẫn được ưu tiên hơn giá trị trong .env.
     import: optional:file:.env[.properties]
+  # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
+  # (2) + listener JMS (3) + sched-* (2) = 11 — không được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không
+  # khởi động), nửa còn lại cho request web. Nhiều instance: số instance × maximum-pool-size < max_connections của MySQL
+  # (mặc định 151). minimum-idle: không giữ sẵn cả 24 connection khi rảnh.
+  datasource:
+    hikari:
+      maximum-pool-size: 24
+      minimum-idle: 5
   servlet:
     multipart:
       # Áp dụng mọi profile (prod trước đây dùng mặc định của Spring). Ảnh sản phẩm/avatar: tối đa 5MB/file, 25MB/request
@@ -33,6 +41,26 @@ spring:
   # gian dừng (docker-compose: stop_grace_period của service app).
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  # JMS với ActiveMQ Artemis (config/JmsConfig, config/ArtemisEmbeddedConfig).
+  # - embedded (mặc định — dev, test): broker chạy trong JVM, chỉ nối in-VM (không mở port), không lưu message ra đĩa.
+  # - native: broker riêng (service artemis của compose, prod). Phải tắt CẢ embedded.enabled: Boot 4 tạo broker embedded
+  #   theo embedded.enabled, không xét mode (sai cặp thì app không khởi động).
+  artemis:
+    mode: ${ARTEMIS_MODE:embedded}
+    # Timeout kết nối/gọi broker: broker chết thì gửi message báo lỗi sau vài giây thay vì treo thread (OWASP A10)
+    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}?connectTimeoutMillis=5000&callTimeout=10000
+    user: ${ARTEMIS_USER:}
+    password: ${ARTEMIS_PASSWORD:}
+    embedded:
+      enabled: ${ARTEMIS_EMBEDDED_ENABLED:true}
+      persistent: false
+  jms:
+    listener:
+      # Listener ném exception → rollback → broker giao lại; quá số lần thì vào DLQ (artemis/broker.properties)
+      session:
+        transacted: true
+      min-concurrency: 1
+      max-concurrency: 3
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
@@ -45,6 +73,11 @@ spring:
           auth: true
           starttls:
             enable: true
+          # Mặc định của JavaMail là chờ vô hạn. Email đơn hàng gửi trên thread listener JMS (giữ connection DB của
+          # notification_logs trong lúc gửi): SMTP treo thì lỗi sau vài giây và broker giao lại message
+          connectiontimeout: 5000
+          timeout: 10000
+          writetimeout: 10000
 
   # Social login (see login.html "Đăng nhập bằng..." buttons). Client id/secret come from each
   # provider's developer console — set the real values via env vars before going live; the
@@ -111,6 +144,10 @@ logging:
     # LoginAttemptAwareAuthenticationProvider (SecurityConfig) thay provider Spring tự tạo để chống brute-force
     # Ngoặc vuông: tên logger có '$', không bọc thì Spring Boot bỏ ký tự này khi bind key của map
     "[org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer$InitializeUserDetailsManagerConfigurer]": ERROR
+    # Audit của broker Artemis embedded: ở INFO ghi MỌI message gửi/nhận/ack kèm toàn bộ property (kể cả giá trị do bên
+    # gửi tự đặt như _type) → log phình theo số message và chứa dữ liệu bên gửi. Sự kiện cần thiết đã do app ghi
+    # (consumer, DLQ listener). Broker riêng (native) có cấu hình log của chính nó.
+    org.apache.activemq.audit: WARN
 
 app:
   cors:
@@ -122,19 +159,38 @@ app:
   # Ngoài prod mặc định lấy hostname (chỉ dùng để in trong log). Prod bắt buộc đặt INSTANCE_ID cố định cho từng instance
   # (application-prod.yml + config/InstanceIdCheck), vì hostname của container đổi mỗi lần tạo lại.
   instance-id: ${INSTANCE_ID:${HOSTNAME:${COMPUTERNAME:local}}}
+  jms:
+    # File broker properties áp lên broker embedded, theo thứ tự (file sau ghi đè khoá trùng). Broker riêng (native) nạp
+    # cùng file artemis/broker.properties bằng `artemis run --properties` (docker-compose.yaml)
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
+  # Transactional Outbox (config/properties/OutboxProperties, bảng outbox_messages): message ghi cùng transaction với đơn,
+  # gửi ngay sau commit; gửi lỗi (broker chết) thì job OutboxRelayJob gửi lại mỗi poll-interval. Quá max-attempts lần →
+  # FAILED + log ERROR (đặt lại bằng tay — README, mục Messaging).
+  outbox:
+    poll-interval: 1m     # chu kỳ job; broker sống lại thì bản ghi kẹt được gửi trong ≤ 1 chu kỳ
+    retry-delay: 30s      # chờ tối thiểu trước lần thử sau, phải ≤ poll-interval
+    max-attempts: 5
+    batch-size: 100       # số bản ghi tối đa mỗi lần job chạy
+    retention: 7d         # bản ghi SENT cũ hơn thì bị xoá
   # Thread pool (config/properties/AsyncProperties). Hàng đợi đầy và đã đủ max-size: notification chạy task trên thread gọi
-  # (CallerRunsPolicy, không mất thông báo); dashboard từ chối (AbortPolicy) → /admin trả 503.
+  # (CallerRunsPolicy); dashboard từ chối (AbortPolicy) → /admin trả 503; outbox bỏ task (job gửi lại).
   async:
-    notification:      # notify-*: gửi Slack/email (@Async mặc định)
+    notification:      # notify-*: executor @Async mặc định (Slack/email đơn hàng chạy trên listener JMS, không ở đây)
       core-size: 2
       max-size: 4
       queue-capacity: 100
     dashboard:         # dashboard-*: truy vấn thống kê song song. Mỗi thread giữ 1 connection → max-size ≤ nửa pool Hikari
-                       # (spring.datasource.hikari.maximum-pool-size, mặc định 10), vượt thì app không khởi động
+                       # (spring.datasource.hikari.maximum-pool-size), vượt thì app không khởi động
       core-size: 4
       max-size: 4
       queue-capacity: 50
       timeout: 10s     # quá thời gian (hoặc 1 truy vấn lỗi, hoặc pool đầy) thì /admin trả 503
+    outbox:            # outbox-*: gửi bản ghi outbox ngay sau commit. Đầy thì BỎ task (job outbox gửi lại), không chạy
+                       # trên thread request. Mỗi thread giữ 1 connection lúc gửi → tính vào ConnectionBudgetCheck
+      core-size: 1
+      max-size: 2
+      queue-capacity: 100
   security:
     # Chống brute-force (form + API). Bộ đếm nằm trong bảng attempt_limits (dùng chung giữa các instance, key băm HMAC
     # bằng app.security.attempt-limits.key-secret — đặt theo profile). Trong window (tính từ lần thử đầu tiên, >= 1s),

@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.OrderDetail;
 import com.huuhv.foodsndrinks.entity.Product;
@@ -11,7 +12,9 @@ import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
-import com.huuhv.foodsndrinks.service.notification.OrderPlacedEvent;
+import com.huuhv.foodsndrinks.service.messaging.OutboxService;
+import com.huuhv.foodsndrinks.service.messaging.OutboxType;
+
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,7 +22,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -31,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -45,7 +48,7 @@ class OrderServiceTest {
     @Mock private OrderDetailRepository orderDetailRepository;
     @Mock private ProductRepository productRepository;
     @Mock private ProductImageRepository productImageRepository;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private OutboxService outboxService;
     @Mock private AuditLogService auditLogService;
 
     @InjectMocks private OrderService orderService;
@@ -247,7 +250,7 @@ class OrderServiceTest {
                     .isThrownBy(() -> orderService.checkout(alice, "1 Lê Lợi", null))
                     .withMessageContaining("trống");
             verify(orderRepository, never()).save(any());
-            verifyNoInteractions(eventPublisher);
+            verifyNoInteractions(outboxService);
         }
 
         @Test
@@ -257,7 +260,7 @@ class OrderServiceTest {
             assertThatIllegalArgumentException()
                     .isThrownBy(() -> orderService.checkout(alice, "1 Lê Lợi", null))
                     .withMessageContaining("trống");
-            verifyNoInteractions(eventPublisher);
+            verifyNoInteractions(outboxService);
         }
 
         @Test
@@ -268,11 +271,11 @@ class OrderServiceTest {
 
             assertThatIllegalArgumentException().isThrownBy(() -> orderService.checkout(alice, "   ", null));
             assertThat(cart.getStatus()).isEqualTo(OrderStatus.CART);
-            verifyNoInteractions(eventPublisher);
+            verifyNoInteractions(outboxService);
         }
 
         @Test
-        void placesOrder_andPublishesEventSnapshot() {
+        void placesOrder_andEnqueuesMessageSnapshotInOutbox() {
             Order cart = cartOf(alice, OrderStatus.CART);
             line(500L, cart, product(10L, "25000", true), 2);
             when(orderRepository.findCartByUserId(1L)).thenReturn(Optional.of(cart));
@@ -284,8 +287,8 @@ class OrderServiceTest {
             assertThat(cart.getShippingAddress()).isEqualTo("1 Lê Lợi");
             verify(orderRepository).save(cart);
 
-            ArgumentCaptor<OrderPlacedEvent> event = ArgumentCaptor.forClass(OrderPlacedEvent.class);
-            verify(eventPublisher).publishEvent(event.capture());
+            ArgumentCaptor<OrderPlacedMessage> event = ArgumentCaptor.forClass(OrderPlacedMessage.class);
+            verify(outboxService).enqueue(eq(OutboxType.ORDER_PLACED), event.capture());
             assertThat(event.getValue().orderId()).isEqualTo(100L);
             assertThat(event.getValue().customerEmail()).isEqualTo("alice@example.com");
             assertThat(event.getValue().totalPrice()).isEqualByComparingTo("50000");

@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.service.notification;
 
+import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
+import com.huuhv.foodsndrinks.exception.NotificationDeliveryException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -15,10 +17,12 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Thông báo Slack dạng Block Kit: cấu trúc payload, escape mrkdwn, giới hạn số dòng. */
@@ -55,12 +59,50 @@ class SlackNotificationServiceTest {
     }
 
     @Test
-    void disabled_sendsNothing() {
+    void isEnabled_requiresFlagAndWebhook() {
+        assertThat(service.isEnabled()).isTrue();
+
         ReflectionTestUtils.setField(service, "enabled", false);
+        assertThat(service.isEnabled()).isFalse();
 
-        service.sendOrderPlaced(order("A", null, items(1)));
+        ReflectionTestUtils.setField(service, "enabled", true);
+        ReflectionTestUtils.setField(service, "webhookUrl", " ");
+        assertThat(service.isEnabled()).isFalse();
+    }
 
-        server.verify(); // không có request nào được mong đợi
+    @Test
+    void webhookError_isThrown_soBrokerRedelivers_withoutLeakingWebhookUrl() {
+        server.expect(requestTo(WEBHOOK)).andRespond(withServerError());
+
+        assertThatThrownBy(() -> service.sendOrderPlaced(order("A", null, items(1))))
+                .isInstanceOf(NotificationDeliveryException.class)
+                .hasMessageContaining("HTTP 500")
+                .hasMessageNotContaining("XXX")
+                .hasNoCause();
+    }
+
+    @Test
+    void webhookIoError_isThrown_withoutLeakingWebhookUrl() {
+        server.expect(requestTo(WEBHOOK)).andRespond(request -> {
+            throw new java.net.SocketTimeoutException("Read timed out");
+        });
+
+        assertThatThrownBy(() -> service.sendOrderPlaced(order("A", null, items(1))))
+                .isInstanceOf(NotificationDeliveryException.class)
+                .hasMessageNotContaining("hooks.slack.test")
+                .hasNoCause();
+    }
+
+    @Test
+    void malformedWebhookUrl_isThrown_withoutLeakingWebhookUrl() {
+        // Dán sai cấu hình: lỗi dựng URI (không phải RestClientException) thường nối nguyên URL vào message
+        ReflectionTestUtils.setField(service, "webhookUrl", "https://hooks.slack.test:SECRET-TOKEN/services");
+
+        assertThatThrownBy(() -> service.sendOrderPlaced(order("A", null, items(1))))
+                .isInstanceOf(NotificationDeliveryException.class)
+                .hasMessageNotContaining("SECRET-TOKEN")
+                .hasMessageNotContaining("hooks.slack.test")
+                .hasNoCause();
     }
 
     @Test
@@ -104,9 +146,9 @@ class SlackNotificationServiceTest {
     @Test
     void longEmojiItemList_staysValidJson() {
         // 15 dòng × tên ~250 ký tự có emoji → vượt 3000 ký tự, bị cắt
-        List<OrderPlacedEvent.OrderLineItem> items = new ArrayList<>();
+        List<OrderPlacedMessage.OrderLineItem> items = new ArrayList<>();
         for (int i = 1; i <= 15; i++) {
-            items.add(new OrderPlacedEvent.OrderLineItem("🍜<".repeat(80) + i, 1, BigDecimal.ONE, BigDecimal.ONE));
+            items.add(new OrderPlacedMessage.OrderLineItem("🍜<".repeat(80) + i, 1, BigDecimal.ONE, BigDecimal.ONE));
         }
         server.expect(requestTo(WEBHOOK))
                 .andExpect(jsonPath("$.blocks[4].text.text").exists())
@@ -119,7 +161,7 @@ class SlackNotificationServiceTest {
 
     @Test
     void optionalFields_areOmitted_whenMissing() {
-        OrderPlacedEvent event = new OrderPlacedEvent(7L, "B", "b@example.com", " ", "HN", null,
+        OrderPlacedMessage event = new OrderPlacedMessage(7L, "B", "b@example.com", " ", "HN", null,
                 BigDecimal.TEN, null, items(1));
 
         String json = SlackMessageBuilder.orderPlaced(event).toString();
@@ -129,15 +171,15 @@ class SlackNotificationServiceTest {
 
     // -------------------------------------------------------
 
-    private static OrderPlacedEvent order(String name, String note, List<OrderPlacedEvent.OrderLineItem> items) {
-        return new OrderPlacedEvent(42L, name, "a@example.com", "0901234567", "12 Lê Lợi, Q1", note,
+    private static OrderPlacedMessage order(String name, String note, List<OrderPlacedMessage.OrderLineItem> items) {
+        return new OrderPlacedMessage(42L, name, "a@example.com", "0901234567", "12 Lê Lợi, Q1", note,
                 new BigDecimal("120000"), LocalDateTime.of(2026, 11, 20, 9, 30), items);
     }
 
-    private static List<OrderPlacedEvent.OrderLineItem> items(int count) {
-        List<OrderPlacedEvent.OrderLineItem> items = new ArrayList<>();
+    private static List<OrderPlacedMessage.OrderLineItem> items(int count) {
+        List<OrderPlacedMessage.OrderLineItem> items = new ArrayList<>();
         for (int i = 1; i <= count; i++) {
-            items.add(new OrderPlacedEvent.OrderLineItem("Món " + i, 1, new BigDecimal("6000"), new BigDecimal("6000")));
+            items.add(new OrderPlacedMessage.OrderLineItem("Món " + i, 1, new BigDecimal("6000"), new BigDecimal("6000")));
         }
         return items;
     }

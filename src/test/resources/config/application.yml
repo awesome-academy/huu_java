@@ -17,6 +17,11 @@ spring:
     url: jdbc:mysql://testcontainers-required.invalid:3306/foodsndrinks
     username: ""
     password: ""
+  # Test luôn dùng broker embedded trong JVM (không cần Docker), kể cả khi .env/compose đặt ARTEMIS_MODE=native
+  artemis:
+    mode: embedded
+    embedded:
+      enabled: true
   security:
     oauth2:
       client:
@@ -41,6 +46,16 @@ jwt:
   expiration: 3600000
 
 app:
+  jms:
+    # Thêm file giảm thời gian chờ giao lại (100ms) để test retry/DLQ chạy nhanh
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
+      - classpath:artemis/broker-test.properties
+  outbox:
+    # Job gửi lại coi như tắt (chạy lần đầu sau 24h) — test gọi OutboxPublisher.publishDue() trực tiếp, không phụ thuộc
+    # lịch. Thử lại không chờ để bản ghi vừa lỗi tới hạn ngay.
+    poll-interval: 24h
+    retry-delay: 0s
   security:
     remember-me-key: ${random.value}${random.value}
     attempt-limits:

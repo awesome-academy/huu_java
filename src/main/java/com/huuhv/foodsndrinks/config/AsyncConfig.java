@@ -43,6 +43,8 @@ public class AsyncConfig implements AsyncConfigurer {
 
     /** Hằng số ở {@link AsyncProperties} để service dùng mà không import {@code config}. */
     public static final String DASHBOARD_EXECUTOR = AsyncProperties.DASHBOARD_EXECUTOR;
+    /** Hằng số ở {@link AsyncProperties} để service ({@code service.messaging}) dùng mà không import {@code config}. */
+    public static final String OUTBOX_EXECUTOR = AsyncProperties.OUTBOX_EXECUTOR;
     static final String HIKARI_MAX_POOL_SIZE = "spring.datasource.hikari.maximum-pool-size";
     /** Mặc định của HikariCP khi không cấu hình {@value #HIKARI_MAX_POOL_SIZE}. */
     private static final int HIKARI_DEFAULT_MAX = 10;
@@ -52,7 +54,11 @@ public class AsyncConfig implements AsyncConfigurer {
         return new MdcTaskDecorator();
     }
 
-    /** Pool chạy thông báo Slack/email ({@code @Async("taskExecutor")}); cũng là executor mặc định của {@code @Async}. */
+    /**
+     * Executor mặc định của {@code @Async} ({@code notify-*}), cho việc nền gắn với thông báo. Slack/email của đơn hàng
+     * không còn chạy ở đây: chúng là consumer JMS của topic {@code order.placed} (thread của listener container, retry do
+     * broker quản lý).
+     */
     @Bean(name = "taskExecutor")
     public ThreadPoolTaskExecutor taskExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
         return build(builder, properties.notification(), "notify-", new ThreadPoolExecutor.CallerRunsPolicy());
@@ -73,12 +79,40 @@ public class AsyncConfig implements AsyncConfigurer {
     public ThreadPoolTaskExecutor dashboardExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties,
                                                     Environment environment) {
         AsyncProperties.DashboardPool pool = properties.dashboard();
-        int hikariMax = Binder.get(environment).bind(HIKARI_MAX_POOL_SIZE, Integer.class).orElse(HIKARI_DEFAULT_MAX);
+        int hikariMax = hikariMaxPoolSize(environment);
         if (pool.maxSize() > hikariMax / 2) {
             throw new IllegalStateException("app.async.dashboard.max-size (" + pool.maxSize() + ") must be <= half of "
                     + HIKARI_MAX_POOL_SIZE + " (" + hikariMax + "): each dashboard thread holds a JDBC connection");
         }
         return build(builder, pool, "dashboard-", new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    /**
+     * Pool gửi bản ghi outbox ngay sau commit ({@code OutboxEventListener}). Đầy thì BỎ task và ghi WARN — an toàn vì bản
+     * ghi vẫn PENDING và {@code OutboxRelayJob} gửi lại. Không dùng {@code CallerRunsPolicy}: task được gửi từ callback
+     * AFTER_COMMIT trên thread request, broker chết thì mỗi lần gửi tốn tới timeout kết nối → khách phải chờ.
+     */
+    @Bean(name = OUTBOX_EXECUTOR)
+    public ThreadPoolTaskExecutor outboxExecutor(ThreadPoolTaskExecutorBuilder builder, AsyncProperties properties) {
+        return build(builder, properties.outbox(), "outbox-", AsyncConfig::skipOutboxPublish);
+    }
+
+    /**
+     * Task bị từ chối vì pool đầy HOẶC vì executor đã shutdown (app đang tắt, request checkout cuối commit muộn) — log
+     * đúng nguyên nhân để không ai đi tăng {@code app.async.outbox.*} vì một lần rolling restart.
+     */
+    static void skipOutboxPublish(Runnable task, ThreadPoolExecutor executor) {
+        if (executor.isShutdown()) {
+            log.info("Outbox executor is shutting down, immediate publish skipped (the relay job will send it)");
+        } else {
+            log.warn("Outbox executor saturated ({} active, {} queued), immediate publish skipped (the relay job will "
+                    + "send it)", executor.getActiveCount(), executor.getQueue().size());
+        }
+    }
+
+    /** {@value #HIKARI_MAX_POOL_SIZE}, mặc định của HikariCP nếu không cấu hình. */
+    static int hikariMaxPoolSize(Environment environment) {
+        return Binder.get(environment).bind(HIKARI_MAX_POOL_SIZE, Integer.class).orElse(HIKARI_DEFAULT_MAX);
     }
 
     private static ThreadPoolTaskExecutor build(ThreadPoolTaskExecutorBuilder builder, AsyncProperties.PoolSize pool,
