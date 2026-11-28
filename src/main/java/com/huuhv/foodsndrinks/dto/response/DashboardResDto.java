@@ -35,7 +35,6 @@ public class DashboardResDto {
     public static class MonthlyRevenueDto {
         private final String     label;      // "Th6/2026"
         private final BigDecimal revenue;
-        private final long       orderCount;
     }
 
     @Getter
@@ -45,7 +44,8 @@ public class DashboardResDto {
         private final String        userFullName;
         private final BigDecimal    totalPrice;
         private final OrderStatus   status;
-        private final LocalDateTime createdAt;
+        /** Thời điểm ĐẶT đơn — {@code createdAt} của order là lúc tạo giỏ hàng. */
+        private final LocalDateTime orderedAt;
 
         public RecentOrderDto(Order o) {
             User u          = o.getUser();
@@ -54,7 +54,7 @@ public class DashboardResDto {
             this.userFullName = u != null ? u.getFullName() : "—";
             this.totalPrice  = o.getTotalPrice();
             this.status      = o.getStatus();
-            this.createdAt   = o.getCreatedAt();
+            this.orderedAt   = o.getOrderedAt();
         }
     }
 }

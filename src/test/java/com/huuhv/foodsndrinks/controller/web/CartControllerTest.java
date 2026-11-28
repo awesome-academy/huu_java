@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.support.SecuredWebMvcTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -22,13 +23,14 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
-/** {@link CartController} qua chain web thật: bắt đăng nhập, bắt CSRF, JSON cho fetch() và lỗi nghiệp vụ → 400. */
+/** {@link CartController} qua chain web thật: bắt đăng nhập, bắt CSRF, JSON cho fetch(), lỗi nghiệp vụ → 400, không tìm thấy → 404 (cũng là JSON). */
 @SecuredWebMvcTest(CartController.class)
 class CartControllerTest {
 
@@ -117,23 +119,50 @@ class CartControllerTest {
 
     @Test
     @WithMockUser(username = "alice", roles = "USER")
-    void update_itemOfAnotherUser_returns400() throws Exception {
-        doThrow(new IllegalArgumentException("Không thể cập nhật giỏ hàng này!"))
+    void add_unknownProduct_returns404WithMessage() throws Exception {
+        doThrow(new ResourceNotFoundException("Sản phẩm không tồn tại!"))
+                .when(orderService).addToCart(ALICE, 999999L, 1);
+
+        mockMvc.perform(post("/cart/add").param("productId", "999999").with(csrf()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.message").value("Sản phẩm không tồn tại!"));
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "USER")
+    void update_unknownOrForeignItem_returns404AsJson() throws Exception {
+        // Món của người khác được service báo y hệt món không tồn tại (OrderServiceTest) → cùng một câu trả lời
+        doThrow(new ResourceNotFoundException("Sản phẩm trong giỏ không tồn tại!"))
                 .when(orderService).updateCartItemQuantity(ALICE, 999L, 5);
 
         mockMvc.perform(post("/cart/update/999").param("quantity", "5").with(csrf()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.message").value("Sản phẩm trong giỏ không tồn tại!"));
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "USER")
+    void update_itemOfOwnPlacedOrder_returns400() throws Exception {
+        doThrow(new IllegalArgumentException("Không thể cập nhật giỏ hàng này!"))
+                .when(orderService).updateCartItemQuantity(ALICE, 500L, 5);
+
+        mockMvc.perform(post("/cart/update/500").param("quantity", "5").with(csrf()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Không thể cập nhật giỏ hàng này!"));
     }
 
     @Test
     @WithMockUser(username = "alice", roles = "USER")
-    void remove_unknownItem_returns400() throws Exception {
+    void remove_unknownItem_returns404() throws Exception {
         doThrow(new ResourceNotFoundException("Sản phẩm trong giỏ không tồn tại!"))
                 .when(orderService).removeCartItem(ALICE, 404L);
 
+        // JSON {message} cho fetch() — không phải trang HTML 404 của WebExceptionHandler
         mockMvc.perform(post("/cart/remove/404").with(csrf()))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.message").value("Sản phẩm trong giỏ không tồn tại!"));
     }
 

@@ -6,20 +6,21 @@ import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.TestingAuthenticationToken;
-import org.springframework.security.web.session.HttpSessionIdChangedEvent;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -45,7 +46,13 @@ class WebSocketSessionRevalidationJobTest {
     private final WebSocketSessionRevalidationJob job =
             new WebSocketSessionRevalidationJob(tracker, httpSessionLookup, accountStatusService, auditLogService);
 
-    private record Status(Boolean getActive, Role getRole) implements UserAccountStatus {
+    private static final Instant PASSWORD_CHANGED_AT = Instant.parse("2026-11-28T03:00:00Z");
+
+    private record Status(Boolean getActive, Role getRole, Instant getPasswordChangedAt) implements UserAccountStatus {
+        /** Tài khoản chưa từng đổi mật khẩu. */
+        Status(Boolean active, Role role) {
+            this(active, role, null);
+        }
     }
 
     @Test
@@ -57,7 +64,7 @@ class WebSocketSessionRevalidationJobTest {
     @Test
     void validSessions_areKept() throws Exception {
         WebSocketSession alice = open("ws-1", "alice", "ROLE_USER");
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
 
@@ -73,7 +80,7 @@ class WebSocketSessionRevalidationJobTest {
         WebSocketSession demoted = open("ws-2", "demoted", "ROLE_ADMIN");
         WebSocketSession deleted = open("ws-3", "deleted", "ROLE_USER");
         WebSocketSession ok = open("ws-4", "ok", "ROLE_ADMIN");
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
                 "locked", new Status(false, Role.ROLE_USER),
                 "demoted", new Status(true, Role.ROLE_USER),
@@ -93,9 +100,50 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     @Test
+    void socketsOfSessionsAuthenticatedBeforeThePasswordChange_areClosedAndAudited() throws Exception {
+        // Cùng một user, ba trình duyệt: đăng nhập trước khi đổi mật khẩu, session vừa đổi mật khẩu (mốc = lúc đổi),
+        // và session không mang mốc xác thực (coi như cũ)
+        WebSocketSession oldLogin = open("ws-1", "alice", "ROLE_USER", PASSWORD_CHANGED_AT.minusSeconds(60));
+        WebSocketSession changer = open("ws-2", "alice", "ROLE_USER", PASSWORD_CHANGED_AT);
+        WebSocketSession unstamped = open("ws-3", "alice", "ROLE_USER");
+        WebSocketSession otherUser = open("ws-4", "bob", "ROLE_USER", PASSWORD_CHANGED_AT.minusSeconds(60));
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
+        when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
+                "alice", new Status(true, Role.ROLE_USER, PASSWORD_CHANGED_AT),
+                "bob", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(2);
+
+        verify(oldLogin).close(WebSocketSessionTracker.REVOKED);
+        verify(unstamped).close(WebSocketSessionTracker.REVOKED);
+        verify(changer, never()).close(any(CloseStatus.class));
+        verify(otherUser, never()).close(any(CloseStatus.class));
+        verify(auditLogService, times(2)).webSocketSessionRevoked("alice", AccountStatusService.PASSWORD_CHANGED);
+    }
+
+    @Test
+    void sessionStore_isAskedOnceForAllOpenSockets() throws Exception {
+        WebSocketSession alice = open("ws-1", "alice", "ROLE_USER");
+        WebSocketSession bob = open("ws-2", "bob", "ROLE_USER");
+        WebSocketSession carol = open("ws-3", "carol", "ROLE_USER");
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of(bob));
+        when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
+                "alice", new Status(true, Role.ROLE_USER), "carol", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+
+        // Một lần hỏi kho session cho cả 3 socket (không phải một findById mỗi socket)
+        verify(httpSessionLookup, times(1)).findEnded(argThat(sockets -> sockets.size() == 3
+                && sockets.containsAll(List.of(alice, bob, carol))));
+        verify(bob).close(WebSocketSessionTracker.REVOKED);
+        verify(alice, never()).close(any(CloseStatus.class));
+        verify(carol, never()).close(any(CloseStatus.class));
+    }
+
+    @Test
     void endedHttpSession_isClosed_withoutAudit() throws Exception {
         WebSocketSession loggedOut = open("ws-1", "alice", "ROLE_USER");
-        when(httpSessionLookup.isAlive(loggedOut)).thenReturn(false);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of(loggedOut));
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
 
@@ -110,7 +158,7 @@ class WebSocketSessionRevalidationJobTest {
         WebSocketSession locked = open("ws-1", "locked", "ROLE_USER");
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(locked))
                 .when(locked).close(any(CloseStatus.class));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("locked", new Status(false, Role.ROLE_USER)));
 
@@ -127,19 +175,27 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     @Test
-    void socketRevokedBySessionIdChange_whoseCloseFailed_isClosedByJob_withoutAudit() throws Exception {
+    void socketOfEndedSession_whoseCloseFailed_isClosedAgainNextCycle_withoutAskingAgainWhy() throws Exception {
+        // Session HTTP kết thúc ở instance khác (logout, đổi id khi đăng nhập lại): chỉ job này phát hiện được
         WebSocketSession socket = open("ws-1", "alice", "ROLE_USER");
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
-        tracker.onHttpSessionIdChanged(new HttpSessionIdChangedEvent(new MockHttpSession(null, "http-new"), "http-ws-1"));
-        // Object HttpSession vẫn sống, tài khoản vẫn hợp lệ
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of(socket));
+        when(accountStatusService.findAccountStatuses(anyCollection()))
+                .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+        assertThat(tracker.snapshot()).singleElement()
+                .extracting(WebSocketSessionTracker.TrackedSession::revoked).isEqualTo(true);
 
         assertThat(job.revalidateOpenSessions()).isEqualTo(1);
 
         verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
         assertThat(tracker.snapshot()).isEmpty();
-        verifyNoInteractions(auditLogService, accountStatusService);
+        // Chu kỳ 2 chỉ còn socket đã thu hồi → không hỏi lại kho session, không query DB, không audit
+        verify(httpSessionLookup, times(1)).findEnded(any());
+        verify(accountStatusService, times(1)).findAccountStatuses(anyCollection());
+        verifyNoInteractions(auditLogService);
     }
 
     @Test
@@ -149,7 +205,7 @@ class WebSocketSessionRevalidationJobTest {
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
         tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
                 "alice", new Status(true, Role.ROLE_USER)));
 
@@ -169,7 +225,7 @@ class WebSocketSessionRevalidationJobTest {
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
         tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("locked", new Status(false, Role.ROLE_USER)));
 
@@ -191,8 +247,16 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     private WebSocketSession open(String id, String username, String role) throws Exception {
+        return open(id, username, role, null);
+    }
+
+    /** @param authenticatedAt mốc xác thực của session HTTP lúc handshake, {@code null} = session không mang mốc */
+    private WebSocketSession open(String id, String username, String role, Instant authenticatedAt) throws Exception {
         WebSocketSession socket = mock(WebSocketSession.class);
         Map<String, Object> attributes = new HashMap<>(Map.of(HttpSessionLookup.HTTP_SESSION_ID_ATTRIBUTE, "http-" + id));
+        if (authenticatedAt != null) {
+            attributes.put(HttpSessionLookup.AUTHENTICATED_AT_ATTRIBUTE, authenticatedAt);
+        }
         when(socket.getId()).thenReturn(id);
         when(socket.getAttributes()).thenReturn(attributes);
         when(socket.getPrincipal()).thenReturn(new TestingAuthenticationToken(username, "n/a", List.of(

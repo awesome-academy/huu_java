@@ -3,6 +3,7 @@ package com.huuhv.foodsndrinks.controller.admin;
 import com.huuhv.foodsndrinks.dto.response.OrderResDto;
 import com.huuhv.foodsndrinks.dto.response.PendingOrderCountResDto;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ConcurrentUpdateException;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.excel.ExcelFile;
 import com.huuhv.foodsndrinks.service.excel.OrderExportService;
@@ -123,7 +124,8 @@ public class OrderAdminController {
             orderService.updateStatus(id, newStatus);
             ra.addFlashAttribute("successMessage",
                     "Đã cập nhật trạng thái đơn #" + id + " → " + newStatus.getLabel());
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException | ConcurrentUpdateException e) {
+            // ConcurrentUpdateException: admin khác vừa đổi đơn này — không ghi đè, quay lại trang để thấy trạng thái mới
             ra.addFlashAttribute("errorMessage", e.getMessage());
         }
         return "list".equals(redirectTo)

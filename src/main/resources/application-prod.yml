@@ -59,6 +59,11 @@ app:
     # Origin public của trang (vd. https://shop.example.com) — bắt buộc: sau load balancer, so khớp same-origin theo Host
     # không đáng tin (config/WebSocketOriginCheck chặn khởi động nếu rỗng)
     allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
+  soap:
+    exchange-rate:
+      mock-endpoint:
+        # Prod không bao giờ phục vụ tỷ giá giả — cố định false, không đọc biến môi trường
+        enabled: false
   security:
     remember-me-key: ${REMEMBER_ME_KEY}
     attempt-limits:

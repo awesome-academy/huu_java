@@ -26,6 +26,19 @@
                         <div class="fw-bold fs-5 text-success"
                              th:text="${#numbers.formatDecimal(stats.totalRevenue, 1, 'POINT', 0, 'COMMA') + ' đ'}">
                         </div>
+                        <!--/* Quy đổi USD theo tỷ giá của dịch vụ SOAP (service/soap/ExchangeRateService). Chỉ hiện khi tính năng
+                               được cấu hình (SOAP_EXCHANGE_RATE_URL); dịch vụ lỗi/quá hạn thì báo rõ thay vì ẩn đi.
+                               (Chú thích kiểu parser-level của Thymeleaf: không xuất ra HTML.) */-->
+                        <th:block th:if="${exchangeRateEnabled}">
+                            <div class="small text-success" th:if="${revenueUsd != null}" data-revenue-usd
+                                 th:text="${'≈ ' + #numbers.formatDecimal(revenueUsd.amount, 1, 'COMMA', 2, 'POINT') + ' ' + revenueUsd.currency}">
+                            </div>
+                            <div class="text-muted" style="font-size:0.75rem" th:if="${revenueUsd != null}" data-exchange-rate
+                                 th:text="${'Tỷ giá 1 ' + revenueUsd.currency + ' = ' + #numbers.formatDecimal(revenueUsd.rate, 1, 'POINT', 0, 'COMMA') + ' đ, lấy lúc ' + #temporals.format(revenueUsd.rateFetchedAt, 'HH:mm dd/MM')}">
+                            </div>
+                            <div class="text-muted" style="font-size:0.75rem" th:if="${revenueUsd == null}"
+                                 data-exchange-rate-unavailable>Không lấy được tỷ giá</div>
+                        </th:block>
                         <div class="text-muted" style="font-size:0.75rem"
                              th:text="${stats.totalCompletedOrders + ' đơn hoàn thành'}">
                         </div>
@@ -129,7 +142,7 @@
                             <th class="py-2">Khách hàng</th>
                             <th class="py-2">Tổng tiền</th>
                             <th class="py-2">Trạng thái</th>
-                            <th class="py-2">Thời gian</th>
+                            <th class="py-2">Đặt lúc</th>
                         </tr>
                         </thead>
                         <tbody>
@@ -156,7 +169,7 @@
                                 </span>
                             </td>
                             <td class="text-muted small"
-                                th:text="${o.createdAt != null ? #temporals.format(o.createdAt, 'dd/MM HH:mm') : '—'}">
+                                th:text="${o.orderedAt != null ? #temporals.format(o.orderedAt, 'dd/MM HH:mm') : '—'}">
                             </td>
                         </tr>
                         </tbody>

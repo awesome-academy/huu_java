@@ -4,10 +4,12 @@ import com.huuhv.foodsndrinks.dto.request.ProfileUpdateReqDto;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
+import com.huuhv.foodsndrinks.security.PasswordChangeSessionHandler;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.UserService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
@@ -29,6 +31,7 @@ public class ProfileController {
 
     private final UserService  userService;
     private final OrderService orderService;
+    private final PasswordChangeSessionHandler passwordChangeSessionHandler;
 
     @GetMapping("/profile")
     public String profilePage(Principal principal, Model model) {
@@ -54,14 +57,21 @@ public class ProfileController {
                                 Principal principal,
                                 Model model,
                                 RedirectAttributes ra,
-                                HttpServletRequest request) throws ServletException {
+                                HttpServletRequest request,
+                                HttpServletResponse response) throws ServletException {
         if (bindingResult.hasErrors()) {
             return PROFILE_EDIT_VIEW;
         }
 
         User user = userService.getCurrentUser(principal.getName());
         try {
-            userService.updateProfile(user.getId(), dto);
+            // Đổi mật khẩu: mọi session khác của tài khoản bị huỷ (AccountStatusFilter); session này được giữ lại —
+            // mốc xác thực ghi vào kho session TRƯỚC commit, đổi session id + cấp lại remember-me SAU commit
+            userService.updateProfile(user.getId(), dto,
+                            passwordChangedAt -> passwordChangeSessionHandler.stampCurrentSession(request,
+                                    passwordChangedAt))
+                    .ifPresent(passwordChangedAt ->
+                            passwordChangeSessionHandler.renewCurrentSession(request, response, principal.getName()));
             ra.addFlashAttribute("successMessage", "Cập nhật thông tin thành công!");
             return "redirect:/profile";
         } catch (PasswordChangeThrottledException e) {

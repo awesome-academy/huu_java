@@ -8,6 +8,7 @@ import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -28,6 +29,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      * {@code orderedFrom}/{@code orderedBefore}: ngày đặt trong {@code [orderedFrom, orderedBefore)}, {@code null} = không
      * chặn đầu đó. Điều kiện WHERE phải giống hệt {@link #findExportRows} — file export là đúng danh sách đang lọc; sửa một
      * câu thì sửa cả ba (kể cả {@code countQuery}).
+     * <p>
+     * Xếp theo thời điểm ĐẶT ({@code orderedAt}), không theo {@code id}/{@code createdAt}: giỏ hàng là một order nên hai
+     * giá trị đó là lúc tạo giỏ — đơn vừa đặt từ một giỏ tạo từ lâu phải nằm trên cùng.
      */
     @Query(value = """
             SELECT o FROM Order o LEFT JOIN FETCH o.user u
@@ -40,7 +44,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                    OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
               AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
-            ORDER BY o.id DESC
+            ORDER BY o.orderedAt DESC, o.id DESC
             """,
             countQuery = """
             SELECT COUNT(o) FROM Order o LEFT JOIN o.user u
@@ -79,7 +83,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                    OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
               AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
-            ORDER BY o.id DESC
+            ORDER BY o.orderedAt DESC, o.id DESC
             """)
     List<OrderExportRow> findExportRows(@Param("status")  OrderStatus status,
                                         @Param("keyword") String keyword,
@@ -91,6 +95,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     /** Fetch order + user eagerly for detail view */
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.user WHERE o.id = :id")
     Optional<Order> findByIdWithUser(@Param("id") Long id);
+
+    /**
+     * Đổi trạng thái CHỈ KHI đơn vẫn đang ở {@code from} — số dòng đã đổi (0 = người khác vừa đổi trước). So sánh và ghi
+     * trong một câu lệnh nên hai admin đổi cùng lúc không thể cùng thành công: câu UPDATE thứ hai chờ khoá dòng rồi thấy
+     * trạng thái mới (UPDATE luôn đọc bản đã commit mới nhất, kể cả ở REPEATABLE READ) và không khớp điều kiện.
+     * {@code updated_at} do MySQL tự cập nhật ({@code ON UPDATE CURRENT_TIMESTAMP}); {@code ordered_at} không bị đụng tới.
+     * Xoá persistence context sau khi chạy: entity {@code Order} đã nạp trước đó còn mang trạng thái cũ.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Order o SET o.status = :to WHERE o.id = :id AND o.status = :from")
+    int updateStatusIfCurrent(@Param("id") Long id, @Param("from") OrderStatus from, @Param("to") OrderStatus to);
 
     /**
      * Fetch order + user + orderDetails + products in 1 query for detail view.
@@ -127,6 +142,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT o.status FROM Order o WHERE o.id = :id AND o.user.username = :username")
     Optional<OrderStatus> findStatusByIdAndOwnerUsername(@Param("id") Long id, @Param("username") String username);
 
+    /** Trạng thái hiện tại của đơn {@code id}, KHÔNG lọc chủ đơn — chỉ cho người gọi đã được xác nhận là admin. */
+    @Query("SELECT o.status FROM Order o WHERE o.id = :id")
+    Optional<OrderStatus> findStatusById(@Param("id") Long id);
+
     /** The user's active cart (status = CART), with items + products pre-loaded */
     @Query("""
             SELECT DISTINCT o FROM Order o
@@ -146,11 +165,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             """)
     Optional<Order> findByIdAndUserIdWithDetailsAndProducts(@Param("id") Long id, @Param("userId") Long userId);
 
-    /** Past orders (everything except CART) for the "order history" page */
+    /** Past orders (everything except CART) for the "order history" page — mới đặt nhất trước (orderedAt) */
     @Query(value = """
             SELECT o FROM Order o
             WHERE o.user.id = :userId AND o.status <> 'CART'
-            ORDER BY o.createdAt DESC
+            ORDER BY o.orderedAt DESC, o.id DESC
             """,
             countQuery = """
             SELECT COUNT(o) FROM Order o
@@ -172,7 +191,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT o.status, COUNT(o) FROM Order o WHERE o.status <> 'CART' GROUP BY o.status")
     List<Object[]> countGroupByStatus();
 
-    /** Doanh thu đơn COMPLETED đặt (orderedAt) trong {@code [from, to)} — báo cáo tháng. */
+    /**
+     * Doanh thu đơn COMPLETED đặt (orderedAt) trong {@code [from, to)} — báo cáo tháng và biểu đồ doanh thu của dashboard
+     * (cùng một câu nên hai nơi luôn khớp). Ranh giới tháng do Java tính theo múi giờ JVM rồi truyền vào: không dùng
+     * {@code YEAR()/MONTH()} của MySQL — DB lưu UTC nên đơn đặt 0h–7h ngày 1 (giờ VN) sẽ rơi vào tháng trước.
+     */
     @Query("""
             SELECT COALESCE(SUM(o.totalPrice), 0) FROM Order o
             WHERE o.status = 'COMPLETED' AND o.orderedAt >= :from AND o.orderedAt < :to
@@ -187,24 +210,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             """)
     List<Object[]> countGroupByStatusBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
-    /** Recent N orders (excluding CART) with user info */
-    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.user WHERE o.status <> 'CART' ORDER BY o.createdAt DESC")
-    List<Order> findRecent(Pageable pageable);
-
-    /**
-     * Monthly revenue for COMPLETED orders since a given date.
-     * Returns Object[]: [year(int), month(int), revenue(BigDecimal), count(long)]
-     */
+    /** N đơn mới ĐẶT gần nhất (trừ CART) kèm user — theo orderedAt, không theo lúc tạo giỏ */
     @Query("""
-            SELECT FUNCTION('YEAR', o.createdAt),
-                   FUNCTION('MONTH', o.createdAt),
-                   SUM(o.totalPrice),
-                   COUNT(o)
-            FROM Order o
-            WHERE o.status = 'COMPLETED' AND o.createdAt >= :from
-            GROUP BY FUNCTION('YEAR', o.createdAt), FUNCTION('MONTH', o.createdAt)
-            ORDER BY FUNCTION('YEAR', o.createdAt), FUNCTION('MONTH', o.createdAt)
+            SELECT o FROM Order o LEFT JOIN FETCH o.user
+            WHERE o.status <> 'CART'
+            ORDER BY o.orderedAt DESC, o.id DESC
             """)
-    List<Object[]> findMonthlyRevenue(@Param("from") LocalDateTime from);
+    List<Order> findRecent(Pageable pageable);
 }
 

@@ -23,6 +23,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -44,6 +45,8 @@ public class DashboardService {
 
     /** Số sản phẩm của biểu đồ "top bán chạy". */
     static final int TOP_PRODUCTS = 5;
+    /** Số tháng của biểu đồ doanh thu (tính cả tháng hiện tại). */
+    static final int REVENUE_MONTHS = 6;
     private static final TransactionDefinition READ_ONLY;
 
     static {
@@ -104,8 +107,9 @@ public class DashboardService {
     }
 
     /**
-     * Dữ liệu 3 biểu đồ (3 query gom nhóm, một transaction read-only) + KPI "Đơn đang xử lý" (suy ra từ kết quả đếm theo
-     * trạng thái, không thêm query) — cho {@code dashboard.js} lúc tải trang và mỗi lần cập nhật realtime. Các KPI khác
+     * Dữ liệu 3 biểu đồ (doanh thu: một câu SUM theo index {@code ordered_at} cho mỗi tháng; trạng thái và top sản phẩm:
+     * mỗi biểu đồ một câu gom nhóm — tất cả trong một transaction read-only) + KPI "Đơn đang xử lý" (suy ra từ kết quả đếm
+     * theo trạng thái, không thêm query) — cho {@code dashboard.js} lúc tải trang và mỗi lần cập nhật realtime. Các KPI khác
      * và bảng đơn gần đây không tính lại. Luôn đọc lại từ DB: dashboard ở mọi instance hội tụ cùng số liệu, client không
      * cộng dồn từ sự kiện.
      */
@@ -200,34 +204,23 @@ public class DashboardService {
     // Builders
     // -------------------------------------------------------
 
-    /** Last 6 months revenue — fills missing months with 0 */
+    /**
+     * Doanh thu {@value #REVENUE_MONTHS} tháng gần nhất (tháng hiện tại ở cuối), tháng không có đơn = 0. Đơn được tính vào
+     * tháng ĐẶT ({@code orderedAt}), không phải tháng tạo giỏ ({@code createdAt}) — cùng câu truy vấn và cùng cách tính
+     * ranh giới tháng ({@link YearMonth} theo múi giờ JVM, khoảng {@code [đầu tháng, đầu tháng sau)}) với email báo cáo
+     * tháng của {@code OrderStatisticsScheduler}, nên hai nơi không thể lệch nhau.
+     */
     private List<DashboardResDto.MonthlyRevenueDto> buildMonthlyRevenue() {
-        LocalDateTime from = LocalDateTime.now().minusMonths(5).withDayOfMonth(1)
-                .withHour(0).withMinute(0).withSecond(0).withNano(0);
-
-        Map<String, Object[]> dataMap = orderRepository.findMonthlyRevenue(from)
-                .stream()
-                .collect(Collectors.toMap(
-                        row -> row[0] + "-" + row[1],  // "2026-1"
-                        row -> row
-                ));
-
+        YearMonth current = YearMonth.now();
         List<DashboardResDto.MonthlyRevenueDto> result = new ArrayList<>();
-        LocalDateTime cursor = from;
-        for (int i = 0; i < 6; i++) {
-            int year  = cursor.getYear();
-            int month = cursor.getMonthValue();
-            String key = year + "-" + month;
-            String label = "Th" + month + "/" + year;
-
-            Object[] row = dataMap.get(key);
+        for (int monthsAgo = REVENUE_MONTHS - 1; monthsAgo >= 0; monthsAgo--) {
+            YearMonth month = current.minusMonths(monthsAgo);
+            LocalDateTime from = month.atDay(1).atStartOfDay();
+            LocalDateTime to = month.plusMonths(1).atDay(1).atStartOfDay();
             result.add(DashboardResDto.MonthlyRevenueDto.builder()
-                    .label(label)
-                    .revenue(row != null ? (BigDecimal) row[2] : BigDecimal.ZERO)
-                    .orderCount(row != null ? ((Number) row[3]).longValue() : 0L)
+                    .label("Th" + month.getMonthValue() + "/" + month.getYear())
+                    .revenue(orderRepository.sumCompletedRevenueBetween(from, to))
                     .build());
-
-            cursor = cursor.plusMonths(1);
         }
         return result;
     }

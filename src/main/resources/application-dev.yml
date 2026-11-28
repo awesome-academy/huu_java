@@ -37,6 +37,12 @@ app:
       key-secret: ${ATTEMPT_LIMITS_KEY_SECRET:${random.value}${random.value}}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
+  soap:
+    exchange-rate:
+      mock-endpoint:
+        # Dev (kể cả container app của compose): bật endpoint tỷ giá giả để SOAP client có dịch vụ để gọi. Muốn dashboard
+        # hiện tỷ giá thì đặt SOAP_EXCHANGE_RATE_URL/USERNAME/PASSWORD trong .env (xem .env.example)
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:true}
 jwt:
   # Không đặt JWT_SECRET thì tự sinh khoá ngẫu nhiên: mỗi ${random.value} là 16 byte từ SecureRandom (Spring Boot 4),
   # ghép 2 lần = 256 bit, đủ cho HS256 và quy tắc "secret >= 256 bit". Không ai biết trước khoá ký, đổi lại token cũ

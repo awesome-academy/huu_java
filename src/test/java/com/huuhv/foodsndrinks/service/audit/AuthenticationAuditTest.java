@@ -8,6 +8,8 @@ import com.huuhv.foodsndrinks.security.AuditingRememberMeServices;
 import com.huuhv.foodsndrinks.security.DisabledOAuth2AccountException;
 import com.huuhv.foodsndrinks.security.OAuth2EmailConflictException;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
+import com.huuhv.foodsndrinks.service.security.AuthenticationClock;
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +39,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 
@@ -107,6 +110,23 @@ class AuthenticationAuditTest {
                     + " event.reason=BAD_CREDENTIALS auth.method=API username=alice source.ip=10.0.0.7");
             assertThat(line).doesNotContain("S3cret-password");
         });
+    }
+
+    @Test
+    void soapHttpBasicLogin_isAuditedAsSoap_onTheServicePathAndBelowIt_butNotOnTheWebSocketPath() {
+        // POST /ws là đường dẫn thật của SOAP (không có "/" cuối) — so tiền tố "/ws/" sẽ bỏ sót nó
+        for (String soapPath : List.of("/ws", "/ws/", "/ws/anything")) {
+            currentRequest(soapPath);
+            listener.onSuccess(new AuthenticationSuccessEvent(
+                    UsernamePasswordAuthenticationToken.authenticated(EXISTING_USER, null, List.of())));
+        }
+        // /ws-stomp là handshake WebSocket của chain web (đăng nhập form), không phải SOAP
+        currentRequest("/ws-stomp");
+        listener.onSuccess(new AuthenticationSuccessEvent(
+                UsernamePasswordAuthenticationToken.authenticated(EXISTING_USER, null, List.of())));
+
+        assertThat(audit.lines()).extracting(line -> line.replaceAll(".*auth\\.method=(\\S+).*", "$1"))
+                .containsExactly("SOAP", "SOAP", "SOAP", "FORM");
     }
 
     @Test
@@ -251,6 +271,9 @@ class AuthenticationAuditTest {
     // Remember-me cookie bị từ chối (không sinh event)
     // -------------------------------------------------------
 
+    /** "Bây giờ" theo đồng hồ DB lúc remember-me đăng nhập. */
+    private static final Instant REMEMBER_ME_LOGIN_AT = Instant.parse("2026-11-28T00:00:00Z");
+
     private AuditingRememberMeServices rememberMeServices() {
         return rememberMeServices(false);
     }
@@ -258,7 +281,8 @@ class AuthenticationAuditTest {
     private AuditingRememberMeServices rememberMeServices(boolean disabled) {
         UserDetailsService userDetailsService = username -> User.withUsername(username)
                 .password("{noop}pw").authorities("ROLE_USER").disabled(disabled).build();
-        return new AuditingRememberMeServices("test-key", userDetailsService, auditLogService);
+        AuthenticationClock clock = mock(AuthenticationClock.class, invocation -> REMEMBER_ME_LOGIN_AT);
+        return new AuditingRememberMeServices("test-key", userDetailsService, auditLogService, clock);
     }
 
     /** Cookie remember-me có chữ ký hợp lệ, do chính TokenBasedRememberMeServices sinh ra khi đăng nhập. */
@@ -283,6 +307,8 @@ class AuthenticationAuditTest {
 
         assertThat(audit.lines()).containsExactly("Login failed event.action=LOGIN_FAILURE event.outcome=failure"
                 + " event.reason=DISABLED auth.method=REMEMBER_ME username=alice source.ip=10.0.0.7");
+        // Mốc xác thực chỉ ghi khi đăng nhập thành công thật: cookie của tài khoản bị khoá không tạo session nào
+        assertThat(request.getSession(false)).isNull();
     }
 
     @Test
@@ -294,6 +320,7 @@ class AuthenticationAuditTest {
         assertThat(rememberMeServices().autoLogin(request, new MockHttpServletResponse())).isNotNull();
 
         assertThat(audit.lines()).isEmpty();
+        assertThat(SessionAuthenticationTime.of(request.getSession(false))).isEqualTo(REMEMBER_ME_LOGIN_AT);
     }
 
     @Test

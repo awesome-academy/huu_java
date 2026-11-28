@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hợp đồng của DỊCH VỤ TỶ GIÁ mà app gọi với vai trò SOAP CLIENT (service/soap/ExchangeRateSoapClient) để quy đổi doanh
+  thu sang USD trên dashboard. Môi trường local không có dịch vụ thật: app tự phục vụ một endpoint MOCK theo đúng hợp đồng
+  này (controller/soap/ExchangeRateMockEndpoint, chỉ khi app.soap.exchange-rate.mock-endpoint.enabled=true).
+
+  Class JAXB sinh lúc build vào package com.huuhv.foodsndrinks.soap.exchangerate (không sửa tay, không commit). Client
+  validate CẢ request lẫn response theo file này — response sai hợp đồng bị coi là "không lấy được tỷ giá".
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:tns="urn:foodsndrinks:exchange-rate"
+           targetNamespace="urn:foodsndrinks:exchange-rate"
+           elementFormDefault="qualified">
+
+    <!-- 1 đơn vị baseCurrency đổi được bao nhiêu quoteCurrency? -->
+    <xs:element name="GetExchangeRateRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="baseCurrency" type="tns:CurrencyCode"/>
+                <xs:element name="quoteCurrency" type="tns:CurrencyCode"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetExchangeRateResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="baseCurrency" type="tns:CurrencyCode"/>
+                <xs:element name="quoteCurrency" type="tns:CurrencyCode"/>
+                <!-- 1 baseCurrency = rate quoteCurrency -->
+                <xs:element name="rate" type="tns:Rate"/>
+                <!-- Thời điểm tỷ giá có hiệu lực (có múi giờ) -->
+                <xs:element name="asOf" type="xs:dateTime"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <!-- Mã tiền tệ ISO 4217, vd. USD, VND -->
+    <xs:simpleType name="CurrencyCode">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[A-Z]{3}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="Rate">
+        <xs:restriction base="xs:decimal">
+            <xs:minExclusive value="0"/>
+            <xs:totalDigits value="18"/>
+            <xs:fractionDigits value="6"/>
+        </xs:restriction>
+    </xs:simpleType>
+</xs:schema>

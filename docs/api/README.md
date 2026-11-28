@@ -45,7 +45,7 @@ Authorization: Bearer <token>
 
 Token sai/thiếu/hết hạn → **401 Unauthorized**. Sai username/email hoặc mật khẩu → 401 với message chung (không phân biệt sai username hay sai mật khẩu). Tài khoản bị vô hiệu hoá → 401 `Tài khoản đã bị vô hiệu hoá.` — chỉ trả khi đã nhập **đúng** mật khẩu, nên không dò được tài khoản nào bị khoá.
 
-JWT ký HS256, sống 1 giờ, có claim `iss` = `jwt.issuer` (`JWT_ISSUER`, mặc định `foodsndrinks`) và `aud` = `jwt.audience` (`JWT_AUDIENCE`, mặc định `foodsndrinks-api`). Token chỉ hợp lệ khi đúng chữ ký, còn hạn và khớp cả `iss` lẫn `aud`; đổi một trong hai giá trị làm mọi token đã cấp hết hiệu lực. Claims không chứa dữ liệu nhạy cảm (`sub` = username, `role`).
+JWT ký HS256, sống 1 giờ, có claim `iss` = `jwt.issuer` (`JWT_ISSUER`, mặc định `foodsndrinks`) và `aud` = `jwt.audience` (`JWT_AUDIENCE`, mặc định `foodsndrinks-api`). Token chỉ hợp lệ khi đúng chữ ký, còn hạn và khớp cả `iss` lẫn `aud`; đổi một trong hai giá trị làm mọi token đã cấp hết hiệu lực. Claims không chứa dữ liệu nhạy cảm (`sub` = username, `role`). **Giới hạn đã biết:** đổi/đặt lại mật khẩu huỷ ngay các session web khác nhưng **không** thu hồi JWT đã cấp — token cũ dùng được tới khi hết hạn (tối đa 1 giờ); tài khoản bị khoá thì token bị từ chối ngay (filter tra trạng thái tài khoản mỗi request).
 
 ### CORS
 

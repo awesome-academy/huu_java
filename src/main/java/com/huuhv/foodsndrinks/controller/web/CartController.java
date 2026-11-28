@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -37,6 +38,10 @@ public class CartController {
 
     // Add/update/remove are called via fetch() from the storefront — no page reload,
     // so they return the fresh cart state as JSON instead of a redirect.
+    // Lỗi cũng là JSON {message} (main.js#postForm hiện message thành toast), bắt ngay tại đây: để lọt tới
+    // WebExceptionHandler thì fetch() nhận về trang HTML. Mã lỗi theo quy ước chung: ResourceNotFoundException → 404
+    // (sản phẩm / món trong giỏ không tồn tại — kể cả món của người khác, xem OrderService.requireOwnedCartItem),
+    // IllegalArgumentException → 400.
 
     @PostMapping("/cart/add")
     @ResponseBody
@@ -47,8 +52,10 @@ public class CartController {
         try {
             orderService.addToCart(user, productId, quantity);
             return ResponseEntity.ok(buildCartPayload(user.getId()));
-        } catch (IllegalArgumentException | ResourceNotFoundException e) {
-            return ResponseEntity.badRequest().body(ErrorResponse.builder().message(e.getMessage()).build());
+        } catch (ResourceNotFoundException e) {
+            return error(HttpStatus.NOT_FOUND, e);
+        } catch (IllegalArgumentException e) {
+            return error(HttpStatus.BAD_REQUEST, e);
         }
     }
 
@@ -61,8 +68,10 @@ public class CartController {
         try {
             orderService.updateCartItemQuantity(user, detailId, quantity);
             return ResponseEntity.ok(buildCartPayload(user.getId()));
-        } catch (IllegalArgumentException | ResourceNotFoundException e) {
-            return ResponseEntity.badRequest().body(ErrorResponse.builder().message(e.getMessage()).build());
+        } catch (ResourceNotFoundException e) {
+            return error(HttpStatus.NOT_FOUND, e);
+        } catch (IllegalArgumentException e) {
+            return error(HttpStatus.BAD_REQUEST, e);
         }
     }
 
@@ -74,8 +83,10 @@ public class CartController {
         try {
             orderService.removeCartItem(user, detailId);
             return ResponseEntity.ok(buildCartPayload(user.getId()));
-        } catch (IllegalArgumentException | ResourceNotFoundException e) {
-            return ResponseEntity.badRequest().body(ErrorResponse.builder().message(e.getMessage()).build());
+        } catch (ResourceNotFoundException e) {
+            return error(HttpStatus.NOT_FOUND, e);
+        } catch (IllegalArgumentException e) {
+            return error(HttpStatus.BAD_REQUEST, e);
         }
     }
 
@@ -94,6 +105,11 @@ public class CartController {
             ra.addFlashAttribute("errorMessage", e.getMessage());
             return "redirect:/cart";
         }
+    }
+
+    /** Thông điệp của hai exception nghiệp vụ này do service viết cho người dùng — không phải lỗi hệ thống. */
+    private static ResponseEntity<ErrorResponse> error(HttpStatus status, RuntimeException e) {
+        return ResponseEntity.status(status).body(ErrorResponse.builder().message(e.getMessage()).build());
     }
 
     private CartPayloadResDto buildCartPayload(Long userId) {

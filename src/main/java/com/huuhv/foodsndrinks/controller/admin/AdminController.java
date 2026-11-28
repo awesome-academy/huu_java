@@ -1,8 +1,10 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
 import com.huuhv.foodsndrinks.dto.response.DashboardChartResDto;
+import com.huuhv.foodsndrinks.dto.response.DashboardResDto;
 import com.huuhv.foodsndrinks.service.DashboardChartCache;
 import com.huuhv.foodsndrinks.service.DashboardService;
+import com.huuhv.foodsndrinks.service.soap.ExchangeRateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
@@ -18,10 +20,16 @@ public class AdminController {
 
     private final DashboardService dashboardService;
     private final DashboardChartCache dashboardChartCache;
+    private final ExchangeRateService exchangeRateService;
 
     @GetMapping({"", "/", "/dashboard"})
     public String dashboard(Model model) {
-        model.addAttribute("stats", dashboardService.getDashboardData());
+        DashboardResDto stats = dashboardService.getDashboardData();
+        model.addAttribute("stats", stats);
+        // Doanh thu quy đổi USD theo tỷ giá của dịch vụ SOAP. Chỉ đọc giá trị đang giữ trong bộ nhớ (job nền làm mới):
+        // không gọi mạng trong request, không ném lỗi — dịch vụ tỷ giá hỏng thì trang vẫn hiển thị, revenueUsd = null
+        model.addAttribute("exchangeRateEnabled", exchangeRateService.isEnabled());
+        model.addAttribute("revenueUsd", exchangeRateService.convertFromVnd(stats.getTotalRevenue()).orElse(null));
         return "admin/dashboard";
     }
 

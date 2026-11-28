@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.controller.admin;
 
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ConcurrentUpdateException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.excel.ExcelFile;
@@ -347,6 +348,23 @@ class OrderAdminControllerTest {
                 .andReturn().getResponse().getContentAsString();
 
         assertThat(html).contains("value=\"PENDING\"").doesNotContain("value=\"CART\"").doesNotContain("status=CART");
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void statusChangedBySomeoneElse_isNotOverwritten_andAdminIsToldToReload() throws Exception {
+        String message = "Đơn hàng vừa được người khác cập nhật, vui lòng tải lại trang";
+        doThrow(new ConcurrentUpdateException(message)).when(orderService).updateStatus(5L, OrderStatus.CANCELLED);
+
+        // Quay lại đúng trang đang đứng (chi tiết / danh sách) kèm thông báo — không phải trang lỗi, không báo thành công
+        mockMvc.perform(post("/admin/orders/5/status").param("newStatus", "CANCELLED").with(csrf()))
+                .andExpect(redirectedUrl("/admin/orders/5"))
+                .andExpect(flash().attribute("errorMessage", message))
+                .andExpect(flash().attributeCount(1));
+        mockMvc.perform(post("/admin/orders/5/status").param("newStatus", "CANCELLED").param("redirectTo", "list")
+                        .with(csrf()))
+                .andExpect(redirectedUrl("/admin/orders"))
+                .andExpect(flash().attribute("errorMessage", message));
     }
 
     @Test

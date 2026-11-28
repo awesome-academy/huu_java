@@ -1,12 +1,13 @@
 # 🍔 F&B Store — Foods & Drinks
 
-Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring Boot. Dự án gồm **3 phần** chạy chung trong 1 ứng dụng:
+Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring Boot. Dự án gồm **4 phần** chạy chung trong 1 ứng dụng:
 
 | Phần | Đường dẫn | Mô tả | Tài liệu chi tiết |
 |---|---|---|---|
 | **Admin** | `/admin/**` | Trang quản trị SSR (Thymeleaf): dashboard, quản lý sản phẩm, danh mục, đơn hàng, người dùng, góp ý | [docs/admin/README.md](docs/admin/README.md) |
 | **API** | `/api/v1/**` | REST API (JWT) chia sẻ để xây trang người dùng (SPA/mobile) | [docs/api/README.md](docs/api/README.md) |
 | **Web** | `/`, `/menu`, ... | Storefront SSR cho người dùng cuối: xem menu, giỏ hàng, đặt hàng, đánh giá sản phẩm | [docs/web/README.md](docs/web/README.md) |
+| **SOAP** | `/ws` | Web service SOAP (Spring-WS, contract-first, HTTP Basic) cho hệ thống đối tác: tra cứu sản phẩm và trạng thái đơn. WSDL: `/ws/foodsndrinks.wsdl`. App cũng là SOAP **client**: lấy tỷ giá USD/VND để quy đổi doanh thu trên dashboard | [docs/soap/README.md](docs/soap/README.md) |
 
 ## Tech Stack
 
@@ -16,9 +17,14 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 - **Database:** MySQL 8 + Spring Data JPA / Hibernate
 - **Migration:** Flyway (`src/main/resources/db/migration`)
 - **View:** Thymeleaf + Thymeleaf Layout Dialect, Bootstrap 5, Vanilla JS
-- **Security:** Spring Security — Form Login + OAuth2 (Google/Facebook/Twitter) cho Web, JWT (jjwt 0.12) cho API
+- **Security:** Spring Security — Form Login + OAuth2 (Google/Facebook/Twitter) cho Web, JWT (jjwt 0.12) cho API, HTTP Basic cho SOAP; session HTTP lưu trong MySQL (Spring Session JDBC) để chạy nhiều instance
 - **Messaging:** JMS (Jakarta Messaging) với Apache Artemis 2.57 (trước đây là ActiveMQ Artemis) — broker embedded ở dev/test, broker riêng ở compose/prod
-- **Khác:** Lombok, ModelMapper, Caffeine Cache, Spring Mail (Mailtrap), Slack Incoming Webhook, springdoc-openapi 3.x (Swagger UI), Actuator
+- **Realtime:** WebSocket + STOMP (`@stomp/stompjs` qua WebJar), Chart.js
+- **SOAP:** Spring-WS 5 (contract-first, class JAXB sinh từ XSD) — server `/ws` và client `WebServiceTemplate`
+- **Excel:** Apache POI 5 (export streaming SXSSF, import SAX)
+- **Job nền:** `@Scheduled` + `@Async` trên `ThreadPoolTaskExecutor`, ShedLock (một instance chạy job)
+- **Test:** JUnit 5, Mockito, MockMvc, Testcontainers (MySQL), spring-ws-test, JaCoCo; unit test JS bằng `node:test`
+- **Khác:** Lombok, ModelMapper, Caffeine Cache, Spring Mail (Mailtrap), Slack Incoming Webhook, springdoc-openapi 3.x (Swagger UI), Actuator, Logback (MDC `requestId`, audit log), OWASP Dependency-Check
 
 ## Prerequisites
 
@@ -92,7 +98,9 @@ docker compose down                  # Dừng tất cả (thêm -v để xoá c�
 | Loại | Ví dụ | Cần |
 |---|---|---|
 | Unit test Mockito (`@ExtendWith(MockitoExtension.class)`) | `OrderServiceTest`, `UserServiceTest` | — |
-| Test slice `@WebMvcTest` + 3 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Test slice `@WebMvcTest` + 4 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Test slice SOAP `@WebServiceServerTest` + `MockWebServiceClient` | `StoreEndpointTest`, `ExchangeRateMockEndpointTest` | — |
+| Test trên Tomcat thật (`@IntegrationTest(webEnvironment = RANDOM_PORT)`) | `WebSocketIntegrationTest`, `MultiInstanceRealtimeIntegrationTest`, `SoapHttpIntegrationTest` | Docker |
 | Integration test `@IntegrationTest` (= `@SpringBootTest` + Testcontainers + profile `test`, tag `integration`) | `AuthProductApiTest`, `FoodsndrinksApplicationTests` | Docker |
 
 Integration test chạy trên **MySQL 8.4 do Testcontainers tạo** (`TestcontainersConfiguration`, `@ServiceConnection`) — không đụng database dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Test chỉ chạy với profile `test` (không bật `dev`), nên không dùng datasource, `JWT_SECRET` hay `REMEMBER_ME_KEY` trong `.env`. Không dùng `@SpringBootTest` trần (`IntegrationTestConventionTest` fail). Một container dùng chung cho cả lần chạy, bị xoá khi test kết thúc; mỗi test vẫn rollback bằng `@Transactional`. Lần chạy đầu tải image `mysql:8.4`.
@@ -107,15 +115,19 @@ Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.foodsndrinks`:
 
 ```
 src/main/java/com/huuhv/foodsndrinks/
-├── config/          # SecurityConfig, WebMvcConfig, AsyncConfig, SchedulerLockConfig (ShedLock), OpenApiConfig, AppConfig
+├── config/          # SecurityConfig (4 filter chain), WebMvcConfig, AsyncConfig, SchedulerLockConfig (ShedLock), JmsConfig,
+│   │                # WebSocketConfig, SessionStoreConfig (Spring Session JDBC), WebServiceConfig (SOAP), ExcelConfig...
+│   └── properties/  # Record @ConfigurationProperties (app.*)
 ├── controller/
 │   ├── admin/       # Controller trang quản trị (SSR)  → docs/admin/README.md
 │   ├── api/         # REST controller /api/v1/**       → docs/api/README.md
 │   ├── web/         # Controller storefront (SSR)      → docs/web/README.md
+│   ├── soap/        # Endpoint SOAP /ws (Spring-WS)    → docs/soap/README.md
 │   └── GlobalErrorController.java  # Xử lý lỗi dispatch cấp servlet (/error)
 ├── dto/
 │   ├── request/     # DTO hứng dữ liệu vào (không dùng Entity cho View/API)
-│   └── response/    # DTO trả ra
+│   ├── response/    # DTO trả ra
+│   └── message/     # Payload message JMS (OrderPlacedMessage, ...)
 ├── entity/          # User, Product, ProductImage, Category, Order, OrderDetail, Rating, Suggestion
 ├── enums/           # Role, AuthProvider, CategoryType, ProductType, OrderStatus, SuggestionStatus
 ├── exception/       # AdminExceptionHandler, WebExceptionHandler, ApiExceptionHandler + custom exceptions
@@ -124,12 +136,19 @@ src/main/java/com/huuhv/foodsndrinks/
 ├── security/        # JwtUtil, JwtAuthenticationFilter, CustomUserDetailsService, OAuth2 user services, AuditingRememberMeServices, OAuth2LoginFailureHandler
 ├── service/         # Toàn bộ business logic (Controller chỉ gọi Service)
 │   ├── audit/         # AuditLogService (logger AUDIT), AuthenticationAuditListener
-│   └── notification/  # Slack/Email notification, order event listener, statistics scheduler
+│   ├── excel/         # Export/import Excel (Apache POI), import chạy nền qua queue JMS
+│   ├── messaging/     # Transactional Outbox, consumer JMS (email, Slack, WebSocket), DLQ listener
+│   ├── notification/  # Gửi Slack/Email, scheduler báo cáo tháng
+│   ├── security/      # Giới hạn đăng nhập sai, chính sách mật khẩu, trạng thái tài khoản (huỷ session)
+│   ├── soap/          # SOAP client tỷ giá (WebServiceTemplate), cache tỷ giá, tỷ giá mock
+│   └── websocket/     # Đẩy sự kiện STOMP, theo dõi/thu hồi kết nối WebSocket
 └── utils/           # SlugUtils, SecurityUtils...
 
 src/main/resources/
 ├── db/migration/    # Flyway migrations
-├── templates/       # Thymeleaf (admin/, web/, error/)
+├── xsd/             # Hợp đồng SOAP (contract-first) — class JAXB sinh lúc build vào target/generated-sources/jaxb
+├── artemis/         # broker.properties: address, retry, DLQ của broker JMS
+├── templates/       # Thymeleaf (admin/, web/, error/, mail/)
 ├── static/          # CSS, JS, images
 ├── application*.yml # Cấu hình theo profile
 └── logback-spring.xml # Appender/pattern log theo profile (dev: console + file, prod: thêm audit.log)
@@ -171,6 +190,11 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `REMEMBER_ME_KEY` | Prod | Key cho remember-me cookie (dev tự sinh random 256 bit) |
 | `ATTEMPT_LIMITS_KEY_SECRET` | Prod | Khoá HMAC (≥ 32 ký tự) băm IP/tên đăng nhập trước khi lưu bộ đếm chống brute-force và giới hạn đăng ký vào bảng `attempt_limits` (dùng chung giữa các instance, không mất khi restart). Mọi instance phải dùng chung một giá trị; đổi giá trị thì mọi bộ đếm/khoá về 0. Dev không đặt thì tự sinh random 256 bit mỗi lần khởi động |
 | `SESSION_COOKIE_SECURE` | — | Cờ `Secure` của cookie session (`JSESSIONID`, chỉ gửi qua HTTPS). Mặc định `false` ở dev (http://localhost), `true` ở prod |
+| `SESSION_POOL_SIZE` | — | Số connection tối đa của pool riêng cho kho session HTTP (mặc định `10`, 2–50). Tổng connection mỗi instance = 30 (pool chính) + giá trị này |
+| `LB_PORT` | — | Cổng nginx của profile compose `multi` (2 instance, mặc định `8088`) |
+| `SOAP_EXCHANGE_RATE_URL` | Khi muốn hiện doanh thu quy đổi USD | Địa chỉ dịch vụ tỷ giá SOAP mà app gọi (`http`/`https`; giá trị khác làm app không khởi động). **Trống = tắt tính năng.** Local: `http://localhost:8080/ws` (endpoint mock của chính app) — xem [docs/soap](docs/soap/README.md#soap-client--tỷ-giá-trên-dashboard) |
+| `SOAP_EXCHANGE_RATE_USERNAME`, `SOAP_EXCHANGE_RATE_PASSWORD` | Khi dịch vụ tỷ giá cần HTTP Basic | Tài khoản của dịch vụ tỷ giá. Với endpoint mock: một tài khoản `ROLE_USER` riêng đã đăng ký trong app (không dùng tài khoản admin) |
+| `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint tỷ giá giả ở `/ws` (operation `GetExchangeRate`). Mặc định `false`; profile `dev` mặc định `true`; profile `prod` luôn tắt (không đọc biến này) |
 | `NVD_API_KEY` | Khi chạy Dependency-Check | API key của NVD cho `dependency-check:check` (xem [Quét lỗ hổng thư viện](#quét-lỗ-hổng-thư-viện-owasp-dependency-check)); không dùng khi chạy app |
 | `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Khi dùng login Google | OAuth2 credentials từ Google Console |
@@ -202,7 +226,15 @@ V20260624150760__create_table_ratings.sql
 V20260624150770__create_table_suggestions.sql
 V20260624150780__create_indexes.sql
 V20260702000001__alter_users_phone_nullable.sql
-V20261120090000__create_table_shedlock.sql      # khoá ShedLock cho job @Scheduled (nhiều instance)
+V20261120090000__create_table_shedlock.sql                # khoá ShedLock cho job @Scheduled (nhiều instance)
+V20261121100000__create_table_attempt_limits.sql          # bộ đếm chống brute-force dùng chung giữa các instance
+V20261123100000__create_table_notification_logs.sql       # chống gửi lặp thông báo đơn hàng (UNIQUE order_id, channel)
+V20261123110000__create_table_outbox_messages.sql         # Transactional Outbox
+V20261123120000__alter_outbox_messages_payload_text.sql
+V20261127100000__create_table_import_jobs.sql             # lần import Excel chạy nền
+V20261128100000__backfill_orders_ordered_at.sql           # đơn cũ thiếu ordered_at (thống kê theo ngày đặt)
+V20261128110000__add_users_password_changed_at.sql        # huỷ session khác khi đổi mật khẩu
+V20261128120000__create_table_spring_session.sql          # kho session HTTP dùng chung (Spring Session JDBC)
 ```
 
 Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa migration đã chạy** — muốn đổi schema thì thêm file version mới.
@@ -217,7 +249,7 @@ Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa mi
 - Thread pool (`config/AsyncConfig`, kích thước trong `app.async.*` của `application.yml`): `notify-*` (executor `@Async` mặc định; Slack/email đơn hàng chạy trên listener JMS), `dashboard-*` (truy vấn thống kê dashboard chạy song song, timeout `app.async.dashboard.timeout` — lỗi/quá giờ/pool đầy thì `/admin` trả 503), `outbox-*` (gửi bản ghi outbox ngay sau commit), `sched-*` (`@Scheduled`, `spring.task.scheduling.pool.size`). Pool `notify-*` đầy thì task chạy trên thread gọi (`CallerRunsPolicy`); pool `dashboard-*` đầy thì từ chối (`AbortPolicy`) để truy vấn không chạy trên thread request ngoài timeout; pool `outbox-*` đầy thì bỏ task (bản ghi vẫn `PENDING`, job gửi lại) — không bao giờ gửi trên thread request. Khi tắt app, Tomcat chờ request đang chạy và mỗi pool chờ task còn lại tối đa 30s.
 - **Job định kỳ chỉ chạy trên một instance:** mọi instance đều kích hoạt cron, nhưng ShedLock (`config/SchedulerLockConfig`, bảng `shedlock` trong MySQL dùng chung, thời gian theo đồng hồ DB) chỉ cho một instance chạy — không gửi trùng báo cáo tháng. Cột `locked_by` = `INSTANCE_ID` của instance đã chạy.
 - **Container cần đủ thời gian dừng:** service `app` của compose có `stop_grace_period: 60s` (mặc định của Docker là 10s rồi SIGKILL). Môi trường khác (Kubernetes `terminationGracePeriodSeconds`, ECS `stopTimeout`...) cũng đặt ≥ 60s.
-- **Connection DB:** mỗi instance dùng tối đa `spring.datasource.hikari.maximum-pool-size` = 30 (`minimum-idle` 5). Thread nền có thể giữ connection cùng lúc — dashboard 4 + outbox 2 + listener JMS 7 (email, Slack, DLQ đơn hàng, 2 WebSocket: đơn mới, đổi trạng thái, import Excel, DLQ import Excel — consumer thông báo giữ connection lúc gọi Slack/SMTP) + `sched-*` 2 = 15 — không được quá nửa pool, kiểm tra lúc khởi động (`config/ConnectionBudgetCheck`, vượt thì app không khởi động): tăng pool nền hay thêm listener JMS thì tăng pool Hikari. Tổng số instance × pool phải nhỏ hơn `max_connections` của MySQL (mặc định 151 → tối đa 5 instance; nhiều hơn thì tăng `max_connections`).
+- **Connection DB:** mỗi instance dùng tối đa `spring.datasource.hikari.maximum-pool-size` = 30 (`minimum-idle` 5). Thread nền có thể giữ connection cùng lúc — dashboard 4 + outbox 2 + listener JMS 7 (email, Slack, DLQ đơn hàng, 2 WebSocket: đơn mới, đổi trạng thái, import Excel, DLQ import Excel — consumer thông báo giữ connection lúc gọi Slack/SMTP) + `sched-*` 2 = 15 — không được quá nửa pool, kiểm tra lúc khởi động (`config/ConnectionBudgetCheck`, vượt thì app không khởi động): tăng pool nền hay thêm listener JMS thì tăng pool Hikari. Kho session HTTP dùng **pool riêng** `session-pool` (`app.session.pool-size` / `SESSION_POOL_SIZE`, mặc định 10 — xem [Session HTTP dùng chung](#session-http-dùng-chung-spring-session-jdbc)). Tổng số instance × (30 + 10) phải nhỏ hơn `max_connections` của MySQL (mặc định 151 → tối đa 3 instance; nhiều hơn thì tăng `max_connections`).
 - **Pool `@Scheduled` khai báo tường minh** (`AsyncConfig#taskScheduler`): `@EnableWebSocketMessageBroker` đăng ký scheduler riêng cho heartbeat STOMP, nếu để Spring Boot tự tạo thì job định kỳ sẽ chạy trên pool đó.
 - Thông báo đơn hàng không nằm trong hàng đợi bộ nhớ: message được ghi vào `outbox_messages` cùng transaction với đơn, rồi nằm trên broker JMS (subscription bền) — app hay broker chết giữa chừng đều được gửi lại (job outbox / broker giao lại). Job outbox **không** dùng ShedLock: mọi instance chạy và chia nhau bản ghi bằng `SKIP LOCKED`.
 
@@ -251,7 +283,7 @@ Luồng: thao tác nghiệp vụ ghi outbox trong cùng transaction (checkout �
 
 - **Endpoint** `/ws-stomp` (WebSocket thuần, không SockJS), STOMP với simple broker trong bộ nhớ: `/topic` (broadcast), `/queue` + `/user` (đích theo user), prefix `/app` (chưa có handler). Client: `@stomp/stompjs` tự host qua WebJar (`/webjars/stomp__stompjs/bundles/stomp.umd.min.js`), `static/js/realtime.js`. Heartbeat 10s hai chiều; frame client gửi tối đa 8 KB.
 - **Bảo mật:** handshake đi qua filter chain web — phải đăng nhập (session), tài khoản bị khoá bị `AccountStatusFilter` chặn ngay. Frame CONNECT phải mang token CSRF (so với token trong session): lần đầu đọc từ `<meta name="_csrf">`, mỗi lần nối lại lấy mới qua `GET /csrf-token` (session có thể đã đổi từ lúc render trang); bị chuyển hướng `/login`, bị đóng vì quá số kết nối, hoặc bị từ chối 5 lần liên tiếp thì client dừng hẳn và hiện thông báo "Tải lại trang" (lỗi mạng thì thử lại mãi). Phân quyền từng frame (`config/WebSocketSecurityConfig`): chỉ `ADMIN` SUBSCRIBE `/topic/admin/orders`; `USER`/`ADMIN` SUBSCRIBE `/user/queue/orders` (chỉ nhận đơn của chính mình); client không được SEND vào broker, mọi đích khác bị từ chối. Lỗi trả frame ERROR với thông điệp cố định (`Access denied`), ghi audit `WEBSOCKET_ACCESS_DENIED` — tối đa 5 dòng mỗi user mỗi phút trên một instance (một message WebSocket chứa được hàng trăm frame bị từ chối), dòng kế tiếp ghi số lần đã bỏ qua (`event.suppressed`). Chống DoS: tối đa `app.websocket.max-subscriptions-per-session` (5) SUBSCRIBE mỗi kết nối, SUBSCRIBE trùng đích bị từ chối (ERROR + đóng kết nối); tối đa `app.websocket.max-connections-per-user` (10) kết nối mỗi user trên một instance. Origin: rỗng = chỉ same-origin; prod bắt buộc `WEBSOCKET_ALLOWED_ORIGINS`.
-- **Thu hồi kết nối đang mở:** Spring Security chỉ kiểm tra lúc handshake, nên job `WebSocketSessionRevalidationJob` (mỗi `WEBSOCKET_REVALIDATE_INTERVAL`, mặc định 60s) đóng socket của tài khoản bị khoá/xoá/đổi role (một query cho mọi kết nối, audit `SESSION_REVOKED`) hoặc có session HTTP đã kết thúc. Logout/hết hạn session trên cùng instance thì socket bị đóng ngay (`HttpSessionDestroyedEvent`). Socket đã bị thu hồi mà đóng lỗi thì job đóng lại ở chu kỳ sau (audit một lần).
+- **Thu hồi kết nối đang mở:** Spring Security chỉ kiểm tra lúc handshake, nên job `WebSocketSessionRevalidationJob` (mỗi `WEBSOCKET_REVALIDATE_INTERVAL`, mặc định 60s) đóng socket của tài khoản bị khoá/xoá/đổi role, hoặc mở từ một session đăng nhập trước lần đổi mật khẩu gần nhất (một query cho mọi kết nối, audit `SESSION_REVOKED`) hoặc có session HTTP đã kết thúc ở bất kỳ instance nào (logout, hết hạn, bị huỷ, đổi id khi đăng nhập lại trong cùng trình duyệt) — job hỏi lại kho session dùng chung; không có đường đóng "ngay lập tức" vì kho session JDBC không phát event, nên socket của session đã logout sống thêm tối đa một chu kỳ. Socket đã bị thu hồi mà đóng lỗi thì job đóng lại ở chu kỳ sau (audit một lần).
 
 ### Chạy nhiều instance sau load balancer
 
@@ -260,8 +292,9 @@ Luồng: thao tác nghiệp vụ ghi outbox trong cùng transaction (checkout �
 | Kết nối WebSocket, simple broker | Nằm trong bộ nhớ instance nhận handshake. Sự kiện tới mọi instance qua topic JMS (mỗi instance một subscription non-durable) rồi mỗi instance đẩy cho client của nó — admin ở instance A thấy đơn đặt ở instance B (`MultiInstanceRealtimeIntegrationTest`). Không dùng broker relay. |
 | Số liệu (badge, chart) | Luôn đọc lại từ MySQL, không cộng dồn phía client. |
 | Mất kết nối (instance tắt, rolling deploy) | Client nối lại sau 1s → 60s (tăng gấp đôi) + jitter ngẫu nhiên 0–3s để không dồn vào instance còn lại, rồi tải lại số liệu qua JSON để bù sự kiện lỡ. |
-| Thu hồi socket | Job chạy trên **mọi** instance (không ShedLock — mỗi instance chỉ đóng socket của nó), đọc trạng thái tài khoản từ DB dùng chung. |
-| Session HTTP | **Hiện nằm trong bộ nhớ Tomcat của từng instance → load balancer phải sticky theo cookie `JSESSIONID`** (cả request thường lẫn handshake `/ws-stomp`). Session dùng chung (Spring Session JDBC, không cần sticky) là issue riêng ([#44](https://github.com/awesome-academy/huu_java/issues/44)); khi đó chỉ cần thay bean `HttpSessionLookup`. |
+| Thu hồi socket | Job chạy trên **mọi** instance (không ShedLock — mỗi instance chỉ đóng socket của nó), đọc trạng thái tài khoản và session từ MySQL dùng chung: logout ở instance A → socket đang mở ở instance B bị đóng trong ≤ 60s. |
+| Session HTTP | Nằm trong MySQL (Spring Session JDBC) — **load balancer không cần sticky**: đăng nhập ở instance A, request kế tiếp (kể cả form POST mang token CSRF và handshake `/ws-stomp`) tới instance B vẫn hợp lệ; instance chết không làm user bị đăng xuất; logout hay khoá tài khoản có hiệu lực trên mọi instance (`MultiInstanceRealtimeIntegrationTest`). |
+| Session hết hạn | Job có sẵn của Spring Session xoá mỗi phút, chạy trên mọi instance (không ShedLock: một câu `DELETE` theo `EXPIRY_TIME`, chạy trùng thì instance sau xoá 0 dòng). |
 
 Yêu cầu với load balancer/reverse proxy:
 
@@ -269,6 +302,25 @@ Yêu cầu với load balancer/reverse proxy:
 - Idle timeout > 2 × heartbeat (≥ 30s; nginx `proxy_read_timeout` mặc định 60s là đủ).
 - Giữ `Host` và gửi `X-Forwarded-Proto` (đã dùng cho HTTPS/IP thật — `TRUSTED_PROXIES`).
 - Graceful shutdown của app đóng WebSocket với mã 1001; client tự nối lại sang instance khác.
+- Không cần sticky session. Các instance phải đồng bộ giờ (NTP) và dùng chung `APP_TZ`.
+
+**Thử ở local — 2 instance + nginx không sticky** (profile `multi` của compose, cấu hình nginx ở `docker/nginx-multi.conf`):
+
+```bash
+docker compose --profile multi up -d --build   # app + app2 + nginx round-robin → http://localhost:8088 (LB_PORT)
+docker compose --profile multi logs -f app app2 # mỗi dòng log có INSTANCE_ID của instance xử lý request
+docker compose --profile multi down
+```
+
+Đăng nhập qua `http://localhost:8088` rồi tải lại trang nhiều lần: request lần lượt rơi vào hai instance mà vẫn đăng nhập; mở `/admin` ở hai tab (mỗi socket nối vào một instance) và đặt một đơn — cả hai cùng nhận thông báo. Lưu ý: profile `dev` không đọc `X-Forwarded-For` nên sau nginx mọi client có chung một IP (bộ đếm đăng nhập sai theo IP gộp lại) — chỉ dùng cấu hình này để kiểm chứng ở local.
+
+### Session HTTP dùng chung (Spring Session JDBC)
+
+- **Lưu ở đâu:** bảng `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` (Flyway tạo — `spring.session.jdbc.initialize-schema: never`). Hành vi giữ nguyên: hết hạn sau 30 phút không hoạt động, cookie tên `JSESSIONID` với `HttpOnly`/`SameSite=Lax`/`Secure` (prod), đổi session id khi đăng nhập, logout xoá session, token CSRF nằm trong session.
+- **Pool connection riêng** (`config/SessionStoreConfig`, `session-pool`, `SESSION_POOL_SIZE` mặc định 10): session được ghi lúc response commit — với trang HTML thường là ngay giữa lúc render — trong khi thread request còn giữ một connection của pool chính (Open Session in View). Dùng chung một pool thì nhiều request cùng lúc sẽ "giữ một, chờ một" lẫn nhau tới khi timeout; pool riêng loại bỏ vòng chờ đó. Kho session quá tải thì request lỗi sau `app.session.connection-timeout` (5s).
+- **Mọi thứ đặt vào session phải `Serializable`** (Java serialization): `SecurityContext` của đăng nhập form, remember-me, Google, Facebook/X đã được kiểm tra (`SecurityContextSerializationTest`).
+- **Nâng cấp làm đổi class đã serialize** (vd. nâng Spring Security/Spring Boot bản lớn): session cũ có thể không đọc lại được → dọn kho session khi deploy bản đó (`DELETE FROM SPRING_SESSION;` — mọi user đăng nhập lại; cookie remember-me vẫn tự đăng nhập).
+- Xem session đang có: `SELECT PRINCIPAL_NAME, FROM_UNIXTIME(LAST_ACCESS_TIME/1000), FROM_UNIXTIME(EXPIRY_TIME/1000) FROM SPRING_SESSION;` (`PRINCIPAL_NAME` = username, `NULL` = khách chưa đăng nhập).
 
 ## Xử Lý Lỗi
 
@@ -286,7 +338,7 @@ Yêu cầu với load balancer/reverse proxy:
   | `logs/foodsndrinks.log` (prod: `logs/<INSTANCE_ID>/foodsndrinks.log`) | Toàn bộ log của app (kể cả audit) | Text | 30 ngày, tối đa 1GB / instance |
   | `logs/<INSTANCE_ID>/audit.log` (chỉ prod) | Chỉ logger `AUDIT` (sự kiện bảo mật); có `service.node.name` = `INSTANCE_ID` | JSON 1 dòng/sự kiện ([ECS](https://www.elastic.co/guide/en/ecs/current/index.html)) | 90 ngày, tối đa 500MB |
 
-- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), session bị huỷ (`SESSION_REVOKED`, `event.reason` = `DISABLED`, `ROLE_CHANGED`, `ACCOUNT_NOT_FOUND` — tài khoản bị khoá/đổi role/xoá sau khi đăng nhập: session bị huỷ ở request kế tiếp), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
+- **Audit log** (logger `AUDIT`, luôn ở mức INFO kể cả ở prod): đăng nhập thành công/thất bại (`auth.method` = `FORM`, `API`, `REMEMBER_ME`, `OAUTH2:<provider>`; gồm cả cookie remember-me bị từ chối), admin khoá/mở khoá user, đổi role, đặt lại mật khẩu, đổi email, user tự đổi mật khẩu (thành công/sai mật khẩu hiện tại), session bị huỷ (`SESSION_REVOKED`, `event.reason` = `DISABLED`, `ROLE_CHANGED`, `ACCOUNT_NOT_FOUND`, `PASSWORD_CHANGED` — tài khoản bị khoá/đổi role/xoá, hoặc mật khẩu được đổi/đặt lại sau khi session đó đăng nhập: session bị huỷ ở request kế tiếp), đổi trạng thái đơn. Chỉ ghi username/id, hành động và IP — không ghi password, token, session id. Ở prod sau load balancer, `source.ip` là IP client thật lấy từ `X-Forwarded-For` (chỉ khi request đến từ `TRUSTED_PROXIES`, xem bảng biến môi trường); username nhập khi đăng nhập sai chỉ được ghi nếu tài khoản tồn tại (`username=-` nếu không). Sự kiện thay đổi dữ liệu chỉ được ghi sau khi transaction commit. Ví dụ trên console / `foodsndrinks.log` (giá trị có khoảng trắng, `=`, `"` được đặt trong nháy kép):
 
   ```
   Login failed event.action=LOGIN_FAILURE event.outcome=failure event.reason=BAD_CREDENTIALS auth.method=FORM username=alice source.ip=127.0.0.1
@@ -314,6 +366,7 @@ export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
 
 - Lần đầu tải toàn bộ dữ liệu NVD (vài phút đến vài chục phút), các lần sau chỉ cập nhật phần thay đổi — cache ở `~/.m2/repository/org/owasp/dependency-check-data` (với Docker là volume `maven-repo`).
 - Build **fail khi có lỗ hổng CVSS ≥ 7**. Báo cáo: `target/dependency-check-report.html` (và `.json`).
+- Danh sách KEV (lỗ hổng đang bị khai thác) lấy từ bản CISA công bố trên GitHub (`knownExploitedUrl` trong `pom.xml`): URL mặc định của plugin ở `www.cisa.gov` trả 403 cho client tự động, làm lần quét bị tính là lỗi dù không có lỗ hổng nào.
 - Xử lý: ưu tiên nâng version (Spring Boot patch mới nhất, hoặc property version của BOM / WebJar trong `pom.xml`). Lỗ hổng chắc chắn không áp dụng thì thêm vào `dependency-check-suppressions.xml` kèm `<notes>` giải thích và hạn xem lại `until`.
 
 ## Monitoring
@@ -325,3 +378,5 @@ export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
 - 🛠 [Admin — trang quản trị](docs/admin/README.md)
 - 🔌 [API — REST API cho trang người dùng](docs/api/README.md)
 - 🛒 [Web — storefront người dùng](docs/web/README.md)
+- 🧼 [SOAP — web service cho hệ thống đối tác](docs/soap/README.md)
+- 🎬 [Kịch bản demo theo từng công nghệ](docs/demo.md)

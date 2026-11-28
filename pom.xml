@@ -48,6 +48,9 @@
 		<artemis.version>2.57.0</artemis.version>
 		<!-- Không có trong Spring Boot BOM. Dòng 5.x ổn định mới nhất (6.0.0 mới phát hành 10/2026, chưa dùng) -->
 		<poi.version>5.5.1</poi.version>
+		<!-- Sinh class JAXB từ XSD của SOAP (goal xjc). Không có trong Spring Boot BOM. Dòng 4.x sinh code jakarta.xml.bind
+		     (JAXB 4) và chạy được trên JDK 25 -->
+		<jaxb2-maven-plugin.version>4.2.0</jaxb2-maven-plugin.version>
 	</properties>
     <dependencies>
         <dependency>
@@ -100,6 +103,13 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-messaging</artifactId>
+        </dependency>
+        <!-- Session HTTP lưu trong MySQL (Spring Session JDBC, bảng SPRING_SESSION* do Flyway tạo): mọi instance sau load
+             balancer dùng chung session — không cần sticky, instance chết không làm user bị đăng xuất. Cấu hình:
+             config/SessionStoreConfig (pool connection riêng cho kho session) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-session-jdbc</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -177,6 +187,22 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
+        </dependency>
+
+        <!-- SOAP (Spring-WS, contract-first — config/WebServiceConfig, controller/soap): XSD ở src/main/resources/xsd, class
+             JAXB sinh lúc build bằng jaxb2-maven-plugin (target/generated-sources/jaxb, không commit). wsdl4j: sinh WSDL
+             từ XSD (DefaultWsdl11Definition); jaxb-runtime: implementation JAXB 4 lúc chạy. Version theo Spring Boot BOM -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webservices</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>wsdl4j</groupId>
+            <artifactId>wsdl4j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
         </dependency>
 
         <dependency>
@@ -285,6 +311,12 @@
             <artifactId>testcontainers-mysql</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- @WebServiceServerTest + MockWebServiceClient (spring-ws-test): test endpoint SOAP không cần web server -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webservices-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 	<build>
@@ -306,6 +338,10 @@
 				<configuration>
 					<nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
 					<failBuildOnCVSS>7</failBuildOnCVSS>
+					<!-- Danh sách "Known Exploited Vulnerabilities" của CISA: URL mặc định của plugin (www.cisa.gov) trả
+					     403 cho client tự động → cả lần quét bị tính là lỗi dù phân tích xong. Dùng bản CISA tự công bố
+					     trên GitHub (repo cisagov/kev-data, cùng nội dung). -->
+					<knownExploitedUrl>https://raw.githubusercontent.com/cisagov/kev-data/main/known_exploited_vulnerabilities.json</knownExploitedUrl>
 					<formats>
 						<format>HTML</format>
 						<format>JSON</format>
@@ -344,6 +380,50 @@
 						<goals>
 							<goal>report</goal>
 						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<!-- Class JAXB sinh từ XSD (jaxb2-maven-plugin) không phải code của dự án -->
+					<excludes>
+						<exclude>com/huuhv/foodsndrinks/soap/**</exclude>
+					</excludes>
+				</configuration>
+			</plugin>
+			<!-- SOAP contract-first: sinh class JAXB từ XSD vào target/generated-sources/jaxb ở phase generate-sources (plugin
+			     tự thêm thư mục đó làm source root). Mỗi XSD một execution + một package riêng dưới
+			     com.huuhv.foodsndrinks.soap; clearOutputDir=false để các execution không xoá kết quả của nhau.
+			     KHÔNG sửa tay, không commit class sinh ra — sửa XSD rồi build lại. -->
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>jaxb2-maven-plugin</artifactId>
+				<version>${jaxb2-maven-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>xjc-store</id>
+						<goals>
+							<goal>xjc</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>src/main/resources/xsd/foodsndrinks.xsd</source>
+							</sources>
+							<packageName>com.huuhv.foodsndrinks.soap.store</packageName>
+							<clearOutputDir>false</clearOutputDir>
+						</configuration>
+					</execution>
+					<!-- Hợp đồng của dịch vụ tỷ giá mà app gọi (SOAP client) và của endpoint mock -->
+					<execution>
+						<id>xjc-exchange-rate</id>
+						<goals>
+							<goal>xjc</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>src/main/resources/xsd/exchange-rate.xsd</source>
+							</sources>
+							<packageName>com.huuhv.foodsndrinks.soap.exchangerate</packageName>
+							<clearOutputDir>false</clearOutputDir>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>

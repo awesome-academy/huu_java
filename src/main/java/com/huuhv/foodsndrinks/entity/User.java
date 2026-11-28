@@ -7,6 +7,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,6 +59,14 @@ public class User {
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
+
+    /**
+     * Lần đổi mật khẩu gần nhất (tự đổi hoặc admin đặt lại), chính xác tới mili giây; {@code null} = chưa đổi lần nào.
+     * Session xác thực trước mốc này bị huỷ ({@code AccountStatusService}). Kiểu {@link Instant} — so được với mốc xác
+     * thực trong session mà không phụ thuộc múi giờ JVM/DB.
+     */
+    @Column(name = "password_changed_at")
+    private Instant passwordChangedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

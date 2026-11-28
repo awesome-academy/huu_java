@@ -9,11 +9,13 @@ import com.huuhv.foodsndrinks.entity.OrderDetail;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ConcurrentUpdateException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
@@ -35,6 +37,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -49,6 +52,7 @@ public class OrderService {
     private final OrderDetailRepository  orderDetailRepository;
     private final ProductRepository      productRepository;
     private final ProductImageRepository productImageRepository;
+    private final UserRepository         userRepository;
     private final OutboxService          outboxService;
     private final AuditLogService        auditLogService;
 
@@ -118,6 +122,7 @@ public class OrderService {
 
     @Transactional
     public void addToCart(User user, Long productId, int quantity) {
+        lockCartOwner(user);
         int qty = Math.max(quantity, 1);
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm không tồn tại!"));
@@ -150,6 +155,7 @@ public class OrderService {
 
     @Transactional
     public void updateCartItemQuantity(User user, Long orderDetailId, int quantity) {
+        lockCartOwner(user);
         OrderDetail detail = requireOwnedCartItem(user, orderDetailId);
         Order cart = detail.getOrder();
 
@@ -166,6 +172,7 @@ public class OrderService {
 
     @Transactional
     public void removeCartItem(User user, Long orderDetailId) {
+        lockCartOwner(user);
         OrderDetail detail = requireOwnedCartItem(user, orderDetailId);
         Order cart = detail.getOrder();
         cart.getOrderDetails().remove(detail);
@@ -173,8 +180,14 @@ public class OrderService {
         orderRepository.save(cart);
     }
 
+    /**
+     * Đặt giỏ hàng thành đơn ({@code CART} → {@code PENDING}). Khoá chủ giỏ trước ({@link #lockCartOwner}): bấm "Đặt hàng"
+     * hai lần hay sửa giỏ ở tab khác cùng lúc thì request sau chờ request trước commit rồi mới đọc giỏ — lần checkout thứ
+     * hai thấy giỏ đã thành đơn (không còn {@code CART}) và báo giỏ trống, không ghi outbox lần nữa.
+     */
     @Transactional
     public void checkout(User user, String shippingAddress, String note) {
+        lockCartOwner(user);
         Order cart = orderRepository.findCartByUserId(user.getId())
                 .filter(o -> !o.getOrderDetails().isEmpty())
                 .orElseThrow(() -> new IllegalArgumentException("Giỏ hàng của bạn đang trống!"));
@@ -234,6 +247,27 @@ public class OrderService {
     }
 
     /**
+     * Trạng thái hiện tại của một đơn ĐÃ ĐẶT cho hệ thống bên ngoài (SOAP {@code GetOrderStatus}): chủ đơn chỉ xem được
+     * đơn của mình, admin xem mọi đơn.
+     * <p>
+     * Chống IDOR: đơn không tồn tại, đơn của người khác và giỏ hàng ({@code CART} — không phải đơn) đều ném CÙNG một
+     * exception với cùng thông điệp, nên người gọi không dò được mã đơn nào có thật. Quyền sở hữu được lọc ngay trong câu
+     * truy vấn theo username của người gọi, không so sánh sau khi đã nạp đơn.
+     *
+     * @param username {@code Authentication#getName()} của người gọi
+     * @param admin    người gọi có {@code ROLE_ADMIN}
+     * @throws ResourceNotFoundException khi người gọi không được xem đơn này (hoặc đơn không tồn tại)
+     */
+    @Transactional(readOnly = true)
+    public OrderStatus getPlacedOrderStatus(Long orderId, String username, boolean admin) {
+        Optional<OrderStatus> status = admin
+                ? orderRepository.findStatusById(orderId)
+                : orderRepository.findStatusByIdAndOwnerUsername(orderId, username);
+        return status.filter(found -> found != OrderStatus.CART)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng #" + orderId));
+    }
+
+    /**
      * Đổi trạng thái đơn (admin). Cùng transaction: ghi outbox {@link OrderStatusChangedMessage} → chỉ gửi sau commit
      * (rollback thì không ai nhận), không mất khi broker chết. Chủ đơn đang mở trang đơn hàng và các admin đang online
      * nhận qua WebSocket.
@@ -242,6 +276,13 @@ public class OrderService {
      * chụp giá, ghi {@code orderedAt}). Admin không thấy giỏ hàng ở mọi màn hình nên id của giỏ hàng → 404 như đơn không
      * tồn tại; đích {@code CART} bị từ chối — kéo đơn về giỏ sẽ trộn nó vào giỏ đang dùng của khách (một user chỉ có
      * một {@code CART}).
+     * <p>
+     * Hai admin đổi cùng một đơn: trạng thái được ghi bằng UPDATE có điều kiện "vẫn đang ở trạng thái vừa đọc"
+     * ({@link OrderRepository#updateStatusIfCurrent}), không phải đọc → sửa entity → {@code save} (request sau sẽ ghi đè
+     * request trước mà không ai biết). Request đến sau không đổi được dòng nào → {@link ConcurrentUpdateException}, không
+     * ghi audit/outbox; vì vậy {@code order.status.from} trong audit luôn là trạng thái thật trong DB lúc đổi.
+     *
+     * @throws ConcurrentUpdateException khi đơn vừa được người khác đổi trạng thái
      */
     @Transactional
     public void updateStatus(Long id, OrderStatus newStatus) {
@@ -254,13 +295,16 @@ public class OrderService {
 
         OrderStatus current = order.getStatus();
         if (current == newStatus) return;
+        // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn.
+        // Đọc trước câu UPDATE: nó xoá persistence context nên `order` không còn dùng được sau đó.
+        String ownerUsername = order.getUser().getUsername();
 
-        order.setStatus(newStatus);
-        orderRepository.save(order);
+        if (orderRepository.updateStatusIfCurrent(id, current, newStatus) == 0) {
+            throw new ConcurrentUpdateException("Đơn hàng vừa được người khác cập nhật, vui lòng tải lại trang");
+        }
         auditLogService.orderStatusChanged(id, current, newStatus);
-        // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn
         outboxService.enqueue(OutboxType.ORDER_STATUS_CHANGED,
-                new OrderStatusChangedMessage(id, order.getUser().getUsername(), newStatus));
+                new OrderStatusChangedMessage(id, ownerUsername, newStatus));
     }
 
     private OrderResDto buildOrderResDto(Order order, List<OrderDetail> details) {
@@ -294,6 +338,22 @@ public class OrderService {
                 order.getShippingAddress(), order.getNote(), order.getTotalPrice(), order.getOrderedAt(), items);
     }
 
+    /**
+     * Khoá dòng {@code users} của chủ giỏ tới hết transaction — câu lệnh ĐẦU TIÊN của mọi thao tác ghi giỏ hàng và của
+     * {@link #checkout}, để các thao tác đó của cùng một người dùng chạy lần lượt.
+     * <p>
+     * Không khoá thì hai request cùng đọc giỏ ở trạng thái {@code CART}: checkout hai lần ghi hai {@code ORDER_PLACED}
+     * vào outbox, hoặc thêm/sửa món ngay lúc checkout lưu lại TOÀN BỘ entity {@code Order} đã đọc trước đó — đưa đơn vừa
+     * đặt về {@code CART} hay thêm món vào đơn đã đặt. Khoá chủ giỏ (không khoá dòng {@code orders}) xếp hàng được cả lúc
+     * người dùng chưa có giỏ (hai lần thêm món đầu tiên song song không tạo hai giỏ). Phải đứng trước mọi lần đọc trong
+     * transaction: ở REPEATABLE READ, snapshot được chụp ở lần đọc thường đầu tiên — sau khi chờ khoá xong mới chụp thì
+     * thấy thay đổi request trước vừa commit.
+     */
+    private void lockCartOwner(User user) {
+        userRepository.lockIdById(user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Tài khoản không tồn tại!"));
+    }
+
     private Order createEmptyCart(User user) {
         Order cart = new Order();
         cart.setUser(user);
@@ -302,13 +362,18 @@ public class OrderService {
         return orderRepository.save(cart);
     }
 
+    /**
+     * Món {@code orderDetailId} trong GIỎ HÀNG của chính {@code user}. Món của người khác được báo y hệt món không tồn
+     * tại (cùng exception, cùng thông điệp → cùng 404): id tăng dần nên câu trả lời khác nhau sẽ cho phép dò id nào
+     * đang có trong giỏ/đơn của người khác. Món thuộc đơn ĐÃ ĐẶT của chính user là dữ liệu của họ → 400 nói rõ lý do.
+     */
     private OrderDetail requireOwnedCartItem(User user, Long orderDetailId) {
         OrderDetail detail = orderDetailRepository.findById(orderDetailId)
+                .filter(found -> found.getOrder().getUser() != null
+                        && found.getOrder().getUser().getId().equals(user.getId()))
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm trong giỏ không tồn tại!"));
 
-        Order order = detail.getOrder();
-        if (order.getUser() == null || !order.getUser().getId().equals(user.getId())
-                || order.getStatus() != OrderStatus.CART) {
+        if (detail.getOrder().getStatus() != OrderStatus.CART) {
             throw new IllegalArgumentException("Không thể cập nhật giỏ hàng này!");
         }
         return detail;

@@ -129,15 +129,27 @@ class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
     }
 
     @Test
-    void logout_closesOpenWebSocket() throws Exception {
+    void logout_closesOpenWebSocket_atTheNextRevalidation() throws Exception {
         User admin = createUser(Role.ROLE_ADMIN);
+        User other = createUser(Role.ROLE_ADMIN);
         BrowserSession browser = login(admin);
         BrowserSession.Stomp stomp = track(browser.connect());
+        BrowserSession.Stomp untouched = track(login(other).connect());
         stomp.session();
+        untouched.session();
 
         browser.logout();
 
-        assertThat(stomp.awaitClosed()).isTrue();
+        // Session nằm trong kho dùng chung (Spring Session JDBC), không có event nào báo logout cho instance giữ socket:
+        // job hỏi lại kho session — socket của session đã kết thúc bị đóng, không audit (không phải thu hồi tài khoản)
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            revalidationJob.revalidateOpenSessions();
+
+            assertThat(stomp.awaitClosed()).isTrue();
+            assertThat(audit.lines()).noneMatch(line ->
+                    line.contains("SESSION_REVOKED") && line.contains("username=" + admin.getUsername()));
+        }
+        assertThat(untouched.isConnected()).isTrue();
     }
 
     @Test
@@ -152,7 +164,8 @@ class WebSocketIntegrationTest extends AbstractRealtimeIntegrationTest {
         // Tab khác của cùng trình duyệt đăng nhập bằng tài khoản khác: id session đổi, token CSRF đổi
         browser.signInAgain(other.getUsername(), PASSWORD);
 
-        // Socket mang danh tính admin lúc handshake bị đóng ngay (HttpSessionIdChangedEvent), không chờ job
+        // Socket mang danh tính admin lúc handshake: id session cũ không còn trong kho session → job đóng nó
+        revalidationJob.revalidateOpenSessions();
         assertThat(adminTab.awaitClosed()).isTrue();
         // Nối lại bằng token trong meta của trang cũ → bị từ chối mãi (lỗi review: realtime chết tới khi tải lại trang)
         BrowserSession.Stomp stale = track(browser.connect(pageToken, null));

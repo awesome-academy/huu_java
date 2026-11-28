@@ -8,21 +8,25 @@ import com.huuhv.foodsndrinks.entity.OrderDetail;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ConcurrentUpdateException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.repository.projection.OrderStatusView;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -40,8 +44,11 @@ import java.util.stream.LongStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -59,11 +66,18 @@ class OrderServiceTest {
     @Mock private ProductImageRepository productImageRepository;
     @Mock private OutboxService outboxService;
     @Mock private AuditLogService auditLogService;
+    @Mock private UserRepository userRepository;
 
     @InjectMocks private OrderService orderService;
 
     private final User alice = user(1L, "alice");
     private final User mallory = user(2L, "mallory");
+
+    /** Thao tác ghi giỏ + checkout khoá dòng {@code users} của chủ giỏ trước tiên; tài khoản còn tồn tại. */
+    @BeforeEach
+    void cartOwnersExist() {
+        lenient().when(userRepository.lockIdById(any())).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+    }
 
     @Test
     void searchOrders_cartStatusFilter_isIgnored_soAdminNeverListsCarts() {
@@ -287,14 +301,31 @@ class OrderServiceTest {
         }
 
         @Test
-        void updateItemOfAnotherUser_isRejected() {
+        void updateItemOfAnotherUser_isReportedExactlyLikeAnUnknownItem() {
             Order aliceCart = cartOf(alice, OrderStatus.CART);
             OrderDetail coffee = line(500L, aliceCart, product(10L, "25000", true), 1);
             when(orderDetailRepository.findById(500L)).thenReturn(Optional.of(coffee));
+            when(orderDetailRepository.findById(404L)).thenReturn(Optional.empty());
 
-            assertThatIllegalArgumentException()
-                    .isThrownBy(() -> orderService.updateCartItemQuantity(mallory, 500L, 50));
+            // Cùng exception + cùng thông điệp → cùng 404: không dò được id nào đang nằm trong giỏ của người khác
+            Throwable foreign = catchThrowable(() -> orderService.updateCartItemQuantity(mallory, 500L, 50));
+            Throwable unknown = catchThrowable(() -> orderService.updateCartItemQuantity(mallory, 404L, 50));
+
+            assertThat(foreign).isInstanceOf(ResourceNotFoundException.class).hasMessage(unknown.getMessage());
+            assertThat(unknown).isInstanceOf(ResourceNotFoundException.class);
             assertThat(coffee.getQuantity()).isEqualTo(1);
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        void itemOfAnotherUsersPlacedOrder_isNotFound_notABadRequest() {
+            // Trạng thái đơn của người khác cũng không được lộ qua mã lỗi (400 "không thể cập nhật" chỉ dành cho chủ đơn)
+            Order alicePlaced = cartOf(alice, OrderStatus.PENDING);
+            OrderDetail coffee = line(500L, alicePlaced, product(10L, "25000", true), 1);
+            when(orderDetailRepository.findById(500L)).thenReturn(Optional.of(coffee));
+
+            assertThatThrownBy(() -> orderService.removeCartItem(mallory, 500L))
+                    .isInstanceOf(ResourceNotFoundException.class);
             verify(orderRepository, never()).save(any());
         }
 
@@ -313,12 +344,13 @@ class OrderServiceTest {
         }
 
         @Test
-        void removeItemOfAnotherUser_isRejected() {
+        void removeItemOfAnotherUser_isNotFound() {
             Order aliceCart = cartOf(alice, OrderStatus.CART);
             OrderDetail coffee = line(500L, aliceCart, product(10L, "25000", true), 1);
             when(orderDetailRepository.findById(500L)).thenReturn(Optional.of(coffee));
 
-            assertThatIllegalArgumentException().isThrownBy(() -> orderService.removeCartItem(mallory, 500L));
+            assertThatThrownBy(() -> orderService.removeCartItem(mallory, 500L))
+                    .isInstanceOf(ResourceNotFoundException.class);
             assertThat(aliceCart.getOrderDetails()).containsExactly(coffee);
             verify(orderRepository, never()).save(any());
         }
@@ -344,6 +376,40 @@ class OrderServiceTest {
 
     @Nested
     class Checkout {
+
+        @Test
+        void locksTheCartOwner_beforeReadingTheCart() {
+            Order cart = cartOf(alice, OrderStatus.CART);
+            line(500L, cart, product(10L, "25000", true), 1);
+            when(orderRepository.findCartByUserId(1L)).thenReturn(Optional.of(cart));
+
+            orderService.checkout(alice, "1 Lê Lợi", null);
+
+            // Lần checkout thứ hai (bấm hai lần) chờ ở khoá này rồi mới đọc giỏ — lúc đó giỏ đã là PENDING
+            InOrder order = inOrder(userRepository, orderRepository, outboxService);
+            order.verify(userRepository).lockIdById(1L);
+            order.verify(orderRepository).findCartByUserId(1L);
+            order.verify(outboxService).enqueue(eq(OutboxType.ORDER_PLACED), any());
+        }
+
+        @Test
+        void secondCheckoutAfterTheFirstCommitted_findsNoCart_andEnqueuesNothing() {
+            // Request thứ hai chờ khoá xong thì giỏ đã thành đơn: không còn đơn CART nào của user
+            when(orderRepository.findCartByUserId(1L)).thenReturn(Optional.empty());
+
+            assertThatIllegalArgumentException().isThrownBy(() -> orderService.checkout(alice, "1 Lê Lợi", null));
+            verify(userRepository).lockIdById(1L);
+            verifyNoInteractions(outboxService);
+        }
+
+        @Test
+        void deletedAccount_isRejected_withoutTouchingOrders() {
+            when(userRepository.lockIdById(1L)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.checkout(alice, "1 Lê Lợi", null))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verifyNoInteractions(orderRepository, outboxService);
+        }
 
         @Test
         void withoutCart_isRejected() {
@@ -421,6 +487,7 @@ class OrderServiceTest {
 
             assertThat(cart.getStatus()).isEqualTo(OrderStatus.CART);
             assertThat(cart.getOrderedAt()).isNull();
+            verify(orderRepository, never()).updateStatusIfCurrent(any(), any(), any());
             verify(orderRepository, never()).save(any());
             verifyNoInteractions(auditLogService, outboxService);
         }
@@ -428,12 +495,28 @@ class OrderServiceTest {
         @Test
         void statusChange_enqueuesEventForOwner_inSameTransaction() {
             when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(cartOf(alice, OrderStatus.PENDING)));
+            when(orderRepository.updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.COMPLETED)).thenReturn(1);
 
             orderService.updateStatus(100L, OrderStatus.COMPLETED);
 
             // Chủ đơn lấy từ DB (không từ request); outbox ghi trong transaction của updateStatus → chỉ gửi sau commit
             verify(outboxService).enqueue(OutboxType.ORDER_STATUS_CHANGED,
                     new OrderStatusChangedMessage(100L, "alice", OrderStatus.COMPLETED));
+        }
+
+        @Test
+        void orderChangedBySomeoneElseInBetween_isRejected_withoutAuditOrEvent() {
+            // Admin khác vừa đổi đơn sau khi request này đọc nó: UPDATE có điều kiện "vẫn đang PENDING" không khớp dòng nào
+            when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(cartOf(alice, OrderStatus.PENDING)));
+            when(orderRepository.updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.CANCELLED)).thenReturn(0);
+
+            assertThatThrownBy(() -> orderService.updateStatus(100L, OrderStatus.CANCELLED))
+                    .isInstanceOf(ConcurrentUpdateException.class)
+                    .hasMessage("Đơn hàng vừa được người khác cập nhật, vui lòng tải lại trang");
+
+            // Không ghi đè, không audit một lần chuyển trạng thái không xảy ra, không báo cho ai
+            verify(orderRepository, never()).save(any());
+            verifyNoInteractions(auditLogService, outboxService);
         }
 
         @Test
@@ -445,15 +528,18 @@ class OrderServiceTest {
         }
 
         @Test
-        void laterTransition_keepsOriginalOrderedAt() {
+        void laterTransition_writesOnlyTheStatus_conditionally_andAuditsTheRealPreviousStatus() {
             LocalDateTime orderedAt = LocalDateTime.of(2026, 1, 2, 3, 4);
             Order order = cartOf(alice, OrderStatus.PENDING);
             order.setOrderedAt(orderedAt);
             when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(order));
+            when(orderRepository.updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.PROCESSING)).thenReturn(1);
 
             orderService.updateStatus(100L, OrderStatus.PROCESSING);
 
-            assertThat(order.getStatus()).isEqualTo(OrderStatus.PROCESSING);
+            // Chỉ cột status được ghi, có điều kiện trạng thái cũ — không save() cả entity (ghi đè, đụng orderedAt)
+            verify(orderRepository).updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.PROCESSING);
+            verify(orderRepository, never()).save(any());
             assertThat(order.getOrderedAt()).isEqualTo(orderedAt);
             verify(auditLogService).orderStatusChanged(100L, OrderStatus.PENDING, OrderStatus.PROCESSING);
         }
@@ -464,6 +550,7 @@ class OrderServiceTest {
 
             orderService.updateStatus(100L, OrderStatus.COMPLETED);
 
+            verify(orderRepository, never()).updateStatusIfCurrent(any(), any(), any());
             verify(orderRepository, never()).save(any());
             verifyNoInteractions(auditLogService, outboxService);
         }
@@ -475,6 +562,48 @@ class OrderServiceTest {
             assertThatThrownBy(() -> orderService.updateStatus(404L, OrderStatus.CANCELLED))
                     .isInstanceOf(ResourceNotFoundException.class);
             verifyNoInteractions(auditLogService, outboxService);
+        }
+    }
+
+    @Nested
+    class PlacedOrderStatus {
+
+        @Test
+        void owner_readsTheStatusOfTheirOwnOrder_throughTheOwnerScopedQuery() {
+            when(orderRepository.findStatusByIdAndOwnerUsername(42L, "alice")).thenReturn(Optional.of(OrderStatus.PROCESSING));
+
+            assertThat(orderService.getPlacedOrderStatus(42L, "alice", false)).isEqualTo(OrderStatus.PROCESSING);
+
+            // Quyền sở hữu lọc trong câu truy vấn — không nạp đơn rồi mới so chủ đơn
+            verify(orderRepository, never()).findStatusById(any());
+        }
+
+        @Test
+        void admin_readsAnyOrder() {
+            when(orderRepository.findStatusById(42L)).thenReturn(Optional.of(OrderStatus.CANCELLED));
+
+            assertThat(orderService.getPlacedOrderStatus(42L, "boss", true)).isEqualTo(OrderStatus.CANCELLED);
+        }
+
+        @Test
+        void missingOrder_someoneElsesOrder_andCart_areAllTheSameNotFound() {
+            // Đơn của người khác: câu truy vấn theo chủ đơn không trả gì — y như đơn không tồn tại
+            when(orderRepository.findStatusByIdAndOwnerUsername(42L, "mallory")).thenReturn(Optional.empty());
+            // Giỏ hàng không phải đơn, kể cả với chủ của nó và với admin
+            when(orderRepository.findStatusByIdAndOwnerUsername(43L, "alice")).thenReturn(Optional.of(OrderStatus.CART));
+            when(orderRepository.findStatusById(43L)).thenReturn(Optional.of(OrderStatus.CART));
+            when(orderRepository.findStatusById(404L)).thenReturn(Optional.empty());
+
+            Throwable foreign = catchThrowable(() -> orderService.getPlacedOrderStatus(42L, "mallory", false));
+            Throwable ownCart = catchThrowable(() -> orderService.getPlacedOrderStatus(43L, "alice", false));
+            Throwable cartAsAdmin = catchThrowable(() -> orderService.getPlacedOrderStatus(43L, "boss", true));
+            Throwable missing = catchThrowable(() -> orderService.getPlacedOrderStatus(404L, "boss", true));
+
+            assertThat(List.of(foreign, ownCart, cartAsAdmin, missing))
+                    .allSatisfy(thrown -> assertThat(thrown).isInstanceOf(ResourceNotFoundException.class));
+            // Cùng dạng thông điệp (chỉ khác mã đơn người gọi tự gửi) — không phân biệt được "có nhưng không phải của bạn"
+            assertThat(foreign).hasMessage("Không tìm thấy đơn hàng #42");
+            assertThat(ownCart).hasMessage("Không tìm thấy đơn hàng #43");
         }
     }
 
