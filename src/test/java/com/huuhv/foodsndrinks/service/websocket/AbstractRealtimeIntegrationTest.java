@@ -39,9 +39,12 @@ import static org.awaitility.Awaitility.await;
  * <p>
  * Không {@code @Transactional}: Tomcat xử lý request trên thread khác, chỉ thấy dữ liệu đã commit — user tạo với tên ngẫu
  * nhiên và tự xoá sau mỗi test. Các lớp con không khai báo override nào để dùng chung MỘT context.
+ * <p>
+ * {@code public} để integration test trên Tomcat thật ở package khác (vd. {@code controller.soap}) kế thừa và dùng
+ * chung context này.
  */
 @IntegrationTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-abstract class AbstractRealtimeIntegrationTest {
+public abstract class AbstractRealtimeIntegrationTest {
 
     protected static final String PASSWORD = "realtime-pass-123";
 

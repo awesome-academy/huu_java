@@ -36,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -232,6 +233,27 @@ public class OrderService {
         return orderRepository.findStatusesByUserIdAndIdIn(userId, distinct).stream()
                 .map(view -> OrderStatusEventResDto.of(view.getId(), view.getStatus()))
                 .toList();
+    }
+
+    /**
+     * Trạng thái hiện tại của một đơn ĐÃ ĐẶT cho hệ thống bên ngoài (SOAP {@code GetOrderStatus}): chủ đơn chỉ xem được
+     * đơn của mình, admin xem mọi đơn.
+     * <p>
+     * Chống IDOR: đơn không tồn tại, đơn của người khác và giỏ hàng ({@code CART} — không phải đơn) đều ném CÙNG một
+     * exception với cùng thông điệp, nên người gọi không dò được mã đơn nào có thật. Quyền sở hữu được lọc ngay trong câu
+     * truy vấn theo username của người gọi, không so sánh sau khi đã nạp đơn.
+     *
+     * @param username {@code Authentication#getName()} của người gọi
+     * @param admin    người gọi có {@code ROLE_ADMIN}
+     * @throws ResourceNotFoundException khi người gọi không được xem đơn này (hoặc đơn không tồn tại)
+     */
+    @Transactional(readOnly = true)
+    public OrderStatus getPlacedOrderStatus(Long orderId, String username, boolean admin) {
+        Optional<OrderStatus> status = admin
+                ? orderRepository.findStatusById(orderId)
+                : orderRepository.findStatusByIdAndOwnerUsername(orderId, username);
+        return status.filter(found -> found != OrderStatus.CART)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng #" + orderId));
     }
 
     /**

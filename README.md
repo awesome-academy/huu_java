@@ -1,12 +1,13 @@
 # 🍔 F&B Store — Foods & Drinks
 
-Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring Boot. Dự án gồm **3 phần** chạy chung trong 1 ứng dụng:
+Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring Boot. Dự án gồm **4 phần** chạy chung trong 1 ứng dụng:
 
 | Phần | Đường dẫn | Mô tả | Tài liệu chi tiết |
 |---|---|---|---|
 | **Admin** | `/admin/**` | Trang quản trị SSR (Thymeleaf): dashboard, quản lý sản phẩm, danh mục, đơn hàng, người dùng, góp ý | [docs/admin/README.md](docs/admin/README.md) |
 | **API** | `/api/v1/**` | REST API (JWT) chia sẻ để xây trang người dùng (SPA/mobile) | [docs/api/README.md](docs/api/README.md) |
 | **Web** | `/`, `/menu`, ... | Storefront SSR cho người dùng cuối: xem menu, giỏ hàng, đặt hàng, đánh giá sản phẩm | [docs/web/README.md](docs/web/README.md) |
+| **SOAP** | `/ws` | Web service SOAP (Spring-WS, contract-first, HTTP Basic) cho hệ thống đối tác: tra cứu sản phẩm và trạng thái đơn. WSDL: `/ws/foodsndrinks.wsdl` | [docs/soap/README.md](docs/soap/README.md) |
 
 ## Tech Stack
 
@@ -347,3 +348,4 @@ export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
 - 🛠 [Admin — trang quản trị](docs/admin/README.md)
 - 🔌 [API — REST API cho trang người dùng](docs/api/README.md)
 - 🛒 [Web — storefront người dùng](docs/web/README.md)
+- 🧼 [SOAP — web service cho hệ thống đối tác](docs/soap/README.md)

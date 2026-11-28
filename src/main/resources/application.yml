@@ -71,6 +71,14 @@ spring:
         transacted: true
       min-concurrency: 1
       max-concurrency: 3
+  # SOAP (Spring-WS — config/WebServiceConfig): MessageDispatcherServlet ở /ws (= SoapProperties.PATH, filter chain riêng
+  # trong SecurityConfig; khác /ws-stomp của WebSocket). WSDL: /ws/foodsndrinks.wsdl.
+  webservices:
+    path: /ws
+    servlet:
+      init:
+        # Địa chỉ service trong WSDL lấy theo scheme/host/port của request tải WSDL (đúng cả sau reverse proxy)
+        transformWsdlLocations: true
   mail:
     host: ${MAIL_HOST:sandbox.smtp.mailtrap.io}
     port: ${MAIL_PORT:587}
@@ -169,6 +177,10 @@ app:
   session:
     pool-size: ${SESSION_POOL_SIZE:10}
     connection-timeout: 5s
+  # SOAP (config/properties/SoapProperties)
+  soap:
+    # Body tối đa của một request tới /ws/** (1KB–1MB). Lớn hơn → 413, không parse. Request hợp lệ chỉ vài trăm byte.
+    max-request-size: 64KB
   cors:
     # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
     # Không chấp nhận '*' (app không khởi động).

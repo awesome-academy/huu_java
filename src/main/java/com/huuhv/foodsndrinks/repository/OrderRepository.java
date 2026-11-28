@@ -142,6 +142,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT o.status FROM Order o WHERE o.id = :id AND o.user.username = :username")
     Optional<OrderStatus> findStatusByIdAndOwnerUsername(@Param("id") Long id, @Param("username") String username);
 
+    /** Trạng thái hiện tại của đơn {@code id}, KHÔNG lọc chủ đơn — chỉ cho người gọi đã được xác nhận là admin. */
+    @Query("SELECT o.status FROM Order o WHERE o.id = :id")
+    Optional<OrderStatus> findStatusById(@Param("id") Long id);
+
     /** The user's active cart (status = CART), with items + products pre-loaded */
     @Query("""
             SELECT DISTINCT o FROM Order o

@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.audit;
 
+import com.huuhv.foodsndrinks.config.properties.SoapProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
 import org.springframework.security.authentication.RememberMeAuthenticationToken;
@@ -60,7 +61,12 @@ public class AuthenticationAuditListener {
         if (auth instanceof RememberMeAuthenticationToken) {
             return "REMEMBER_ME";
         }
-        return isApiRequest() ? "API" : "FORM";
+        String path = requestPath();
+        if (path.startsWith("/api/")) {
+            return "API";
+        }
+        // HTTP Basic của SOAP (POST /ws): stateless nên MỖI request là một lần xác thực (và một dòng audit)
+        return path.equals(SoapProperties.PATH) || path.startsWith(SoapProperties.PATH + "/") ? "SOAP" : "FORM";
     }
 
     private static boolean isOAuth2(Authentication auth) {
@@ -69,9 +75,10 @@ public class AuthenticationAuditListener {
                 || auth instanceof OAuth2AuthenticationToken;
     }
 
-    private static boolean isApiRequest() {
+    /** Đường dẫn của request hiện tại (không kèm context path); chuỗi rỗng nếu không ở trong một request. */
+    private static String requestPath() {
         return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs
-                && UrlPathHelper.defaultInstance.getPathWithinApplication(attrs.getRequest()).startsWith("/api/");
+                ? UrlPathHelper.defaultInstance.getPathWithinApplication(attrs.getRequest()) : "";
     }
 
     /**

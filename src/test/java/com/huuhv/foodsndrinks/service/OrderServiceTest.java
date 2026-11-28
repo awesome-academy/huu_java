@@ -520,6 +520,48 @@ class OrderServiceTest {
     }
 
     @Nested
+    class PlacedOrderStatus {
+
+        @Test
+        void owner_readsTheStatusOfTheirOwnOrder_throughTheOwnerScopedQuery() {
+            when(orderRepository.findStatusByIdAndOwnerUsername(42L, "alice")).thenReturn(Optional.of(OrderStatus.PROCESSING));
+
+            assertThat(orderService.getPlacedOrderStatus(42L, "alice", false)).isEqualTo(OrderStatus.PROCESSING);
+
+            // Quyền sở hữu lọc trong câu truy vấn — không nạp đơn rồi mới so chủ đơn
+            verify(orderRepository, never()).findStatusById(any());
+        }
+
+        @Test
+        void admin_readsAnyOrder() {
+            when(orderRepository.findStatusById(42L)).thenReturn(Optional.of(OrderStatus.CANCELLED));
+
+            assertThat(orderService.getPlacedOrderStatus(42L, "boss", true)).isEqualTo(OrderStatus.CANCELLED);
+        }
+
+        @Test
+        void missingOrder_someoneElsesOrder_andCart_areAllTheSameNotFound() {
+            // Đơn của người khác: câu truy vấn theo chủ đơn không trả gì — y như đơn không tồn tại
+            when(orderRepository.findStatusByIdAndOwnerUsername(42L, "mallory")).thenReturn(Optional.empty());
+            // Giỏ hàng không phải đơn, kể cả với chủ của nó và với admin
+            when(orderRepository.findStatusByIdAndOwnerUsername(43L, "alice")).thenReturn(Optional.of(OrderStatus.CART));
+            when(orderRepository.findStatusById(43L)).thenReturn(Optional.of(OrderStatus.CART));
+            when(orderRepository.findStatusById(404L)).thenReturn(Optional.empty());
+
+            Throwable foreign = catchThrowable(() -> orderService.getPlacedOrderStatus(42L, "mallory", false));
+            Throwable ownCart = catchThrowable(() -> orderService.getPlacedOrderStatus(43L, "alice", false));
+            Throwable cartAsAdmin = catchThrowable(() -> orderService.getPlacedOrderStatus(43L, "boss", true));
+            Throwable missing = catchThrowable(() -> orderService.getPlacedOrderStatus(404L, "boss", true));
+
+            assertThat(List.of(foreign, ownCart, cartAsAdmin, missing))
+                    .allSatisfy(thrown -> assertThat(thrown).isInstanceOf(ResourceNotFoundException.class));
+            // Cùng dạng thông điệp (chỉ khác mã đơn người gọi tự gửi) — không phân biệt được "có nhưng không phải của bạn"
+            assertThat(foreign).hasMessage("Không tìm thấy đơn hàng #42");
+            assertThat(ownCart).hasMessage("Không tìm thấy đơn hàng #43");
+        }
+    }
+
+    @Nested
     class OrderStatusesForUser {
 
         @Test

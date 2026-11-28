@@ -110,6 +110,23 @@ class AuthenticationAuditTest {
     }
 
     @Test
+    void soapHttpBasicLogin_isAuditedAsSoap_onTheServicePathAndBelowIt_butNotOnTheWebSocketPath() {
+        // POST /ws là đường dẫn thật của SOAP (không có "/" cuối) — so tiền tố "/ws/" sẽ bỏ sót nó
+        for (String soapPath : List.of("/ws", "/ws/", "/ws/anything")) {
+            currentRequest(soapPath);
+            listener.onSuccess(new AuthenticationSuccessEvent(
+                    UsernamePasswordAuthenticationToken.authenticated(EXISTING_USER, null, List.of())));
+        }
+        // /ws-stomp là handshake WebSocket của chain web (đăng nhập form), không phải SOAP
+        currentRequest("/ws-stomp");
+        listener.onSuccess(new AuthenticationSuccessEvent(
+                UsernamePasswordAuthenticationToken.authenticated(EXISTING_USER, null, List.of())));
+
+        assertThat(audit.lines()).extracting(line -> line.replaceAll(".*auth\\.method=(\\S+).*", "$1"))
+                .containsExactly("SOAP", "SOAP", "SOAP", "FORM");
+    }
+
+    @Test
     void loginFailure_ofUnknownAccount_doesNotLogTypedUsername() {
         currentRequest("/login");
 

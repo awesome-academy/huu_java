@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.controller;
 
+import com.huuhv.foodsndrinks.config.properties.SoapProperties;
 import com.huuhv.foodsndrinks.dto.response.ErrorResponse;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,6 +38,14 @@ public class GlobalErrorController implements ErrorController {
                     .build();
             // Cần trả về ResponseEntity, hàm này trả Object nên Spring tự hiểu
             return new ResponseEntity<>(errorResponse, HttpStatus.valueOf(statusCode));
+        }
+
+        // ==========================================
+        // 1b. SOAP (/ws/**): client là máy, không phải trình duyệt -> chỉ mã lỗi, không trang HTML
+        // (lỗi nghiệp vụ của SOAP là SOAP Fault, không đi qua đây — tới đây chỉ có lỗi cấp servlet, vd. 405 khi GET /ws)
+        // ==========================================
+        if (originalUri.equals(SoapProperties.PATH) || originalUri.startsWith(SoapProperties.PATH + "/")) {
+            return ResponseEntity.status(statusCode).build();
         }
 
         // ==========================================

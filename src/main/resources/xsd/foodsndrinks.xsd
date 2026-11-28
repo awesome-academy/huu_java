@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hợp đồng (contract-first) của SOAP service cho hệ thống đối tác: tra cứu sản phẩm đang bán và trạng thái đơn hàng.
+  WSDL sinh từ file này tại /ws/foodsndrinks.wsdl; class JAXB sinh lúc build (jaxb2-maven-plugin → package
+  com.huuhv.foodsndrinks.soap.store, target/generated-sources/jaxb — không sửa tay, không commit).
+
+  File này là hợp đồng với client đang chạy: chỉ được THÊM phần tử tuỳ chọn (minOccurs="0") hoặc giá trị enum mới ở
+  response; không đổi tên, không xoá, không siết ràng buộc của phần tử đã có. Request sai file này bị từ chối (Fault
+  Client) trước khi tới code; response cũng được validate trước khi gửi.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:tns="urn:foodsndrinks:store"
+           targetNamespace="urn:foodsndrinks:store"
+           elementFormDefault="qualified">
+
+    <!-- ===== GetProducts: danh sách sản phẩm đang bán, phân trang ===== -->
+    <xs:element name="GetProductsRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- Bỏ trống = mọi danh mục -->
+                <xs:element name="categoryId" type="tns:Id" minOccurs="0"/>
+                <!-- Trang, bắt đầu từ 0. Bỏ trống = 0 -->
+                <xs:element name="page" type="tns:PageNumber" minOccurs="0"/>
+                <!-- Số sản phẩm mỗi trang, 1..100. Bỏ trống = 10 -->
+                <xs:element name="size" type="tns:PageSize" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetProductsResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="product" type="tns:Product" minOccurs="0" maxOccurs="100"/>
+                <xs:element name="page" type="xs:int"/>
+                <xs:element name="size" type="xs:int"/>
+                <xs:element name="totalElements" type="xs:long"/>
+                <xs:element name="totalPages" type="xs:int"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <!-- ===== GetOrderStatus: trạng thái một đơn — chỉ chủ đơn hoặc quản trị viên ===== -->
+    <xs:element name="GetOrderStatusRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="orderId" type="tns:Id"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetOrderStatusResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="orderId" type="xs:long"/>
+                <xs:element name="status" type="tns:OrderStatus"/>
+                <!-- Nhãn tiếng Việt của trạng thái, vd. "Chờ xác nhận" -->
+                <xs:element name="statusLabel" type="xs:string"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <!-- ===== Kiểu dùng chung ===== -->
+    <xs:complexType name="Product">
+        <xs:sequence>
+            <xs:element name="id" type="xs:long"/>
+            <xs:element name="name" type="xs:string"/>
+            <!-- Trang chi tiết: /products/{slug} -->
+            <xs:element name="slug" type="xs:string"/>
+            <!-- Tên danh mục; không có nếu sản phẩm chưa thuộc danh mục nào -->
+            <xs:element name="category" type="xs:string" minOccurs="0"/>
+            <xs:element name="type" type="tns:ProductType"/>
+            <!-- Giá bán, VND -->
+            <xs:element name="price" type="xs:decimal"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:simpleType name="Id">
+        <xs:restriction base="xs:long">
+            <xs:minInclusive value="1"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="PageNumber">
+        <xs:restriction base="xs:int">
+            <xs:minInclusive value="0"/>
+            <xs:maxInclusive value="100000"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="PageSize">
+        <xs:restriction base="xs:int">
+            <xs:minInclusive value="1"/>
+            <xs:maxInclusive value="100"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="ProductType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="FOOD"/>
+            <xs:enumeration value="DRINK"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- Trạng thái của đơn ĐÃ ĐẶT (giỏ hàng không phải đơn — không bao giờ xuất hiện ở đây) -->
+    <xs:simpleType name="OrderStatus">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="PENDING"/>
+            <xs:enumeration value="PROCESSING"/>
+            <xs:enumeration value="COMPLETED"/>
+            <xs:enumeration value="CANCELLED"/>
+        </xs:restriction>
+    </xs:simpleType>
+</xs:schema>
