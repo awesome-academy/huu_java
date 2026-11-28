@@ -26,6 +26,14 @@ public class AdminExceptionHandler {
         return buildErrorView("error/admin/409", ex.getMessage(), request.getRequestURI());
     }
 
+    /** Bản ghi vừa bị admin khác sửa (controller thường tự bắt để hiện flash; đây là lưới đỡ cho nơi chưa bắt). */
+    @ExceptionHandler(ConcurrentUpdateException.class)
+    public ModelAndView handleConcurrentUpdate(ConcurrentUpdateException ex, HttpServletRequest request, HttpServletResponse response) {
+        response.setStatus(HttpServletResponse.SC_CONFLICT);
+        log.warn("Concurrent update at {}: {}", request.getRequestURI(), ex.getMessage());
+        return buildErrorView("error/admin/409", ex.getMessage(), request.getRequestURI());
+    }
+
     /** Truy vấn thống kê lỗi/quá thời gian: DashboardService đã log ERROR kèm cause, ở đây chỉ trả thông báo chung. */
     @ExceptionHandler(DashboardUnavailableException.class)
     public ModelAndView handleDashboardUnavailable(DashboardUnavailableException ex, HttpServletRequest request, HttpServletResponse response) {

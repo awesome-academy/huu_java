@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.entity.OrderDetail;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ConcurrentUpdateException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
@@ -242,6 +243,13 @@ public class OrderService {
      * chụp giá, ghi {@code orderedAt}). Admin không thấy giỏ hàng ở mọi màn hình nên id của giỏ hàng → 404 như đơn không
      * tồn tại; đích {@code CART} bị từ chối — kéo đơn về giỏ sẽ trộn nó vào giỏ đang dùng của khách (một user chỉ có
      * một {@code CART}).
+     * <p>
+     * Hai admin đổi cùng một đơn: trạng thái được ghi bằng UPDATE có điều kiện "vẫn đang ở trạng thái vừa đọc"
+     * ({@link OrderRepository#updateStatusIfCurrent}), không phải đọc → sửa entity → {@code save} (request sau sẽ ghi đè
+     * request trước mà không ai biết). Request đến sau không đổi được dòng nào → {@link ConcurrentUpdateException}, không
+     * ghi audit/outbox; vì vậy {@code order.status.from} trong audit luôn là trạng thái thật trong DB lúc đổi.
+     *
+     * @throws ConcurrentUpdateException khi đơn vừa được người khác đổi trạng thái
      */
     @Transactional
     public void updateStatus(Long id, OrderStatus newStatus) {
@@ -254,13 +262,16 @@ public class OrderService {
 
         OrderStatus current = order.getStatus();
         if (current == newStatus) return;
+        // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn.
+        // Đọc trước câu UPDATE: nó xoá persistence context nên `order` không còn dùng được sau đó.
+        String ownerUsername = order.getUser().getUsername();
 
-        order.setStatus(newStatus);
-        orderRepository.save(order);
+        if (orderRepository.updateStatusIfCurrent(id, current, newStatus) == 0) {
+            throw new ConcurrentUpdateException("Đơn hàng vừa được người khác cập nhật, vui lòng tải lại trang");
+        }
         auditLogService.orderStatusChanged(id, current, newStatus);
-        // Username lấy từ DB (chủ đơn), không từ request — là Principal#getName() của mọi phiên của chủ đơn
         outboxService.enqueue(OutboxType.ORDER_STATUS_CHANGED,
-                new OrderStatusChangedMessage(id, order.getUser().getUsername(), newStatus));
+                new OrderStatusChangedMessage(id, ownerUsername, newStatus));
     }
 
     private OrderResDto buildOrderResDto(Order order, List<OrderDetail> details) {

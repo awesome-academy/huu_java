@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.entity.OrderDetail;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
+import com.huuhv.foodsndrinks.exception.ConcurrentUpdateException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
@@ -440,6 +441,7 @@ class OrderServiceTest {
 
             assertThat(cart.getStatus()).isEqualTo(OrderStatus.CART);
             assertThat(cart.getOrderedAt()).isNull();
+            verify(orderRepository, never()).updateStatusIfCurrent(any(), any(), any());
             verify(orderRepository, never()).save(any());
             verifyNoInteractions(auditLogService, outboxService);
         }
@@ -447,12 +449,28 @@ class OrderServiceTest {
         @Test
         void statusChange_enqueuesEventForOwner_inSameTransaction() {
             when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(cartOf(alice, OrderStatus.PENDING)));
+            when(orderRepository.updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.COMPLETED)).thenReturn(1);
 
             orderService.updateStatus(100L, OrderStatus.COMPLETED);
 
             // Chủ đơn lấy từ DB (không từ request); outbox ghi trong transaction của updateStatus → chỉ gửi sau commit
             verify(outboxService).enqueue(OutboxType.ORDER_STATUS_CHANGED,
                     new OrderStatusChangedMessage(100L, "alice", OrderStatus.COMPLETED));
+        }
+
+        @Test
+        void orderChangedBySomeoneElseInBetween_isRejected_withoutAuditOrEvent() {
+            // Admin khác vừa đổi đơn sau khi request này đọc nó: UPDATE có điều kiện "vẫn đang PENDING" không khớp dòng nào
+            when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(cartOf(alice, OrderStatus.PENDING)));
+            when(orderRepository.updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.CANCELLED)).thenReturn(0);
+
+            assertThatThrownBy(() -> orderService.updateStatus(100L, OrderStatus.CANCELLED))
+                    .isInstanceOf(ConcurrentUpdateException.class)
+                    .hasMessage("Đơn hàng vừa được người khác cập nhật, vui lòng tải lại trang");
+
+            // Không ghi đè, không audit một lần chuyển trạng thái không xảy ra, không báo cho ai
+            verify(orderRepository, never()).save(any());
+            verifyNoInteractions(auditLogService, outboxService);
         }
 
         @Test
@@ -464,15 +482,18 @@ class OrderServiceTest {
         }
 
         @Test
-        void laterTransition_keepsOriginalOrderedAt() {
+        void laterTransition_writesOnlyTheStatus_conditionally_andAuditsTheRealPreviousStatus() {
             LocalDateTime orderedAt = LocalDateTime.of(2026, 1, 2, 3, 4);
             Order order = cartOf(alice, OrderStatus.PENDING);
             order.setOrderedAt(orderedAt);
             when(orderRepository.findByIdWithUser(100L)).thenReturn(Optional.of(order));
+            when(orderRepository.updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.PROCESSING)).thenReturn(1);
 
             orderService.updateStatus(100L, OrderStatus.PROCESSING);
 
-            assertThat(order.getStatus()).isEqualTo(OrderStatus.PROCESSING);
+            // Chỉ cột status được ghi, có điều kiện trạng thái cũ — không save() cả entity (ghi đè, đụng orderedAt)
+            verify(orderRepository).updateStatusIfCurrent(100L, OrderStatus.PENDING, OrderStatus.PROCESSING);
+            verify(orderRepository, never()).save(any());
             assertThat(order.getOrderedAt()).isEqualTo(orderedAt);
             verify(auditLogService).orderStatusChanged(100L, OrderStatus.PENDING, OrderStatus.PROCESSING);
         }
@@ -483,6 +504,7 @@ class OrderServiceTest {
 
             orderService.updateStatus(100L, OrderStatus.COMPLETED);
 
+            verify(orderRepository, never()).updateStatusIfCurrent(any(), any(), any());
             verify(orderRepository, never()).save(any());
             verifyNoInteractions(auditLogService, outboxService);
         }

@@ -8,6 +8,7 @@ import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -94,6 +95,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     /** Fetch order + user eagerly for detail view */
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.user WHERE o.id = :id")
     Optional<Order> findByIdWithUser(@Param("id") Long id);
+
+    /**
+     * Đổi trạng thái CHỈ KHI đơn vẫn đang ở {@code from} — số dòng đã đổi (0 = người khác vừa đổi trước). So sánh và ghi
+     * trong một câu lệnh nên hai admin đổi cùng lúc không thể cùng thành công: câu UPDATE thứ hai chờ khoá dòng rồi thấy
+     * trạng thái mới (UPDATE luôn đọc bản đã commit mới nhất, kể cả ở REPEATABLE READ) và không khớp điều kiện.
+     * {@code updated_at} do MySQL tự cập nhật ({@code ON UPDATE CURRENT_TIMESTAMP}); {@code ordered_at} không bị đụng tới.
+     * Xoá persistence context sau khi chạy: entity {@code Order} đã nạp trước đó còn mang trạng thái cũ.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Order o SET o.status = :to WHERE o.id = :id AND o.status = :from")
+    int updateStatusIfCurrent(@Param("id") Long id, @Param("from") OrderStatus from, @Param("to") OrderStatus to);
 
     /**
      * Fetch order + user + orderDetails + products in 1 query for detail view.
