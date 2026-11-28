@@ -407,6 +407,20 @@
 							<clearOutputDir>false</clearOutputDir>
 						</configuration>
 					</execution>
+					<!-- Hợp đồng của dịch vụ tỷ giá mà app gọi (SOAP client) và của endpoint mock -->
+					<execution>
+						<id>xjc-exchange-rate</id>
+						<goals>
+							<goal>xjc</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>src/main/resources/xsd/exchange-rate.xsd</source>
+							</sources>
+							<packageName>com.huuhv.foodsndrinks.soap.exchangerate</packageName>
+							<clearOutputDir>false</clearOutputDir>
+						</configuration>
+					</execution>
 				</executions>
 			</plugin>
 			<!-- Test chỉ chạy với profile "test", không bao giờ với dev: application-dev.yml thắng

@@ -51,6 +51,15 @@ app:
     embedded-broker-properties:
       - classpath:artemis/broker.properties
       - classpath:artemis/broker-test.properties
+  soap:
+    exchange-rate:
+      # Không có URL: tính năng tỷ giá tắt (không gọi mạng, job không làm gì); test tự dựng client/service khi cần.
+      url: ""
+      refresh-initial-delay: 24h
+      refresh-interval: 24h
+      mock-endpoint:
+        # Bật endpoint mock trong context dùng chung của test Tomcat thật (SoapHttpIntegrationTest gọi nó qua HTTP)
+        enabled: true
   outbox:
     # Job gửi lại coi như tắt (chạy lần đầu sau 24h) — test gọi OutboxPublisher.publishDue() trực tiếp, không phụ thuộc
     # lịch. Thử lại không chờ để bản ghi vừa lỗi tới hạn ngay.

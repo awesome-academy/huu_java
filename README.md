@@ -7,7 +7,7 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 | **Admin** | `/admin/**` | Trang quản trị SSR (Thymeleaf): dashboard, quản lý sản phẩm, danh mục, đơn hàng, người dùng, góp ý | [docs/admin/README.md](docs/admin/README.md) |
 | **API** | `/api/v1/**` | REST API (JWT) chia sẻ để xây trang người dùng (SPA/mobile) | [docs/api/README.md](docs/api/README.md) |
 | **Web** | `/`, `/menu`, ... | Storefront SSR cho người dùng cuối: xem menu, giỏ hàng, đặt hàng, đánh giá sản phẩm | [docs/web/README.md](docs/web/README.md) |
-| **SOAP** | `/ws` | Web service SOAP (Spring-WS, contract-first, HTTP Basic) cho hệ thống đối tác: tra cứu sản phẩm và trạng thái đơn. WSDL: `/ws/foodsndrinks.wsdl` | [docs/soap/README.md](docs/soap/README.md) |
+| **SOAP** | `/ws` | Web service SOAP (Spring-WS, contract-first, HTTP Basic) cho hệ thống đối tác: tra cứu sản phẩm và trạng thái đơn. WSDL: `/ws/foodsndrinks.wsdl`. App cũng là SOAP **client**: lấy tỷ giá USD/VND để quy đổi doanh thu trên dashboard | [docs/soap/README.md](docs/soap/README.md) |
 
 ## Tech Stack
 
@@ -174,6 +174,9 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `SESSION_COOKIE_SECURE` | — | Cờ `Secure` của cookie session (`JSESSIONID`, chỉ gửi qua HTTPS). Mặc định `false` ở dev (http://localhost), `true` ở prod |
 | `SESSION_POOL_SIZE` | — | Số connection tối đa của pool riêng cho kho session HTTP (mặc định `10`, 2–50). Tổng connection mỗi instance = 30 (pool chính) + giá trị này |
 | `LB_PORT` | — | Cổng nginx của profile compose `multi` (2 instance, mặc định `8088`) |
+| `SOAP_EXCHANGE_RATE_URL` | Khi muốn hiện doanh thu quy đổi USD | Địa chỉ dịch vụ tỷ giá SOAP mà app gọi (`http`/`https`; giá trị khác làm app không khởi động). **Trống = tắt tính năng.** Local: `http://localhost:8080/ws` (endpoint mock của chính app) — xem [docs/soap](docs/soap/README.md#soap-client--tỷ-giá-trên-dashboard) |
+| `SOAP_EXCHANGE_RATE_USERNAME`, `SOAP_EXCHANGE_RATE_PASSWORD` | Khi dịch vụ tỷ giá cần HTTP Basic | Tài khoản của dịch vụ tỷ giá. Với endpoint mock: tài khoản của một user đã đăng ký trong app |
+| `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint tỷ giá giả ở `/ws` (operation `GetExchangeRate`). Mặc định `false`; profile `dev` mặc định `true`; profile `prod` luôn tắt (không đọc biến này) |
 | `NVD_API_KEY` | Khi chạy Dependency-Check | API key của NVD cho `dependency-check:check` (xem [Quét lỗ hổng thư viện](#quét-lỗ-hổng-thư-viện-owasp-dependency-check)); không dùng khi chạy app |
 | `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Khi dùng login Google | OAuth2 credentials từ Google Console |

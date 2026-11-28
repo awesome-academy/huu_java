@@ -1,19 +1,26 @@
 package com.huuhv.foodsndrinks.controller.soap;
 
+import com.huuhv.foodsndrinks.config.WebServiceClientConfig;
 import com.huuhv.foodsndrinks.config.WebServiceConfig;
+import com.huuhv.foodsndrinks.config.properties.SoapProperties;
 import com.huuhv.foodsndrinks.entity.Order;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.ProductType;
 import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.exception.ExchangeRateUnavailableException;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
+import com.huuhv.foodsndrinks.service.soap.ExchangeRateService;
+import com.huuhv.foodsndrinks.service.soap.ExchangeRateSoapClient;
 import com.huuhv.foodsndrinks.service.websocket.AbstractRealtimeIntegrationTest;
 import com.huuhv.foodsndrinks.support.BrowserSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.unit.DataSize;
+import org.springframework.ws.soap.saaj.SaajSoapMessageFactory;
 
 import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
@@ -22,12 +29,15 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * SOAP service qua HTTP thật (Tomcat cổng ngẫu nhiên, MySQL Testcontainers): filter chain {@code /ws/**} — HTTP Basic,
@@ -39,6 +49,7 @@ class SoapHttpIntegrationTest extends AbstractRealtimeIntegrationTest {
     private static final String NS = "urn:foodsndrinks:store";
 
     @Autowired private ProductRepository productRepository;
+    @Autowired private SaajSoapMessageFactory messageFactory;
 
     private final HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
     private final List<Long> productIds = new ArrayList<>();
@@ -167,6 +178,64 @@ class SoapHttpIntegrationTest extends AbstractRealtimeIntegrationTest {
 
         assertThat(response.statusCode()).isEqualTo(500);
         assertThat(response.body()).contains("Client", WebServiceConfig.FAULT_VALIDATION).doesNotContain("<html", "101");
+    }
+
+    // -------------------------------------------------------
+    // SOAP client → endpoint tỷ giá mock của chính app (issue #30)
+    // -------------------------------------------------------
+
+    @Test
+    void productionSoapClient_getsARateFromTheMockEndpoint_overHttp_withAnAppAccount() throws Exception {
+        User serviceAccount = createUser(Role.ROLE_USER);
+        ExchangeRateSoapClient client = soapClient(serviceAccount.getUsername(), PASSWORD);
+
+        ExchangeRateSoapClient.Quote quote = client.getRate("USD", "VND");
+
+        assertThat(quote.rate()).isBetween(new BigDecimal("25000"), new BigDecimal("26000"));
+        assertThat(quote.asOf()).isBeforeOrEqualTo(Instant.now());
+
+        // Cả chuỗi như trên dashboard: service giữ tỷ giá sau một lượt job, rồi quy đổi không cần gọi mạng
+        ExchangeRateService service = new ExchangeRateService(client, new SoapProperties(DataSize.ofKilobytes(64),
+                exchangeRateProperties(serviceAccount.getUsername(), PASSWORD)));
+        assertThat(service.convertFromVnd(new BigDecimal("2540000"))).isEmpty();
+        service.refreshIfDue();
+        assertThat(service.convertFromVnd(new BigDecimal("2540000"))).hasValueSatisfying(usd -> {
+            assertThat(usd.currency()).isEqualTo("USD");
+            assertThat(usd.amount()).isBetween(new BigDecimal("97"), new BigDecimal("102"));
+        });
+    }
+
+    @Test
+    void soapClient_withWrongOrMissingCredentials_getsNoRate_andTheServiceStaysUsable() throws Exception {
+        User serviceAccount = createUser(Role.ROLE_USER);
+
+        // Mock nằm sau cùng filter chain /ws/**: không/sai tài khoản → 401 → "không lấy được tỷ giá", không ném lỗi lạ
+        for (ExchangeRateSoapClient client : List.of(soapClient("", ""), soapClient(serviceAccount.getUsername(), "wrong"))) {
+            assertThatThrownBy(() -> client.getRate("USD", "VND"))
+                    .isInstanceOf(ExchangeRateUnavailableException.class).hasMessage("HTTP_ERROR");
+        }
+        ExchangeRateService service = new ExchangeRateService(soapClient("", ""), new SoapProperties(
+                DataSize.ofKilobytes(64), exchangeRateProperties("", "")));
+        service.refreshIfDue();
+        assertThat(service.convertFromVnd(BigDecimal.TEN)).isEmpty();
+    }
+
+    @Test
+    void mockExchangeRateWsdl_isServedNextToTheStoreWsdl() throws Exception {
+        HttpResponse<String> wsdl = get(null, null, "/ws/exchangeRate.wsdl");
+
+        assertThat(wsdl.statusCode()).isEqualTo(200);
+        assertThat(wsdl.body()).contains("GetExchangeRateRequest", "urn:foodsndrinks:exchange-rate");
+    }
+
+    private SoapProperties.ExchangeRate exchangeRateProperties(String username, String password) {
+        return new SoapProperties.ExchangeRate(url("/ws"), username, password, Duration.ofSeconds(3),
+                Duration.ofSeconds(3), Duration.ofMinutes(10), Duration.ofMinutes(1), new SoapProperties.MockEndpoint(true));
+    }
+
+    /** Client dựng bằng đúng factory của production, trỏ vào endpoint mock trên cổng của test. */
+    private ExchangeRateSoapClient soapClient(String username, String password) {
+        return WebServiceClientConfig.exchangeRateSoapClient(exchangeRateProperties(username, password), messageFactory);
     }
 
     // -------------------------------------------------------

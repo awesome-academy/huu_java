@@ -139,6 +139,60 @@ Mọi response có header `X-Request-Id` — gửi kèm khi báo lỗi để tra
 - **SoapUI / Postman:** tạo project từ WSDL `http://localhost:8080/ws/foodsndrinks.wsdl`, đặt *Authorization → Basic* với tài khoản của app. Địa chỉ service trong WSDL tự theo host bạn dùng để tải WSDL (đúng cả sau reverse proxy).
 - Kiểm tra nhanh xác thực: `curl -i -X POST http://localhost:8080/ws` → `401` + `WWW-Authenticate`.
 
+## SOAP Client — Tỷ Giá Trên Dashboard
+
+Ngoài vai trò server, app còn là **SOAP client**: gọi một dịch vụ tỷ giá bên ngoài để hiển thị **doanh thu quy đổi USD** trên thẻ "Doanh thu" của dashboard admin (`/admin`).
+
+| | |
+|---|---|
+| **Hợp đồng** | [`src/main/resources/xsd/exchange-rate.xsd`](../../src/main/resources/xsd/exchange-rate.xsd), namespace `urn:foodsndrinks:exchange-rate` — `GetExchangeRateRequest{baseCurrency, quoteCurrency}` → `{baseCurrency, quoteCurrency, rate, asOf}` (1 `base` = `rate` `quote`) |
+| **Client** | `service/soap/ExchangeRateSoapClient` (`WebServiceTemplate`, dựng ở `config/WebServiceClientConfig`) |
+| **Cache + quy đổi** | `service/soap/ExchangeRateService` (trong bộ nhớ từng instance), job nền `ExchangeRateRefreshJob` |
+| **Endpoint mock** | `controller/soap/ExchangeRateMockEndpoint` + `MockExchangeRateService` — "dịch vụ bên ngoài" giả cho local/demo, WSDL `/ws/exchangeRate.wsdl` |
+
+**Cấu hình** (`app.soap.exchange-rate.*`, xem bảng biến môi trường trong [README](../../README.md#biến-môi-trường)):
+
+| Biến | Ý nghĩa |
+|---|---|
+| `SOAP_EXCHANGE_RATE_URL` | Địa chỉ dịch vụ. **Để trống = tắt tính năng** (app không gọi đi đâu, dashboard không nhắc tới tỷ giá). Chỉ `http`/`https`, phải có host, không kèm `user:pass@` — sai thì app không khởi động |
+| `SOAP_EXCHANGE_RATE_USERNAME` / `_PASSWORD` | HTTP Basic của dịch vụ (trống = không gửi `Authorization`) |
+| `SOAP_MOCK_ENDPOINT_ENABLED` | Bật endpoint tỷ giá giả. Mặc định `false`; profile `dev` (kể cả container `app` của compose) mặc định `true`; `prod` **luôn** tắt |
+
+**Bật ở local:** đăng ký một tài khoản trong app rồi đặt vào `.env` (endpoint mock nằm dưới `/ws` nên cũng yêu cầu HTTP Basic):
+
+```properties
+SOAP_EXCHANGE_RATE_URL=http://localhost:8080/ws
+SOAP_EXCHANGE_RATE_USERNAME=<username đã đăng ký>
+SOAP_EXCHANGE_RATE_PASSWORD=<mật khẩu>
+```
+
+Khởi động lại app; sau ~15 giây thẻ "Doanh thu" hiện thêm `≈ 1,234.50 USD` và `Tỷ giá 1 USD = 25.400 đ, lấy lúc 09:05 28/11`.
+
+**Cách hoạt động — và vì sao:**
+
+- **Request dashboard không bao giờ gọi SOAP.** Trang chỉ đọc tỷ giá đang giữ trong bộ nhớ; job nền (mỗi 30 giây kiểm tra "đã tới lúc chưa") gọi dịch vụ mỗi `cache-ttl` = **10 phút**. Nếu trang tự gọi khi cache hết hạn thì dịch vụ chậm sẽ giữ thread của người dùng tới hết timeout.
+- **Timeout** kết nối và đọc đều **3 giây**; không theo redirect (redirect có thể đưa request kèm tài khoản sang host khác).
+- **Dịch vụ lỗi / quá thời gian / sai tài khoản** → log `WARN` *"Không lấy được tỷ giá USD/VND từ dịch vụ SOAP (<mã lý do>)…"*, thử lại sau `retry-after-failure` (1 phút). Tỷ giá cũ còn được dùng tới 2 × `cache-ttl` (kèm thời điểm lấy); quá hạn thì thẻ ghi **"Không lấy được tỷ giá"**. Trang dashboard luôn hiển thị bình thường.
+- **Response không được tin:** phải đúng XSD, đúng cặp tiền đã hỏi, tỷ giá dương, mốc thời gian có múi giờ và không ở tương lai; XML có `<!DOCTYPE>` bị từ chối (chống XXE). Thông điệp lỗi của máy chủ bên kia (fault string, body) không đi vào log — chỉ có mã lý do của app: `TIMEOUT_OR_IO`, `HTTP_ERROR`, `SOAP_FAULT`, `INVALID_RESPONSE`, `WRONG_CURRENCY_PAIR`…
+- **URL và tài khoản chỉ đến từ cấu hình**, không tham số nào của người dùng đổi được đích gọi (chống SSRF).
+- **Nhiều instance:** mỗi instance tự giữ tỷ giá của mình (không ShedLock, không DB) — hai instance có thể lệch nhau vài phút, thời điểm lấy luôn hiển thị kèm.
+
+Gọi thử endpoint mock:
+
+```bash
+curl -s -u alice:'mat-khau-cua-alice' http://localhost:8080/ws \
+  -H 'Content-Type: text/xml; charset=utf-8' \
+  -d '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+        <soapenv:Body>
+          <GetExchangeRateRequest xmlns="urn:foodsndrinks:exchange-rate">
+            <baseCurrency>USD</baseCurrency><quoteCurrency>VND</quoteCurrency>
+          </GetExchangeRateRequest>
+        </soapenv:Body>
+      </soapenv:Envelope>'
+```
+
+Tỷ giá giả dao động ±0,5% quanh 25.400 đ/USD và đổi mỗi giờ (cùng một giờ thì mọi lần gọi trả cùng một số). Cặp tiền hỗ trợ: USD, EUR, JPY, VND; cặp khác → Fault `Client` `Invalid request`.
+
 ## Quy Ước Khi Thêm Operation
 
 1. **Sửa XSD trước** (`<Tên>Request` / `<Tên>Response`): ràng buộc dữ liệu vào bằng kiểu XSD (khoảng giá trị, enum, độ dài). Chỉ **thêm** phần tử tuỳ chọn vào message đã có — client đang chạy validate theo WSDL cũ.

@@ -1,6 +1,7 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.SoapProperties;
+import com.huuhv.foodsndrinks.controller.soap.ExchangeRateMockEndpoint;
 import com.huuhv.foodsndrinks.controller.soap.StoreEndpoint;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
@@ -12,6 +13,7 @@ import org.w3c.dom.Document;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,16 +40,20 @@ class WebServiceConfigTest {
     }
 
     @Test
-    void endpointNamespace_isTheTargetNamespaceOfTheContract() throws Exception {
+    void endpointNamespaces_areTheTargetNamespacesOfTheContracts() throws Exception {
+        assertThat(targetNamespaceOf("xsd/foodsndrinks.xsd")).isEqualTo(StoreEndpoint.NAMESPACE);
+        assertThat(targetNamespaceOf("xsd/exchange-rate.xsd")).isEqualTo(ExchangeRateMockEndpoint.NAMESPACE);
+    }
+
+    private static String targetNamespaceOf(String xsdPath) throws Exception {
         // Parser chỉ đọc file của chính app trên classpath; vẫn tắt DTD/external entity theo quy tắc chung
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
         factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
         factory.setNamespaceAware(true);
-        try (InputStream xsd = new ClassPathResource("xsd/foodsndrinks.xsd").getInputStream()) {
+        try (InputStream xsd = new ClassPathResource(xsdPath).getInputStream()) {
             Document schema = factory.newDocumentBuilder().parse(xsd);
-
-            assertThat(schema.getDocumentElement().getAttribute("targetNamespace")).isEqualTo(StoreEndpoint.NAMESPACE);
+            return schema.getDocumentElement().getAttribute("targetNamespace");
         }
     }
 
@@ -58,8 +64,12 @@ class WebServiceConfigTest {
 
     @Test
     void maxRequestSize_mustStayBetween1KbAnd1Mb() {
-        assertThat(new SoapProperties(DataSize.ofKilobytes(64)).maxRequestSize().toBytes()).isEqualTo(64 * 1024);
-        assertThatIllegalArgumentException().isThrownBy(() -> new SoapProperties(DataSize.ofBytes(512)));
-        assertThatIllegalArgumentException().isThrownBy(() -> new SoapProperties(DataSize.ofMegabytes(2)));
+        SoapProperties.ExchangeRate exchangeRate = new SoapProperties.ExchangeRate("", "", "", Duration.ofSeconds(3),
+                Duration.ofSeconds(3), Duration.ofMinutes(10), Duration.ofMinutes(1), new SoapProperties.MockEndpoint(false));
+
+        assertThat(new SoapProperties(DataSize.ofKilobytes(64), exchangeRate).maxRequestSize().toBytes())
+                .isEqualTo(64 * 1024);
+        assertThatIllegalArgumentException().isThrownBy(() -> new SoapProperties(DataSize.ofBytes(512), exchangeRate));
+        assertThatIllegalArgumentException().isThrownBy(() -> new SoapProperties(DataSize.ofMegabytes(2), exchangeRate));
     }
 }

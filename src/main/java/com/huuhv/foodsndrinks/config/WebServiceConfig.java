@@ -1,10 +1,12 @@
 package com.huuhv.foodsndrinks.config;
 
 import com.huuhv.foodsndrinks.config.properties.SoapProperties;
+import com.huuhv.foodsndrinks.controller.soap.ExchangeRateMockEndpoint;
 import com.huuhv.foodsndrinks.controller.soap.SoapMessageReceiverAdapter;
 import com.huuhv.foodsndrinks.controller.soap.StoreEndpoint;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -59,7 +61,11 @@ public class WebServiceConfig implements WsConfigurer {
     public static final String FAULT_INTERNAL = "Internal error";
     public static final String FAULT_VALIDATION = "Validation error";
 
+    /** Tên bean của WSDL dịch vụ tỷ giá MOCK: {@code /ws/exchangeRate.wsdl} (chỉ khi endpoint mock bật). */
+    public static final String EXCHANGE_RATE_WSDL = "exchangeRate";
+
     private static final Resource STORE_XSD = new ClassPathResource("xsd/foodsndrinks.xsd");
+    private static final Resource EXCHANGE_RATE_XSD = new ClassPathResource("xsd/exchange-rate.xsd");
 
     @Bean
     public XsdSchema storeSchema() {
@@ -74,6 +80,19 @@ public class WebServiceConfig implements WsConfigurer {
         wsdl.setTargetNamespace(StoreEndpoint.NAMESPACE);
         wsdl.setLocationUri(SoapProperties.PATH);
         wsdl.setSchema(storeSchema);
+        return wsdl;
+    }
+
+    /** WSDL của endpoint tỷ giá mock — chỉ tồn tại cùng endpoint đó (dev/compose); prod không công bố hợp đồng này. */
+    @Bean(name = EXCHANGE_RATE_WSDL)
+    @ConditionalOnBooleanProperty(SoapProperties.ExchangeRate.MOCK_ENDPOINT_ENABLED)
+    public DefaultWsdl11Definition exchangeRateWsdl() {
+        DefaultWsdl11Definition wsdl = new DefaultWsdl11Definition();
+        wsdl.setPortTypeName("ExchangeRatePort");
+        wsdl.setServiceName("ExchangeRateService");
+        wsdl.setTargetNamespace(ExchangeRateMockEndpoint.NAMESPACE);
+        wsdl.setLocationUri(SoapProperties.PATH);
+        wsdl.setSchema(loadedSchema(EXCHANGE_RATE_XSD));
         return wsdl;
     }
 
@@ -97,7 +116,20 @@ public class WebServiceConfig implements WsConfigurer {
 
     @Override
     public void addInterceptors(List<EndpointInterceptor> interceptors) {
-        interceptors.add(validatingInterceptor(STORE_XSD));
+        // Một interceptor cho mọi hợp đồng của /ws: payload phải khớp MỘT trong các XSD này (kể cả khi endpoint mock tắt —
+        // khi đó request tỷ giá hợp lệ về XSD nhưng không có endpoint nào nhận)
+        interceptors.add(validatingInterceptor(STORE_XSD, EXCHANGE_RATE_XSD));
+    }
+
+    /** {@link SimpleXsdSchema} không phải bean thì phải tự gọi {@code afterPropertiesSet()} (nạp file XSD). */
+    private static SimpleXsdSchema loadedSchema(Resource xsd) {
+        SimpleXsdSchema schema = new SimpleXsdSchema(xsd);
+        try {
+            schema.afterPropertiesSet();
+        } catch (Exception ex) {
+            throw new IllegalStateException("Cannot load the SOAP XSD schema", ex);
+        }
+        return schema;
     }
 
     /** Thêm XSD (vd. của một service khác) = truyền thêm resource vào đây. */

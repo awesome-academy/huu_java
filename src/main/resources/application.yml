@@ -181,6 +181,24 @@ app:
   soap:
     # Body tối đa của một request tới /ws/** (1KB–1MB). Lớn hơn → 413, không parse. Request hợp lệ chỉ vài trăm byte.
     max-request-size: 64KB
+    # SOAP CLIENT: dịch vụ tỷ giá bên ngoài (hợp đồng xsd/exchange-rate.xsd) — dashboard admin hiện doanh thu quy đổi USD.
+    # service/soap/ExchangeRateService giữ tỷ giá trong bộ nhớ; job nền làm mới, request không bao giờ gọi SOAP.
+    exchange-rate:
+      # Để trống = TẮT tính năng (app không gọi đi đâu, dashboard không nhắc tới tỷ giá). Chỉ http/https.
+      # Local: http://localhost:8080/ws (endpoint mock của chính app) + tài khoản của một user đã đăng ký
+      url: ${SOAP_EXCHANGE_RATE_URL:}
+      # HTTP Basic của dịch vụ. Không đặt mật khẩu thật làm giá trị mặc định — khai báo trong .env / biến môi trường
+      username: ${SOAP_EXCHANGE_RATE_USERNAME:}
+      password: ${SOAP_EXCHANGE_RATE_PASSWORD:}
+      connect-timeout: 3s
+      read-timeout: 3s
+      cache-ttl: 10m           # dùng tỷ giá đã lấy trong 10 phút; quá 2 × giá trị này mà chưa lấy lại được → "không có tỷ giá"
+      retry-after-failure: 1m  # sau một lần lỗi, chờ bấy lâu mới gọi lại
+      refresh-initial-delay: 15s  # job nền: lượt đầu sau khi app khởi động
+      refresh-interval: 30s       # job nền: chu kỳ kiểm tra "đã tới lúc lấy lại chưa" (không phải chu kỳ gọi SOAP)
+      mock-endpoint:
+        # Endpoint tỷ giá GIẢ do chính app phục vụ ở /ws (cũng cần HTTP Basic). Mặc định tắt; dev bật; prod luôn tắt
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:false}
   cors:
     # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
     # Không chấp nhận '*' (app không khởi động).
