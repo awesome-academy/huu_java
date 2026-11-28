@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.exception.ExcelFileException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.logging.LogSanitizer;
 import com.huuhv.foodsndrinks.repository.ImportJobRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
@@ -16,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.core.JacksonException;
@@ -47,6 +49,7 @@ public class ImportJobService {
     private final ExcelUploadValidator uploadValidator;
     private final ImportFileStorage storage;
     private final ImportJobRepository repository;
+    private final UserRepository userRepository;
     private final OutboxService outboxService;
     private final PlatformTransactionManager transactionManager;
     private final ExcelProperties properties;
@@ -54,9 +57,15 @@ public class ImportJobService {
     private final JsonMapper jsonMapper;
 
     /**
-     * Nhận một file upload: kiểm tra file (rẻ, không đọc nội dung), lưu vào thư mục tạm, rồi trong MỘT transaction tạo
-     * lần import {@code PENDING} và ghi message vào outbox — commit thì message chắc chắn được gửi lên queue
-     * {@code excel.import} (ngay, hoặc bởi job outbox nếu broker đang chết). Trả về ngay, không chờ xử lý file.
+     * Nhận một file upload: kiểm tra file (rẻ), lưu vào thư mục tạm, kiểm tra dung lượng giải nén trên file đã lưu, rồi
+     * trong MỘT transaction tạo lần import {@code PENDING} và ghi message vào outbox — commit thì message chắc chắn được
+     * gửi lên queue {@code excel.import} (ngay, hoặc bởi job outbox nếu broker đang chết). Trả về ngay, không chờ xử lý
+     * file.
+     * <p>
+     * Giới hạn {@code app.excel.import.max-active-jobs-per-user}: kiểm tra nhanh trước khi lưu file (không ghi file của
+     * request chắc chắn bị từ chối), rồi kiểm tra lại trong transaction tạo lần import, SAU khi khoá dòng {@code users}
+     * của admin — các upload song song của cùng admin xếp hàng ở đó, nên không request nào đếm trước khi request kia
+     * commit (đếm rồi chèn không có khoá thì 10 request cùng lúc đều thấy "còn chỗ").
      *
      * @param username username của admin đang đăng nhập
      * @return id lần import
@@ -64,10 +73,7 @@ public class ImportJobService {
      */
     public long submit(MultipartFile upload, String username) {
         uploadValidator.validate(upload);
-        int limit = properties.imports().maxActiveJobsPerUser();
-        if (repository.countUnfinishedByCreatedBy(username) >= limit) {
-            throw new ExcelFileException("Bạn đang có " + limit + " file chờ xử lý. Hãy đợi các file đó xong rồi thử lại!");
-        }
+        requireFreeSlot(username);
 
         String storedFile;
         try {
@@ -78,7 +84,15 @@ public class ImportJobService {
         String fileName = displayName(upload.getOriginalFilename());
         Long id;
         try {
-            id = new TransactionTemplate(transactionManager).execute(status -> {
+            uploadValidator.validateContent(storage.resolve(storedFile));
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            // Đếm sau khi có khoá phải thấy lần import vừa commit của request đứng trước
+            transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            id = transaction.execute(status -> {
+                if (userRepository.lockIdByUsername(username).isEmpty()) {
+                    throw new ExcelFileException("Không tìm thấy tài khoản của bạn. Hãy đăng nhập lại!");
+                }
+                requireFreeSlot(username);
                 ImportJob job = repository.save(ImportJob.builder()
                         .fileName(fileName).storedFile(storedFile).createdBy(username).build());
                 outboxService.enqueue(OutboxType.EXCEL_IMPORT, new ExcelImportMessage(job.getId()));
@@ -91,6 +105,13 @@ public class ImportJobService {
         }
         auditLogService.productImportSubmitted(id, fileName);
         return id;
+    }
+
+    private void requireFreeSlot(String username) {
+        int limit = properties.imports().maxActiveJobsPerUser();
+        if (repository.countUnfinishedByCreatedBy(username) >= limit) {
+            throw new ExcelFileException("Bạn đang có " + limit + " file chờ xử lý. Hãy đợi các file đó xong rồi thử lại!");
+        }
     }
 
     /** @throws ResourceNotFoundException không có lần import {@code id} */

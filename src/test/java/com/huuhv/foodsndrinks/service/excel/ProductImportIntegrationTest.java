@@ -7,6 +7,7 @@ import com.huuhv.foodsndrinks.dto.response.ProductImportResDto;
 import com.huuhv.foodsndrinks.entity.Category;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.enums.ProductType;
+import com.huuhv.foodsndrinks.exception.ImportNameConflictException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
@@ -188,10 +189,40 @@ class ProductImportIntegrationTest {
 
             // Dòng 1 thêm được, dòng 2 cập nhật một sản phẩm không còn tồn tại
             assertThatExceptionOfType(ResourceNotFoundException.class).isThrownBy(() -> productService.applyImport(List.of(
-                    new ProductImportCommand(null, valid),
-                    new ProductImportCommand(Long.MAX_VALUE, valid))));
+                    new ProductImportCommand(2, null, valid),
+                    new ProductImportCommand(3, Long.MAX_VALUE, valid))));
 
             assertThat(productRepository.findImportMatchesByName("Ghi dở " + uid)).isEmpty();
+        } finally {
+            categoryRepository.delete(foods);
+        }
+    }
+
+    /**
+     * Hai dòng mà collation MySQL coi là một tên nhưng bước kiểm tra trùng trong file (xấp xỉ collation) không bắt được —
+     * "ß" = "ss" với {@code utf8mb4_0900_ai_ci}. Lúc ghi phải nhận ra đó là trùng TRONG file (lỗi dòng, không giao lại),
+     * không phải dữ liệu vừa đổi; cả file rollback.
+     */
+    @Test
+    void twoNewRowsThatMySqlConsidersTheSameName_failAtTheSecondRow_andNothingIsSaved() {
+        Category foods = categoryRepository.save(newCategory("Trùng ẩn " + uid));
+        try {
+            String first = "Strasse " + uid;
+            String second = "Straße " + uid;
+            ProductImportPlan plan = importService.plan(ExcelTestFiles.write(directory, productWorkbook(
+                    row("Bánh " + uid, foods.getName(), "Đồ ăn", 1000, null, "Có"),
+                    row(first, foods.getName(), "Đồ ăn", 2000, null, "Có"),
+                    row(second, foods.getName(), "Đồ ăn", 3000, null, "Có"))));
+            assertThat(plan.hasErrors()).as("validator không bắt được cặp tên này").isFalse();
+
+            assertThatExceptionOfType(ImportNameConflictException.class)
+                    .isThrownBy(() -> productService.applyImport(plan.commands()))
+                    .satisfies(conflict -> {
+                        assertThat(conflict.getRow()).isEqualTo(4);
+                        assertThat(conflict.getConflictingRow()).isEqualTo(3);
+                    });
+            assertThat(productRepository.findImportMatchesByName("Bánh " + uid)).isEmpty();
+            assertThat(productRepository.findImportMatchesByName(first)).isEmpty();
         } finally {
             categoryRepository.delete(foods);
         }

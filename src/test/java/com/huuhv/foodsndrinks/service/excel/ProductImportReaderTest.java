@@ -1,17 +1,28 @@
 package com.huuhv.foodsndrinks.service.excel;
 
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
+import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.openxml4j.opc.PackageAccess;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
+import java.util.function.UnaryOperator;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.productWorkbook;
 import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.row;
@@ -156,9 +167,47 @@ class ProductImportReaderTest {
         assertThatExceptionOfType(ExcelFileException.class)
                 .isThrownBy(() -> reader.read(notExcel))
                 .withMessage("Không đọc được file Excel. Hãy tải file mẫu, nhập dữ liệu rồi thử lại!");
+    }
+
+    @Test
+    void textThatIsNotValidUtf8InsideTheWorkbook_isAFileError_notASystemError() throws IOException {
+        // Byte 0xE0 đứng một mình: không phải UTF-8 hợp lệ — parser XML báo bằng một IOException (CharConversionException)
+        // hoặc SAXParseException; cả hai đều là lỗi của file, giao lại cũng hỏng y vậy
+        byte[] broken = withEntry(productWorkbook(row("Trà đào", "Đồ uống", "Đồ uống", 35000, null, "Có")),
+                "xl/sharedStrings.xml", xml -> replace(xml, "Trà đào", new byte[]{'T', 'r', (byte) 0xE0, ' '}));
+
         assertThatExceptionOfType(ExcelFileException.class)
-                .isThrownBy(() -> reader.read(directory.resolve("missing.xlsx")))
+                .isThrownBy(() -> read(broken))
                 .withMessageStartingWith("Không đọc được file Excel");
+    }
+
+    @Test
+    void ioErrorWhileReadingTheFile_isASystemError_soTheMessageIsRedelivered_notBlamedOnTheFile() {
+        // File biến mất / volume mạng lỗi giữa chừng: không phải lỗi của file admin tải lên
+        assertThatExceptionOfType(UncheckedIOException.class)
+                .isThrownBy(() -> reader.read(directory.resolve("missing.xlsx")));
+    }
+
+    @Test
+    void phoneticGuideOfJapaneseText_isNotAppendedToTheCellValue() throws IOException {
+        // IME tiếng Nhật lưu phần phiên âm (furigana) cạnh chữ trong sharedStrings: <t>寿司 Sushi</t><rPh>…スシ…</rPh>
+        byte[] withPhonetics = withEntry(productWorkbook(row("寿司 Sushi", "Đồ ăn", "Đồ ăn", 90000, null, "Có")),
+                "xl/sharedStrings.xml", xml -> replace(xml, "<t>寿司 Sushi</t>",
+                        "<t>寿司 Sushi</t><rPh sb=\"0\" eb=\"2\"><t>スシ</t></rPh>".getBytes(StandardCharsets.UTF_8)));
+        Path file = ExcelTestFiles.write(directory, withPhonetics);
+        // Tiền đề: bảng sharedStrings của POI mặc định nối phần phiên âm vào giá trị
+        try (OPCPackage pkg = OPCPackage.open(file.toFile(), PackageAccess.READ)) {
+            ReadOnlySharedStringsTable withDefaults = new ReadOnlySharedStringsTable(pkg);
+            List<String> strings = new java.util.ArrayList<>();
+            for (int i = 0; i < withDefaults.getUniqueCount(); i++) {
+                strings.add(withDefaults.getItemAt(i).getString());
+            }
+            assertThat(strings).contains("寿司 Sushi スシ");
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+
+        assertThat(reader.read(file)).singleElement().extracting(ProductImportRow::name).isEqualTo("寿司 Sushi");
     }
 
     @Test
@@ -176,6 +225,42 @@ class ProductImportReaderTest {
         assertThatExceptionOfType(ExcelFileException.class)
                 .isThrownBy(() -> read(content))
                 .withMessageStartingWith("File không đúng mẫu");
+    }
+
+    /** Chép lại file zip, thay nội dung của một entry. */
+    private static byte[] withEntry(byte[] xlsx, String entryName, UnaryOperator<byte[]> change) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        boolean found = false;
+        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(xlsx));
+             ZipOutputStream zip = new ZipOutputStream(out)) {
+            for (ZipEntry entry; (entry = in.getNextEntry()) != null; ) {
+                byte[] content = in.readAllBytes();
+                if (entry.getName().equals(entryName)) {
+                    content = change.apply(content);
+                    found = true;
+                }
+                zip.putNextEntry(new ZipEntry(entry.getName()));
+                zip.write(content);
+                zip.closeEntry();
+            }
+        }
+        assertThat(found).as("entry %s", entryName).isTrue();
+        return out.toByteArray();
+    }
+
+    private static byte[] replace(byte[] content, String target, byte[] replacement) {
+        byte[] wanted = target.getBytes(StandardCharsets.UTF_8);
+        for (int i = 0; i + wanted.length <= content.length; i++) {
+            if (Arrays.equals(content, i, i + wanted.length, wanted, 0, wanted.length)) {
+                byte[] result = new byte[content.length - wanted.length + replacement.length];
+                System.arraycopy(content, 0, result, 0, i);
+                System.arraycopy(replacement, 0, result, i, replacement.length);
+                System.arraycopy(content, i + wanted.length, result, i + replacement.length,
+                        content.length - i - wanted.length);
+                return result;
+            }
+        }
+        throw new AssertionError("\"" + target + "\" not found");
     }
 
     private static void header(Sheet sheet) {

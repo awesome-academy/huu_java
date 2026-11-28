@@ -97,7 +97,7 @@ public class ProductImportValidator {
         }
         List<ProductImportCommand> commands = candidates.stream()
                 .filter(candidate -> !candidate.unchanged)
-                .map(candidate -> new ProductImportCommand(candidate.existingId, candidate.product))
+                .map(candidate -> new ProductImportCommand(candidate.rowNumber, candidate.existingId, candidate.product))
                 .toList();
         int unchanged = candidates.size() - commands.size();
         return new ProductImportPlan(rows.size(), commands, unchanged, List.of());

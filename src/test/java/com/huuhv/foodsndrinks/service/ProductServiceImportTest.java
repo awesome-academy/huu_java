@@ -6,6 +6,7 @@ import com.huuhv.foodsndrinks.entity.Category;
 import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.enums.ProductType;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
+import com.huuhv.foodsndrinks.exception.ImportNameConflictException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
@@ -59,8 +60,8 @@ class ProductServiceImportTest {
         when(productImageRepository.findByProductIdOrderBySortOrderAsc(7L)).thenReturn(List.of());
 
         productService.applyImport(List.of(
-                new ProductImportCommand(null, product("Trà đào", "35000", "Trà đào cam sả", true)),
-                new ProductImportCommand(7L, product("Cơm tấm", "45000", null, false))));
+                new ProductImportCommand(2, null, product("Trà đào", "35000", "Trà đào cam sả", true)),
+                new ProductImportCommand(3, 7L, product("Cơm tấm", "45000", null, false))));
 
         ArgumentCaptor<Product> saved = ArgumentCaptor.forClass(Product.class);
         verify(productRepository, times(2)).save(saved.capture());
@@ -88,10 +89,32 @@ class ProductServiceImportTest {
     @Test
     void applyImport_nameTakenSinceValidation_fails_soTheCallerRollsBackTheWholeFile() {
         when(productRepository.existsByName("Trà đào")).thenReturn(true);
+        // Sản phẩm trùng tên có từ trước, không phải do lần import này tạo
+        when(productRepository.findImportMatchesByName("Trà đào")).thenReturn(List.of(match(99L, "Trà Đào")));
 
         assertThatExceptionOfType(DuplicateResourceException.class).isThrownBy(() -> productService.applyImport(List.of(
-                new ProductImportCommand(null, product("Trà đào", "35000", null, true)))));
+                new ProductImportCommand(2, null, product("Trà đào", "35000", null, true)))));
         verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void applyImport_newRowClashingWithARowCreatedEarlierInTheSameFile_isReportedAsThatRowsError() {
+        when(categoryRepository.findById(10L)).thenReturn(Optional.of(drinks));
+        // MySQL coi "Trà sữa" và "Trà sữa​" (ký tự ẩn) là một tên; validator thì không
+        when(productRepository.existsByName("Trà sữa")).thenReturn(false);
+        when(productRepository.existsByName("Trà sữa​")).thenReturn(true);
+        when(productRepository.findImportMatchesByName("Trà sữa​")).thenReturn(List.of(match(1L, "Trà sữa")));
+
+        assertThatExceptionOfType(ImportNameConflictException.class)
+                .isThrownBy(() -> productService.applyImport(List.of(
+                        new ProductImportCommand(2, null, product("Trà sữa", "30000", null, true)),
+                        new ProductImportCommand(5, null, product("  Trà sữa​ ", "31000", null, true)))))
+                .satisfies(conflict -> {
+                    assertThat(conflict.getRow()).isEqualTo(5);
+                    assertThat(conflict.getConflictingRow()).isEqualTo(2);
+                    // Thông điệp (có thể bị log) không chứa tên sản phẩm
+                    assertThat(conflict.getMessage()).doesNotContain("Trà");
+                });
     }
 
     @Test
@@ -99,7 +122,11 @@ class ProductServiceImportTest {
         when(productRepository.findById(7L)).thenReturn(Optional.empty());
 
         assertThatExceptionOfType(ResourceNotFoundException.class).isThrownBy(() -> productService.applyImport(List.of(
-                new ProductImportCommand(7L, product("Cơm tấm", "45000", null, true)))));
+                new ProductImportCommand(2, 7L, product("Cơm tấm", "45000", null, true)))));
+    }
+
+    private static ProductImportMatch match(Long id, String name) {
+        return new ProductImportMatch(id, name, 10L, ProductType.DRINK, new BigDecimal("30000"), null, true);
     }
 
     @Test

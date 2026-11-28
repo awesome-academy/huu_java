@@ -1,9 +1,11 @@
 package com.huuhv.foodsndrinks.service.excel;
 
+import com.huuhv.foodsndrinks.dto.response.ImportRowErrorResDto;
 import com.huuhv.foodsndrinks.dto.response.ProductImportResDto;
 import com.huuhv.foodsndrinks.entity.ImportJob;
 import com.huuhv.foodsndrinks.enums.ImportJobStatus;
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
+import com.huuhv.foodsndrinks.exception.ImportNameConflictException;
 import com.huuhv.foodsndrinks.repository.ImportJobRepository;
 import com.huuhv.foodsndrinks.service.ProductService;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
@@ -15,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Xử lý một lần import Excel (gọi từ consumer của queue {@code excel.import}): nhận việc → đọc + validate file → ghi.
@@ -28,8 +31,9 @@ import java.nio.file.Path;
  *       nên lần giao lại được phép chạy lại; hai lần chạy song song thì lần sau chờ khoá, thấy trạng thái đã đổi và không
  *       ghi gì.</li>
  * </ol>
- * <b>Lỗi nào thì giao lại:</b> lỗi của nội dung file (dòng lỗi, sai mẫu…) là kết quả cuối — ghi {@code FAILED} và trả về
- * bình thường (ack). Lỗi hệ thống (DB, không thấy file trên instance này) được ném ra → broker giao lại, quá số lần thì
+ * <b>Lỗi nào thì giao lại:</b> lỗi của nội dung file (dòng lỗi, sai mẫu, hai dòng thêm mới mà MySQL coi là cùng tên…) là
+ * kết quả cuối — ghi {@code FAILED} và trả về bình thường (ack). Lỗi hệ thống (DB, I/O khi đọc file, không thấy file trên
+ * instance này) được ném ra → broker giao lại, quá số lần thì
  * vào DLQ ({@code ExcelImportDlqListener} ghi {@code FAILED}). Dữ liệu đổi giữa lúc validate và lúc ghi cũng được ném ra:
  * lần giao lại validate trên dữ liệu mới.
  * <p>
@@ -41,6 +45,11 @@ import java.nio.file.Path;
 public class ImportJobProcessor {
 
     static final String UNEXPECTED_DATA = "Không import được file vì dữ liệu không hợp lệ. Kiểm tra lại file rồi thử lại!";
+
+    static String nameConflictMessage(int conflictingRow) {
+        return "Trùng tên với dòng " + conflictingRow + " trong file (hệ thống coi hai tên là một — có thể chúng chỉ khác"
+                + " nhau ở ký tự ẩn hoặc cách viết đặc biệt). Hãy đổi tên một trong hai dòng!";
+    }
 
     private final ImportJobRepository repository;
     private final ImportFileStorage storage;
@@ -90,6 +99,15 @@ public class ImportJobProcessor {
                 productService.applyImport(plan.commands());
                 return true;
             }));
+        } catch (ImportNameConflictException conflict) {
+            // Hai dòng thêm mới mà MySQL coi là cùng tên (validator chỉ so xấp xỉ collation): giao lại cũng trùng như vậy
+            // → lỗi ở đúng dòng đó, kết thúc luôn
+            log.info("Import job #{} failed while writing: row {} duplicates row {}", jobId, conflict.getRow(),
+                    conflict.getConflictingRow());
+            ImportRowErrorResDto error = new ImportRowErrorResDto(conflict.getRow(), ProductExcelColumns.NAME,
+                    nameConflictMessage(conflict.getConflictingRow()));
+            finishFailed(job, plan.totalRows(), 1, jsonMapper.writeValueAsString(List.of(error)), null);
+            return;
         } catch (IllegalArgumentException invalid) {
             // Dữ liệu lọt qua validate nhưng bị tầng ghi từ chối: giao lại cũng cho cùng kết quả → kết thúc luôn
             log.error("Import job #{} was rejected while writing", jobId, invalid);

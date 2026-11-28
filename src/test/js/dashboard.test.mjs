@@ -71,9 +71,10 @@ test("order event: reloads after the debounce and updates the KPI with the serve
     assert.strictEqual(kpi.textContent, "5");
 });
 
+// Instance cũ (rolling deploy) chưa có activeOrders, hoặc giá trị lạ: biểu đồ vẫn vẽ, KPI giữ số đang hiện
 for (const [name, value] of [["missing", undefined], ["a string", "7"], ["negative", -1], ["fractional", 1.5]]) {
-    test(`activeOrders ${name}: keeps the previous KPI and shows the error box`, async () => {
-        const {kpi, errorBox, document} = setup([payload(4), payload(value)]);
+    test(`activeOrders ${name}: charts are still updated, the KPI keeps its value, no error box`, async () => {
+        const {kpi, errorBox, document, charts} = setup([payload(4), payload(value)]);
         await flush();
 
         document.dispatchEvent({type: "admin:realtime-resync", detail: {initial: false}});
@@ -81,6 +82,29 @@ for (const [name, value] of [["missing", undefined], ["a string", "7"], ["negati
         await flush();
 
         assert.strictEqual(kpi.textContent, "4");
-        assert.strictEqual(errorBox.hidden, false);
+        assert.strictEqual(errorBox.hidden, true);
+        assert.deepStrictEqual(charts.map(chart => chart.updates), [1, 1]);
     });
 }
+
+test("first payload without activeOrders: charts are drawn and the server-rendered KPI stays", async () => {
+    const {kpi, errorBox, charts} = setup([payload(undefined)]);
+    await flush();
+
+    assert.strictEqual(kpi.textContent, "3");
+    assert.strictEqual(errorBox.hidden, true);
+    assert.strictEqual(charts.length, 2);
+});
+
+test("payload without chart arrays: keeps the previous charts and shows the error box", async () => {
+    const {kpi, errorBox, document, charts} = setup([payload(4), {activeOrders: 9}]);
+    await flush();
+
+    document.dispatchEvent({type: "admin:realtime-resync", detail: {initial: false}});
+    mock.timers.tick(1000);
+    await flush();
+
+    assert.strictEqual(kpi.textContent, "4");
+    assert.strictEqual(errorBox.hidden, false);
+    assert.deepStrictEqual(charts.map(chart => chart.updates), [0, 0]);
+});

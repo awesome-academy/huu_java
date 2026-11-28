@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.entity.ImportJob;
 import com.huuhv.foodsndrinks.enums.ImportJobStatus;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
+import com.huuhv.foodsndrinks.exception.ImportNameConflictException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.ImportJobRepository;
 import com.huuhv.foodsndrinks.service.ProductService;
@@ -24,6 +25,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -64,9 +67,9 @@ class ImportJobProcessorTest {
 
     private ImportJobProcessor processor;
     private final List<ProductImportCommand> commands = List.of(
-            new ProductImportCommand(null, new ProductReqDto()),
-            new ProductImportCommand(null, new ProductReqDto()),
-            new ProductImportCommand(5L, new ProductReqDto()));
+            new ProductImportCommand(2, null, new ProductReqDto()),
+            new ProductImportCommand(3, null, new ProductReqDto()),
+            new ProductImportCommand(4, 5L, new ProductReqDto()));
     private final ProductImportPlan validPlan = new ProductImportPlan(6, commands, 3, List.of());
 
     @BeforeEach
@@ -212,9 +215,48 @@ class ImportJobProcessorTest {
         verifyNoInteractions(auditLogService);
     }
 
+    @Test
+    void twoNewRowsTheDatabaseConsidersTheSameName_failTheJobWithThatRowsError_insteadOfBeingRedelivered() {
+        claimed();
+        fileExists();
+        when(importService.plan(FILE)).thenReturn(validPlan);
+        when(repository.complete(JOB_ID, 6, 2, 1, 3)).thenReturn(1);
+        doThrow(new ImportNameConflictException(3, 2, new DuplicateResourceException("Tên sản phẩm đã tồn tại!")))
+                .when(productService).applyImport(commands);
+        ArgumentCaptor<String> errorsJson = ArgumentCaptor.forClass(String.class);
+        when(repository.fail(eq(JOB_ID), eq(6), eq(1), errorsJson.capture(), isNull())).thenReturn(1);
+
+        processor.process(JOB_ID);
+
+        InOrder order = inOrder(transactionManager, repository);
+        order.verify(transactionManager).rollback(any());
+        order.verify(repository).fail(eq(JOB_ID), eq(6), eq(1), any(), isNull());
+        JsonNode stored = JsonMapper.builder().build().readTree(errorsJson.getValue());
+        assertThat(stored.size()).isEqualTo(1);
+        assertThat(stored.get(0).get("row").asInt()).isEqualTo(3);
+        assertThat(stored.get(0).get("column").asString()).isEqualTo("Tên");
+        assertThat(stored.get(0).get("message").asString()).isEqualTo(ImportJobProcessor.nameConflictMessage(2));
+        verify(storage).delete(STORED);
+        verifyNoInteractions(auditLogService);
+    }
+
     // -------------------------------------------------------
     // Ném lỗi → broker giao lại
     // -------------------------------------------------------
+
+    @Test
+    void ioErrorWhileReadingTheFile_isRethrown_andTheJobAndFileAreKept() {
+        claimed();
+        fileExists();
+        when(importService.plan(FILE)).thenThrow(new UncheckedIOException("Could not read import file",
+                new IOException("Stale file handle")));
+
+        assertThatExceptionOfType(UncheckedIOException.class).isThrownBy(() -> processor.process(JOB_ID));
+
+        verify(repository, never()).fail(anyLong(), anyInt(), anyInt(), any(), any());
+        verify(storage, never()).delete(any());
+        verifyNoInteractions(productService, auditLogService);
+    }
 
     @Test
     void dataChangedBetweenValidationAndWrite_isRethrown_soRedeliveryValidatesAgain() {

@@ -133,7 +133,7 @@ class ProductImportServiceTest {
     }
 
     private static ProductImportCommand command(Long productId) {
-        return new ProductImportCommand(productId, new ProductReqDto());
+        return new ProductImportCommand(2, productId, new ProductReqDto());
     }
 
     private static Category category(String name) {

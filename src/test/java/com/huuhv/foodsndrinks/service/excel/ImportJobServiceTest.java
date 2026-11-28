@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.enums.ImportJobStatus;
 import com.huuhv.foodsndrinks.exception.ExcelFileException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.ImportJobRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
@@ -20,9 +21,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -46,10 +49,12 @@ import static org.mockito.Mockito.when;
 class ImportJobServiceTest {
 
     private static final String STORED = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.xlsx";
+    private static final Path STORED_PATH = Path.of("import-tmp", STORED);
 
     @Mock private ExcelUploadValidator uploadValidator;
     @Mock private ImportFileStorage storage;
     @Mock private ImportJobRepository repository;
+    @Mock private UserRepository userRepository;
     @Mock private OutboxService outboxService;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private AuditLogService auditLogService;
@@ -59,8 +64,8 @@ class ImportJobServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ImportJobService(uploadValidator, storage, repository, outboxService, transactionManager,
-                ExcelTestFiles.properties(), auditLogService, JsonMapper.builder().build());
+        service = new ImportJobService(uploadValidator, storage, repository, userRepository, outboxService,
+                transactionManager, ExcelTestFiles.properties(), auditLogService, JsonMapper.builder().build());
     }
 
     // -------------------------------------------------------
@@ -70,6 +75,8 @@ class ImportJobServiceTest {
     @Test
     void submit_storesTheFile_thenCreatesThePendingJobAndItsOutboxMessageInOneTransaction() throws IOException {
         when(storage.store(file)).thenReturn(STORED);
+        when(storage.resolve(STORED)).thenReturn(STORED_PATH);
+        when(userRepository.lockIdByUsername("admin")).thenReturn(Optional.of(1L));
         when(repository.save(any())).thenAnswer(invocation -> {
             ImportJob job = invocation.getArgument(0);
             job.setId(42L);
@@ -79,11 +86,16 @@ class ImportJobServiceTest {
         assertThat(service.submit(file, "admin")).isEqualTo(42L);
 
         ArgumentCaptor<ImportJob> saved = ArgumentCaptor.forClass(ImportJob.class);
-        InOrder order = inOrder(uploadValidator, storage, transactionManager, repository, outboxService,
-                auditLogService);
+        ArgumentCaptor<TransactionDefinition> transaction = ArgumentCaptor.forClass(TransactionDefinition.class);
+        InOrder order = inOrder(uploadValidator, storage, transactionManager, userRepository, repository,
+                outboxService, auditLogService);
         order.verify(uploadValidator).validate(file);
+        order.verify(repository).countUnfinishedByCreatedBy("admin");   // kiểm tra nhanh, chưa lưu file
         order.verify(storage).store(file);
-        order.verify(transactionManager).getTransaction(any());
+        order.verify(uploadValidator).validateContent(STORED_PATH);     // dung lượng giải nén, trên file đã lưu
+        order.verify(transactionManager).getTransaction(transaction.capture());
+        order.verify(userRepository).lockIdByUsername("admin");         // khoá trước khi đếm lại
+        order.verify(repository).countUnfinishedByCreatedBy("admin");
         order.verify(repository).save(saved.capture());
         order.verify(outboxService).enqueue(OutboxType.EXCEL_IMPORT, new ExcelImportMessage(42L));
         order.verify(transactionManager).commit(any());
@@ -93,12 +105,59 @@ class ImportJobServiceTest {
         assertThat(saved.getValue().getCreatedBy()).isEqualTo("admin");
         // Trạng thái và các số đếm lấy default của DB (PENDING, 0)
         assertThat(saved.getValue().getStatus()).isNull();
+        // Đếm lại sau khi có khoá phải thấy lần import vừa commit của request đứng trước
+        assertThat(transaction.getValue().getIsolationLevel())
+                .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
         verify(storage, never()).delete(any());
+    }
+
+    @Test
+    void submit_limitReachedByAConcurrentUploadOfTheSameAdmin_isRejectedInsideTheTransaction_andTheFileDeleted()
+            throws IOException {
+        when(storage.store(file)).thenReturn(STORED);
+        when(userRepository.lockIdByUsername("admin")).thenReturn(Optional.of(1L));
+        // Lúc kiểm tra nhanh còn chỗ; request song song commit trước khi request này có khoá → hết chỗ
+        when(repository.countUnfinishedByCreatedBy("admin")).thenReturn(2L, 3L);
+
+        assertThatExceptionOfType(ExcelFileException.class).isThrownBy(() -> service.submit(file, "admin"))
+                .withMessageStartingWith("Bạn đang có 3 file chờ xử lý");
+
+        verify(repository, never()).save(any());
+        verify(transactionManager).rollback(any());
+        verify(storage).delete(STORED);
+        verifyNoInteractions(outboxService, auditLogService);
+    }
+
+    @Test
+    void submit_accountNoLongerExists_isRejected_andTheFileDeleted() throws IOException {
+        when(storage.store(file)).thenReturn(STORED);
+        when(userRepository.lockIdByUsername("admin")).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(ExcelFileException.class).isThrownBy(() -> service.submit(file, "admin"));
+
+        verify(repository, never()).save(any());
+        verify(storage).delete(STORED);
+    }
+
+    @Test
+    void submit_contentRejectedAfterStoring_deletesTheFile_withoutCreatingAJob() throws IOException {
+        when(storage.store(file)).thenReturn(STORED);
+        when(storage.resolve(STORED)).thenReturn(STORED_PATH);
+        doThrow(new ExcelFileException(ExcelUploadValidator.TOO_LARGE_UNCOMPRESSED))
+                .when(uploadValidator).validateContent(STORED_PATH);
+
+        assertThatExceptionOfType(ExcelFileException.class).isThrownBy(() -> service.submit(file, "admin"))
+                .withMessage(ExcelUploadValidator.TOO_LARGE_UNCOMPRESSED);
+
+        verify(storage).delete(STORED);
+        verifyNoInteractions(transactionManager, userRepository, outboxService, auditLogService);
+        verify(repository, never()).save(any());
     }
 
     @Test
     void submit_keepsOnlyADisplayNameOfTheClientFileName() throws IOException {
         when(storage.store(any())).thenReturn(STORED);
+        when(userRepository.lockIdByUsername("admin")).thenReturn(Optional.of(1L));
         when(repository.save(any())).thenAnswer(invocation -> {
             ImportJob job = invocation.getArgument(0);
             job.setId(1L);
@@ -137,6 +196,7 @@ class ImportJobServiceTest {
     @Test
     void submit_transactionFailure_deletesTheStoredFile_soNoOrphanIsLeft() throws IOException {
         when(storage.store(file)).thenReturn(STORED);
+        when(userRepository.lockIdByUsername("admin")).thenReturn(Optional.of(1L));
         when(repository.save(any())).thenThrow(new IllegalStateException("db down"));
 
         assertThatIllegalStateException().isThrownBy(() -> service.submit(file, "admin"));

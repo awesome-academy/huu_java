@@ -5,10 +5,14 @@ import com.huuhv.foodsndrinks.dto.response.ImportJobResDto;
 import com.huuhv.foodsndrinks.dto.response.ImportRowErrorResDto;
 import com.huuhv.foodsndrinks.entity.Category;
 import com.huuhv.foodsndrinks.entity.ImportJob;
+import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.ImportJobStatus;
+import com.huuhv.foodsndrinks.enums.Role;
+import com.huuhv.foodsndrinks.exception.ExcelFileException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ImportJobRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
 import com.huuhv.foodsndrinks.service.messaging.AbstractMessagingIntegrationTest;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
@@ -22,6 +26,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.productWorkbook;
 import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.row;
@@ -43,6 +53,7 @@ class ExcelImportIntegrationTest extends AbstractMessagingIntegrationTest {
     @Autowired private ImportFileStorage storage;
     @Autowired private ProductRepository productRepository;
     @Autowired private CategoryRepository categoryRepository;
+    @Autowired private UserRepository userRepository;
 
     private final String uid = UUID.randomUUID().toString().substring(0, 8);
     private final String admin = "admin-" + uid;
@@ -50,7 +61,10 @@ class ExcelImportIntegrationTest extends AbstractMessagingIntegrationTest {
     private Category category;
 
     @BeforeEach
-    void createCategory() {
+    void createAdminAndCategory() {
+        // submit khoá dòng users của người tải lên → tài khoản phải tồn tại như khi đăng nhập thật
+        userRepository.save(User.builder().username(admin).email(admin + "@example.com").fullName("Import Test")
+                .role(Role.ROLE_ADMIN).isActive(true).build());
         category = categoryRepository.save(Category.builder().name("Đồ uống " + uid).slug("import-" + uid).build());
     }
 
@@ -63,6 +77,7 @@ class ExcelImportIntegrationTest extends AbstractMessagingIntegrationTest {
             importJobRepository.findById(id).ifPresent(job -> storage.delete(job.getStoredFile()));
             jdbcTemplate.update("DELETE FROM import_jobs WHERE id = ?", id);
         }
+        jdbcTemplate.update("DELETE FROM users WHERE username = ?", admin);
     }
 
     @Test
@@ -186,11 +201,74 @@ class ExcelImportIntegrationTest extends AbstractMessagingIntegrationTest {
                     .storedFile(UUID.randomUUID() + ".xlsx").createdBy(admin).build()).getId());
         }
 
-        org.assertj.core.api.Assertions.assertThatExceptionOfType(
-                        com.huuhv.foodsndrinks.exception.ExcelFileException.class)
+        org.assertj.core.api.Assertions.assertThatExceptionOfType(ExcelFileException.class)
                 .isThrownBy(() -> importJobService.submit(upload("san-pham.xlsx", productWorkbook(
                         row("Trà đào " + uid, category.getName(), "Đồ uống", 35000, null, "Có"))), admin))
                 .withMessageStartingWith("Bạn đang có 3 file chờ xử lý");
+    }
+
+    /**
+     * Nhiều upload cùng lúc của cùng một admin khi chỉ còn MỘT chỗ: kiểm tra nhanh ngoài transaction đều thấy "còn
+     * chỗ", nhưng lần đếm lại sau khi khoá dòng users chỉ để đúng một request qua.
+     */
+    @Test
+    void concurrentUploadsOfTheSameAdmin_neverGoBeyondTheLimit() throws Exception {
+        // 2 lần import chưa kết thúc (không có message → không ai xử lý chúng) → còn đúng 1 chỗ trong giới hạn 3
+        for (int i = 0; i < 2; i++) {
+            jobIds.add(importJobRepository.save(ImportJob.builder().fileName("cho.xlsx")
+                    .storedFile(UUID.randomUUID() + ".xlsx").createdBy(admin).build()).getId());
+        }
+        byte[] content = productWorkbook(row("Song song " + uid, category.getName(), "Đồ uống", 35000, null, "Có"));
+        int uploads = 6;
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(uploads);
+        List<Long> accepted = new ArrayList<>();
+        int rejected = 0;
+        try {
+            List<Future<Long>> results = new ArrayList<>();
+            for (int i = 0; i < uploads; i++) {
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return importJobService.submit(upload("san-pham.xlsx", content), admin);
+                }));
+            }
+            start.countDown();
+            for (Future<Long> result : results) {
+                try {
+                    accepted.add(result.get(30, TimeUnit.SECONDS));
+                } catch (ExecutionException e) {
+                    assertThat(e.getCause()).isInstanceOf(ExcelFileException.class)
+                            .hasMessageStartingWith("Bạn đang có 3 file chờ xử lý");
+                    rejected++;
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+            jobIds.addAll(accepted);
+        }
+
+        assertThat(accepted).hasSize(1);
+        assertThat(rejected).isEqualTo(uploads - 1);
+        // Để consumer xử lý xong trước khi dọn dữ liệu
+        awaitFinished(accepted.getFirst());
+    }
+
+    @Test
+    void twoNewRowsThatMySqlConsidersTheSameName_failAtTheSecondRow_insteadOfGoingToTheDeadLetterQueue() {
+        // "ß" = "ss" với collation của cột; bước kiểm tra trùng trong file không bắt được
+        long id = submit(productWorkbook(
+                row("Strasse " + uid, category.getName(), "Đồ uống", 10000, null, "Có"),
+                row("Straße " + uid, category.getName(), "Đồ uống", 20000, null, "Có")));
+
+        ImportJobResDto failed = awaitFinished(id);
+
+        assertThat(failed.status()).isEqualTo(ImportJobStatus.FAILED);
+        assertThat(failed.errorCount()).isEqualTo(1);
+        assertThat(failed.errors()).containsExactly(
+                new ImportRowErrorResDto(3, "Tên", ImportJobProcessor.nameConflictMessage(2)));
+        assertThat(productRepository.findImportMatchesByName("Strasse " + uid)).isEmpty();
+        // Kết quả cuối ngay lần giao đầu: message được ack, không giao lại tới DLQ
+        assertThat(outboxStatus(id)).isEqualTo("SENT");
     }
 
     private long submit(byte[] content) {

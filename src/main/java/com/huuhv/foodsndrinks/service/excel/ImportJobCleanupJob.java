@@ -31,7 +31,8 @@ public class ImportJobCleanupJob {
     private final ExcelProperties properties;
 
     @Scheduled(initialDelay = 2, fixedDelay = 5, timeUnit = TimeUnit.MINUTES)
-    @SchedulerLock(name = "importJobFailStale", lockAtMostFor = "10m")
+    // Job chạy rất nhanh: giữ khoá gần hết chu kỳ để instance có lịch lệch vài giây không chạy lại ngay sau đó
+    @SchedulerLock(name = "importJobFailStale", lockAtMostFor = "10m", lockAtLeastFor = "4m")
     public void failStaleJobs() {
         try {
             int failed = importJobService.failStale();

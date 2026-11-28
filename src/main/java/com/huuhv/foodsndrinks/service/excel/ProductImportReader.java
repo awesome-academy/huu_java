@@ -22,13 +22,16 @@ import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 
 import javax.xml.parsers.ParserConfigurationException;
+import java.io.CharConversionException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.zip.ZipException;
 
 /**
  * Đọc file import sản phẩm (.xlsx theo file mẫu) thành các {@link ProductImportRow} thô — chỉ đọc, không validate dữ liệu.
@@ -51,10 +54,12 @@ public class ProductImportReader {
     private final ExcelProperties properties;
 
     /**
-     * @param file file .xlsx trên đĩa (đã qua {@link ExcelUploadValidator})
+     * @param file file .xlsx trên đĩa (đã qua {@link ExcelUploadValidator}, kể cả bước kiểm tra nội dung zip)
      * @return các dòng có dữ liệu, theo thứ tự trong file (dòng trống bị bỏ qua)
-     * @throws ExcelFileException file không mở được, sai mẫu (dòng tiêu đề), không có dòng dữ liệu, hoặc nhiều hơn
-     *                            {@code app.excel.import.max-rows} dòng
+     * @throws ExcelFileException   nội dung file không dùng được: không phải workbook, sai mẫu (dòng tiêu đề), không có
+     *                              dòng dữ liệu, hoặc nhiều hơn {@code app.excel.import.max-rows} dòng — kết quả cuối
+     * @throws UncheckedIOException lỗi I/O khi đọc file (ổ đĩa/volume mạng chập chờn, file biến mất...) — lỗi hệ thống,
+     *                              người gọi để nó thoát ra để broker giao lại message; không bao giờ đổ lỗi cho file
      */
     public List<ProductImportRow> read(Path file) {
         RowCollector collector = new RowCollector(properties.imports().maxRows());
@@ -66,25 +71,55 @@ public class ProductImportReader {
             }
             try (InputStream sheet = sheets.next()) {
                 XMLReader parser = XMLHelper.newXMLReader();
+                // false: không nối phần phiên âm (<rPh>, furigana do IME tiếng Nhật lưu kèm) vào giá trị ô —
+                // "寿司" phải đọc ra "寿司", không phải "寿司 スシ"
                 parser.setContentHandler(new XSSFSheetXMLHandler(reader.getStylesTable(), null,
-                        new ReadOnlySharedStringsTable(pkg), collector, new RawNumberFormatter(), false));
+                        new ReadOnlySharedStringsTable(pkg, false), collector, new RawNumberFormatter(), false));
                 parser.parse(new InputSource(sheet));
             }
         } catch (OpenXML4JException | SAXException | ParserConfigurationException | IOException
                  | RuntimeException e) {
-            // Lỗi do chính bộ đọc ném trong lúc SAX đang parse (sai mẫu, quá số dòng) — có thể đã bị parser bọc lại
-            for (Throwable cause = e; cause != null; cause = cause.getCause()) {
-                if (cause instanceof ExcelFileException rejected) {
-                    throw rejected;
-                }
-            }
-            // POI ném nhiều loại lỗi (kể cả unchecked) cho file hỏng/không phải workbook/zip bomb. Chỉ ghi loại lỗi ở
-            // WARN: thông điệp của thư viện có thể chứa nội dung file
-            log.warn("Rejected unreadable import file: {}", e.getClass().getName());
-            log.debug("Unreadable import file", e);
-            throw new ExcelFileException(UNREADABLE, e);
+            throw classify(e);
         }
         return collector.rows();
+    }
+
+    /**
+     * Phân loại lỗi của POI/SAX. Lỗi I/O của hệ thống file (một {@link IOException} ở bất kỳ tầng cause nào — POI hay
+     * bọc lại, vd. {@code InvalidOperationException}) là lỗi hệ thống: file đã qua
+     * {@link ExcelUploadValidator#validateContent} lúc upload — đọc trọn mọi entry bằng cùng lớp zip với POI, kể cả giới
+     * hạn tỉ lệ nén — nên lỗi zip/zip bomb thật sự không tới được đây. Ngoại lệ là các {@code IOException} mô tả NỘI DUNG
+     * hỏng ({@link #isContentError}); chúng và mọi lỗi còn lại (XML sai, thiếu part của workbook, lỗi runtime của POI) là
+     * lỗi của file.
+     */
+    private static RuntimeException classify(Exception e) {
+        IOException io = null;
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            // Lỗi do chính bộ đọc ném trong lúc SAX đang parse (sai mẫu, quá số dòng) — có thể đã bị parser bọc lại
+            if (cause instanceof ExcelFileException rejected) {
+                return rejected;
+            }
+            if (io == null && cause instanceof IOException found && !isContentError(found)) {
+                io = found;
+            }
+        }
+        if (io != null) {
+            log.warn("I/O error while reading import file, will be retried: {}", io.getClass().getName());
+            return new UncheckedIOException("Could not read import file", io);
+        }
+        // Chỉ ghi loại lỗi ở WARN: thông điệp của thư viện có thể chứa nội dung file
+        log.warn("Rejected unreadable import file: {}", e.getClass().getName());
+        log.debug("Unreadable import file", e);
+        return new ExcelFileException(UNREADABLE, e);
+    }
+
+    /**
+     * {@code IOException} do dữ liệu hỏng chứ không do hệ thống file: zip sai cấu trúc ({@link ZipException} — kể cả các
+     * lớp con của commons-compress; POI cũng gặp nó khi file không phải zip) và byte không đúng bảng mã của XML
+     * ({@link CharConversionException} — Xerces báo UTF-8 sai bằng lớp con của nó). Giao lại cũng hỏng y như vậy.
+     */
+    private static boolean isContentError(IOException e) {
+        return e instanceof ZipException || e instanceof CharConversionException;
     }
 
     /** Ô số luôn trả về dạng số thô như Excel lưu ({@code 35000}, {@code 0.5}), bỏ qua định dạng hiển thị ("35,000 ₫"). */

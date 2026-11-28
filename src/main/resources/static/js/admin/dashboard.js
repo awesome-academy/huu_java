@@ -173,15 +173,16 @@
     function render(data) {
         if (!data || !isPairOfArrays(data.monthLabels, data.monthRevenues)
                 || !isPairOfArrays(data.statusLabels, data.statusCounts)
-                || !isPairOfArrays(data.topProductLabels, data.topProductQuantities)
-                || !Number.isSafeInteger(data.activeOrders) || data.activeOrders < 0) {
+                || !isPairOfArrays(data.topProductLabels, data.topProductQuantities)) {
             throw new Error("Unexpected chart payload");
         }
         upsert("revenue", revenueCanvas, revenueConfig, data.monthLabels, data.monthRevenues);
         upsert("status", statusCanvas, statusConfig, data.statusLabels, data.statusCounts);
         renderStatusList(data.statusLabels, data.statusCounts);
         renderTopProducts(data.topProductLabels, data.topProductQuantities);
-        if (activeOrders) {
+        // Field thêm sau (hợp đồng JSON chỉ thêm field): JSON của instance cũ không có nó trong lúc rolling deploy →
+        // giữ số đang hiện, không chặn phần biểu đồ
+        if (activeOrders && Number.isSafeInteger(data.activeOrders) && data.activeOrders >= 0) {
             activeOrders.textContent = String(data.activeOrders);
         }
     }

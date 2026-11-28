@@ -8,6 +8,7 @@ import com.huuhv.foodsndrinks.entity.Product;
 import com.huuhv.foodsndrinks.entity.ProductImage;
 import com.huuhv.foodsndrinks.enums.ProductType;
 import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
+import com.huuhv.foodsndrinks.exception.ImportNameConflictException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.CategoryRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
@@ -221,18 +222,50 @@ public class ProductService {
      * đúng {@link #createProduct} / {@link #updateProduct} của form admin (cùng kiểm tra trùng tên, sinh slug) — không ghi
      * thẳng repository. Ảnh của sản phẩm không bị đụng tới.
      *
-     * @throws DuplicateResourceException hoặc {@link ResourceNotFoundException} khi dữ liệu đã đổi kể từ lúc validate
-     *                                    (sản phẩm cùng tên vừa được tạo, sản phẩm/danh mục vừa bị xoá) → rollback cả file
+     * @throws ImportNameConflictException hai dòng thêm mới của CÙNG file mà MySQL coi là cùng một tên — lỗi của file,
+     *                                     ghi lại cũng trùng như vậy
+     * @throws DuplicateResourceException  hoặc {@link ResourceNotFoundException} khi dữ liệu đã đổi kể từ lúc validate
+     *                                     (sản phẩm cùng tên vừa được tạo ở nơi khác, sản phẩm/danh mục vừa bị xoá) →
+     *                                     rollback cả file; validate lại trên dữ liệu mới sẽ ra kết quả khác
      */
     @Transactional
     public void applyImport(List<ProductImportCommand> commands) {
+        // Tên đã lưu (đúng chuỗi) của các sản phẩm vừa tạo trong lần import này → dòng đã tạo ra nó
+        Map<String, Integer> createdRowByName = new HashMap<>();
         for (ProductImportCommand command : commands) {
-            if (command.isCreate()) {
-                createProduct(command.product(), null, 0);
-            } else {
+            if (!command.isCreate()) {
                 updateProduct(command.productId(), command.product(), null, null, null);
+                continue;
+            }
+            try {
+                createProduct(command.product(), null, 0);
+            } catch (DuplicateResourceException duplicate) {
+                Integer earlierRow = rowCreatedWithSameName(command, createdRowByName);
+                if (earlierRow == null) {
+                    throw duplicate; // trùng một sản phẩm có từ trước: dữ liệu vừa đổi
+                }
+                throw new ImportNameConflictException(command.row(), earlierRow, duplicate);
+            }
+            createdRowByName.put(normalizeName(command.product().getName()), command.row());
+        }
+    }
+
+    /**
+     * Sản phẩm mà {@link #createProduct} coi là trùng tên có phải do chính lần import này vừa tạo không. Hỏi lại MySQL
+     * (cùng collation với kiểm tra trùng tên) thay vì so trong Java: bước kiểm tra trùng trong file của validator chỉ xấp
+     * xỉ collation nên mới lọt tới đây.
+     *
+     * @return dòng của file đã tạo sản phẩm đó, {@code null} nếu là sản phẩm có từ trước
+     */
+    private Integer rowCreatedWithSameName(ProductImportCommand command, Map<String, Integer> createdRowByName) {
+        for (ProductImportMatch match : productRepository.findImportMatchesByName(
+                normalizeName(command.product().getName()))) {
+            Integer row = createdRowByName.get(match.name());
+            if (row != null) {
+                return row;
             }
         }
+        return null;
     }
 
     @Transactional
