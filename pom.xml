@@ -338,6 +338,10 @@
 				<configuration>
 					<nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
 					<failBuildOnCVSS>7</failBuildOnCVSS>
+					<!-- Danh sách "Known Exploited Vulnerabilities" của CISA: URL mặc định của plugin (www.cisa.gov) trả
+					     403 cho client tự động → cả lần quét bị tính là lỗi dù phân tích xong. Dùng bản CISA tự công bố
+					     trên GitHub (repo cisagov/kev-data, cùng nội dung). -->
+					<knownExploitedUrl>https://raw.githubusercontent.com/cisagov/kev-data/main/known_exploited_vulnerabilities.json</knownExploitedUrl>
 					<formats>
 						<format>HTML</format>
 						<format>JSON</format>

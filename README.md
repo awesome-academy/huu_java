@@ -17,9 +17,14 @@ Mock project website bán đồ ăn & thức uống, xây dựng bằng Spring B
 - **Database:** MySQL 8 + Spring Data JPA / Hibernate
 - **Migration:** Flyway (`src/main/resources/db/migration`)
 - **View:** Thymeleaf + Thymeleaf Layout Dialect, Bootstrap 5, Vanilla JS
-- **Security:** Spring Security — Form Login + OAuth2 (Google/Facebook/Twitter) cho Web, JWT (jjwt 0.12) cho API
+- **Security:** Spring Security — Form Login + OAuth2 (Google/Facebook/Twitter) cho Web, JWT (jjwt 0.12) cho API, HTTP Basic cho SOAP; session HTTP lưu trong MySQL (Spring Session JDBC) để chạy nhiều instance
 - **Messaging:** JMS (Jakarta Messaging) với Apache Artemis 2.57 (trước đây là ActiveMQ Artemis) — broker embedded ở dev/test, broker riêng ở compose/prod
-- **Khác:** Lombok, ModelMapper, Caffeine Cache, Spring Mail (Mailtrap), Slack Incoming Webhook, springdoc-openapi 3.x (Swagger UI), Actuator
+- **Realtime:** WebSocket + STOMP (`@stomp/stompjs` qua WebJar), Chart.js
+- **SOAP:** Spring-WS 5 (contract-first, class JAXB sinh từ XSD) — server `/ws` và client `WebServiceTemplate`
+- **Excel:** Apache POI 5 (export streaming SXSSF, import SAX)
+- **Job nền:** `@Scheduled` + `@Async` trên `ThreadPoolTaskExecutor`, ShedLock (một instance chạy job)
+- **Test:** JUnit 5, Mockito, MockMvc, Testcontainers (MySQL), spring-ws-test, JaCoCo; unit test JS bằng `node:test`
+- **Khác:** Lombok, ModelMapper, Caffeine Cache, Spring Mail (Mailtrap), Slack Incoming Webhook, springdoc-openapi 3.x (Swagger UI), Actuator, Logback (MDC `requestId`, audit log), OWASP Dependency-Check
 
 ## Prerequisites
 
@@ -93,7 +98,9 @@ docker compose down                  # Dừng tất cả (thêm -v để xoá c�
 | Loại | Ví dụ | Cần |
 |---|---|---|
 | Unit test Mockito (`@ExtendWith(MockitoExtension.class)`) | `OrderServiceTest`, `UserServiceTest` | — |
-| Test slice `@WebMvcTest` + 3 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Test slice `@WebMvcTest` + 4 filter chain thật (`@SecuredWebMvcTest`) | `CartControllerTest`, `OrderAdminControllerTest`, `ProductApiControllerTest` | — |
+| Test slice SOAP `@WebServiceServerTest` + `MockWebServiceClient` | `StoreEndpointTest`, `ExchangeRateMockEndpointTest` | — |
+| Test trên Tomcat thật (`@IntegrationTest(webEnvironment = RANDOM_PORT)`) | `WebSocketIntegrationTest`, `MultiInstanceRealtimeIntegrationTest`, `SoapHttpIntegrationTest` | Docker |
 | Integration test `@IntegrationTest` (= `@SpringBootTest` + Testcontainers + profile `test`, tag `integration`) | `AuthProductApiTest`, `FoodsndrinksApplicationTests` | Docker |
 
 Integration test chạy trên **MySQL 8.4 do Testcontainers tạo** (`TestcontainersConfiguration`, `@ServiceConnection`) — không đụng database dev, không cần `DB_USERNAME`/`DB_PASSWORD`. Test chỉ chạy với profile `test` (không bật `dev`), nên không dùng datasource, `JWT_SECRET` hay `REMEMBER_ME_KEY` trong `.env`. Không dùng `@SpringBootTest` trần (`IntegrationTestConventionTest` fail). Một container dùng chung cho cả lần chạy, bị xoá khi test kết thúc; mỗi test vẫn rollback bằng `@Transactional`. Lần chạy đầu tải image `mysql:8.4`.
@@ -108,15 +115,19 @@ Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.foodsndrinks`:
 
 ```
 src/main/java/com/huuhv/foodsndrinks/
-├── config/          # SecurityConfig, WebMvcConfig, AsyncConfig, SchedulerLockConfig (ShedLock), OpenApiConfig, AppConfig
+├── config/          # SecurityConfig (4 filter chain), WebMvcConfig, AsyncConfig, SchedulerLockConfig (ShedLock), JmsConfig,
+│   │                # WebSocketConfig, SessionStoreConfig (Spring Session JDBC), WebServiceConfig (SOAP), ExcelConfig...
+│   └── properties/  # Record @ConfigurationProperties (app.*)
 ├── controller/
 │   ├── admin/       # Controller trang quản trị (SSR)  → docs/admin/README.md
 │   ├── api/         # REST controller /api/v1/**       → docs/api/README.md
 │   ├── web/         # Controller storefront (SSR)      → docs/web/README.md
+│   ├── soap/        # Endpoint SOAP /ws (Spring-WS)    → docs/soap/README.md
 │   └── GlobalErrorController.java  # Xử lý lỗi dispatch cấp servlet (/error)
 ├── dto/
 │   ├── request/     # DTO hứng dữ liệu vào (không dùng Entity cho View/API)
-│   └── response/    # DTO trả ra
+│   ├── response/    # DTO trả ra
+│   └── message/     # Payload message JMS (OrderPlacedMessage, ...)
 ├── entity/          # User, Product, ProductImage, Category, Order, OrderDetail, Rating, Suggestion
 ├── enums/           # Role, AuthProvider, CategoryType, ProductType, OrderStatus, SuggestionStatus
 ├── exception/       # AdminExceptionHandler, WebExceptionHandler, ApiExceptionHandler + custom exceptions
@@ -125,12 +136,19 @@ src/main/java/com/huuhv/foodsndrinks/
 ├── security/        # JwtUtil, JwtAuthenticationFilter, CustomUserDetailsService, OAuth2 user services, AuditingRememberMeServices, OAuth2LoginFailureHandler
 ├── service/         # Toàn bộ business logic (Controller chỉ gọi Service)
 │   ├── audit/         # AuditLogService (logger AUDIT), AuthenticationAuditListener
-│   └── notification/  # Slack/Email notification, order event listener, statistics scheduler
+│   ├── excel/         # Export/import Excel (Apache POI), import chạy nền qua queue JMS
+│   ├── messaging/     # Transactional Outbox, consumer JMS (email, Slack, WebSocket), DLQ listener
+│   ├── notification/  # Gửi Slack/Email, scheduler báo cáo tháng
+│   ├── security/      # Giới hạn đăng nhập sai, chính sách mật khẩu, trạng thái tài khoản (huỷ session)
+│   ├── soap/          # SOAP client tỷ giá (WebServiceTemplate), cache tỷ giá, tỷ giá mock
+│   └── websocket/     # Đẩy sự kiện STOMP, theo dõi/thu hồi kết nối WebSocket
 └── utils/           # SlugUtils, SecurityUtils...
 
 src/main/resources/
 ├── db/migration/    # Flyway migrations
-├── templates/       # Thymeleaf (admin/, web/, error/)
+├── xsd/             # Hợp đồng SOAP (contract-first) — class JAXB sinh lúc build vào target/generated-sources/jaxb
+├── artemis/         # broker.properties: address, retry, DLQ của broker JMS
+├── templates/       # Thymeleaf (admin/, web/, error/, mail/)
 ├── static/          # CSS, JS, images
 ├── application*.yml # Cấu hình theo profile
 └── logback-spring.xml # Appender/pattern log theo profile (dev: console + file, prod: thêm audit.log)
@@ -208,7 +226,15 @@ V20260624150760__create_table_ratings.sql
 V20260624150770__create_table_suggestions.sql
 V20260624150780__create_indexes.sql
 V20260702000001__alter_users_phone_nullable.sql
-V20261120090000__create_table_shedlock.sql      # khoá ShedLock cho job @Scheduled (nhiều instance)
+V20261120090000__create_table_shedlock.sql                # khoá ShedLock cho job @Scheduled (nhiều instance)
+V20261121100000__create_table_attempt_limits.sql          # bộ đếm chống brute-force dùng chung giữa các instance
+V20261123100000__create_table_notification_logs.sql       # chống gửi lặp thông báo đơn hàng (UNIQUE order_id, channel)
+V20261123110000__create_table_outbox_messages.sql         # Transactional Outbox
+V20261123120000__alter_outbox_messages_payload_text.sql
+V20261127100000__create_table_import_jobs.sql             # lần import Excel chạy nền
+V20261128100000__backfill_orders_ordered_at.sql           # đơn cũ thiếu ordered_at (thống kê theo ngày đặt)
+V20261128110000__add_users_password_changed_at.sql        # huỷ session khác khi đổi mật khẩu
+V20261128120000__create_table_spring_session.sql          # kho session HTTP dùng chung (Spring Session JDBC)
 ```
 
 Quy ước: tên bảng số nhiều (`users`, `products`...). **Không sửa migration đã chạy** — muốn đổi schema thì thêm file version mới.
@@ -340,6 +366,7 @@ export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
 
 - Lần đầu tải toàn bộ dữ liệu NVD (vài phút đến vài chục phút), các lần sau chỉ cập nhật phần thay đổi — cache ở `~/.m2/repository/org/owasp/dependency-check-data` (với Docker là volume `maven-repo`).
 - Build **fail khi có lỗ hổng CVSS ≥ 7**. Báo cáo: `target/dependency-check-report.html` (và `.json`).
+- Danh sách KEV (lỗ hổng đang bị khai thác) lấy từ bản CISA công bố trên GitHub (`knownExploitedUrl` trong `pom.xml`): URL mặc định của plugin ở `www.cisa.gov` trả 403 cho client tự động, làm lần quét bị tính là lỗi dù không có lỗ hổng nào.
 - Xử lý: ưu tiên nâng version (Spring Boot patch mới nhất, hoặc property version của BOM / WebJar trong `pom.xml`). Lỗ hổng chắc chắn không áp dụng thì thêm vào `dependency-check-suppressions.xml` kèm `<notes>` giải thích và hạn xem lại `until`.
 
 ## Monitoring
@@ -352,3 +379,4 @@ export NVD_API_KEY=...        # PowerShell: $env:NVD_API_KEY = "..."
 - 🔌 [API — REST API cho trang người dùng](docs/api/README.md)
 - 🛒 [Web — storefront người dùng](docs/web/README.md)
 - 🧼 [SOAP — web service cho hệ thống đối tác](docs/soap/README.md)
+- 🎬 [Kịch bản demo theo từng công nghệ](docs/demo.md)
