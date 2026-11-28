@@ -11,9 +11,8 @@ import java.time.Instant;
  * <p>
  * Là {@link HandshakeInterceptor}: lúc handshake, impl ghi vào attribute của {@link WebSocketSession} thông tin nó cần để
  * trả lời sau đó, và từ chối handshake không có session HTTP (người dùng đã đăng nhập luôn có session — kể cả đăng nhập
- * bằng remember-me). Impl hiện tại: {@link ServletHttpSessionLookup} (session nằm trong bộ nhớ Tomcat của instance).
- * Khi chuyển sang session dùng chung (Spring Session JDBC, issue #44) chỉ cần impl mới tra
- * {@code SessionRepository.findById(id)} — session có thể bị huỷ ở instance khác, nơi không có event nào báo về đây.
+ * bằng remember-me). Impl: {@link SpringSessionHttpSessionLookup} — tra kho session dùng chung giữa các instance
+ * (Spring Session JDBC); session có thể bị huỷ ở instance khác, nơi không có event nào báo về đây.
  */
 public interface HttpSessionLookup extends HandshakeInterceptor {
 

@@ -44,14 +44,30 @@ public final class BrowserSession {
     public static final Duration WAIT = Duration.ofSeconds(10);
 
     private final String baseUrl;
-    private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+    private final CookieManager cookies;
     private final HttpClient http;
     private String csrfToken;
     private String csrfHeader;
 
     private BrowserSession(int port) {
+        this(port, new CookieManager(null, CookiePolicy.ACCEPT_ALL));
+    }
+
+    private BrowserSession(int port, CookieManager cookies) {
         this.baseUrl = "http://localhost:" + port;
+        this.cookies = cookies;
         this.http = HttpClient.newBuilder().cookieHandler(cookies).followRedirects(HttpClient.Redirect.NEVER).build();
+    }
+
+    /**
+     * CÙNG trình duyệt này (chung cookie — cookie không phân biệt cổng — và token CSRF của trang đang mở) nhưng request đi
+     * tới instance khác: như load balancer không sticky chuyển request kế tiếp sang instance {@code port}.
+     */
+    public BrowserSession onInstance(int port) {
+        BrowserSession sameBrowser = new BrowserSession(port, cookies);
+        sameBrowser.csrfToken = csrfToken;
+        sameBrowser.csrfHeader = csrfHeader;
+        return sameBrowser;
     }
 
     /** Đăng nhập form ({@code POST /login}) rồi đọc token CSRF (đã mask) từ meta của trang chủ. */

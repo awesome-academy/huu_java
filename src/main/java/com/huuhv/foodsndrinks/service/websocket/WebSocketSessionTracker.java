@@ -8,8 +8,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.event.EventListener;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.web.session.HttpSessionDestroyedEvent;
-import org.springframework.security.web.session.HttpSessionIdChangedEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
@@ -23,7 +21,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -38,18 +35,15 @@ import java.util.concurrent.atomic.AtomicLong;
  * Gắn vào transport qua {@link WebSocketHandlerDecoratorFactory} ({@code config/WebSocketConfig}). Mỗi instance chỉ biết
  * socket của chính nó (đúng ý: chỉ instance giữ socket mới đóng được nó), nên job thu hồi chạy trên mọi instance.
  * <p>
- * Đường nhanh: {@link HttpSessionDestroyedEvent} (logout, session hết hạn, {@code AccountStatusFilter} huỷ session — cần
- * bean {@code HttpSessionEventPublisher}) đóng ngay socket gắn với session đó. Event chỉ phát ở instance giữ session và
- * không phát với Spring Session JDBC, nên job vẫn là nguồn chân lý.
- * <p>
- * Đăng nhập lại trong cùng trình duyệt (form/OAuth2, có thể là người khác) giữ nguyên object {@code HttpSession}, chỉ đổi
- * id ({@code ChangeSessionIdAuthenticationStrategy}) → {@link HttpSessionIdChangedEvent}: socket mở trước đó mang danh
- * tính lúc handshake, nên bị đóng; client nối lại bằng danh tính mới của session.
+ * Không có "đường nhanh" theo event của session HTTP: session nằm trong kho dùng chung (Spring Session JDBC), có thể kết
+ * thúc ở instance khác và kho JDBC không phát event nào — job hỏi lại kho session ({@link HttpSessionLookup}) mỗi chu kỳ.
+ * Logout, session hết hạn, {@code AccountStatusFilter} huỷ session, hay đăng nhập lại trong cùng trình duyệt (session đổi
+ * id — socket mở trước đó mang danh tính lúc handshake, id cũ không còn trong kho) đều dẫn tới cùng một kết quả: socket
+ * bị đóng trong ≤ một chu kỳ, client nối lại bằng danh tính hiện tại của session.
  * <p>
  * Một socket chỉ rời danh sách khi đã thật sự đóng ({@code afterConnectionClosed}). Socket đã bị thu hồi ({@link #revoke})
- * được đánh dấu {@link TrackedSession#revoked()}: đóng thất bại thì job đóng lại ở chu kỳ sau dù lý do thu hồi không còn
- * kiểm tra lại được (vd. đổi id session — object {@code HttpSession} vẫn sống, username vẫn hợp lệ), và lý do chỉ được
- * audit một lần ({@link #revoke} trả {@code true} đúng lần đầu).
+ * được đánh dấu {@link TrackedSession#revoked()}: đóng thất bại thì job đóng lại ở chu kỳ sau mà không kiểm tra lại lý do,
+ * và lý do chỉ được audit một lần ({@link #revoke} trả {@code true} đúng lần đầu).
  * <p>
  * Chống DoS: mỗi user tối đa {@code app.websocket.max-connections-per-user} kết nối trên instance này; kết nối vượt (hoặc
  * không có principal đã xác thực) bị đóng ngay và KHÔNG được chuyển cho handler STOMP — không tốn bộ nhớ/thread nào.
@@ -203,16 +197,6 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
         return first[0];
     }
 
-    @EventListener
-    public void onHttpSessionDestroyed(HttpSessionDestroyedEvent event) {
-        closeSocketsOf(event.getId(), "an ended HTTP session");
-    }
-
-    @EventListener
-    public void onHttpSessionIdChanged(HttpSessionIdChangedEvent event) {
-        closeSocketsOf(event.getOldSessionId(), "a re-authenticated HTTP session");
-    }
-
     /**
      * Đóng ({@link #RESYNC}) mọi socket mở TRƯỚC lúc subscription được tạo lại — socket mở sau đó đã resync sau thời
      * điểm này. Hai listener realtime thường tạo lại gần như cùng lúc (cùng recovery interval) → lần thứ hai không còn
@@ -277,19 +261,6 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
             return tracked.asResyncPending();
         });
         return marked[0];
-    }
-
-    private void closeSocketsOf(String httpSessionId, String reason) {
-        int closed = 0;
-        for (TrackedSession tracked : snapshot()) {
-            if (Objects.equals(tracked.httpSessionId(), httpSessionId)) {
-                revoke(tracked.session());
-                closed++;
-            }
-        }
-        if (closed > 0) {
-            log.debug("Closed {} WebSocket session(s) of {}", closed, reason);
-        }
     }
 
     /**

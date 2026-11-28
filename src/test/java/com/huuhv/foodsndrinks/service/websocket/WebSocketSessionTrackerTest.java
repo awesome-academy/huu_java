@@ -2,10 +2,7 @@ package com.huuhv.foodsndrinks.service.websocket;
 
 import com.huuhv.foodsndrinks.config.properties.WebSocketProperties;
 import org.junit.jupiter.api.Test;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.TestingAuthenticationToken;
-import org.springframework.security.web.session.HttpSessionDestroyedEvent;
-import org.springframework.security.web.session.HttpSessionIdChangedEvent;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
@@ -111,37 +108,6 @@ class WebSocketSessionTrackerTest {
     }
 
     @Test
-    void destroyedHttpSession_closesOnlyItsSockets() throws Exception {
-        WebSocketSession aliceTab1 = socket("ws-3", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
-        WebSocketSession aliceTab2 = socket("ws-4", "http-a", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
-        WebSocketSession bob = socket("ws-5", "http-b", new TestingAuthenticationToken("bob", "n/a", "ROLE_USER"));
-        decorated.afterConnectionEstablished(aliceTab1);
-        decorated.afterConnectionEstablished(aliceTab2);
-        decorated.afterConnectionEstablished(bob);
-
-        tracker.onHttpSessionDestroyed(new HttpSessionDestroyedEvent(new MockHttpSession(null, "http-a")));
-
-        verify(aliceTab1).close(WebSocketSessionTracker.REVOKED);
-        verify(aliceTab2).close(WebSocketSessionTracker.REVOKED);
-        verify(bob, never()).close(WebSocketSessionTracker.REVOKED);
-        assertThat(tracker.snapshot()).extracting(WebSocketSessionTracker.TrackedSession::username).containsExactly("bob");
-    }
-
-    @Test
-    void httpSessionIdChanged_byLoginInSameBrowser_closesSocketsOfOldId() throws Exception {
-        WebSocketSession admin = socket("ws-7", "http-old", new TestingAuthenticationToken("admin", "n/a", "ROLE_ADMIN"));
-        WebSocketSession other = socket("ws-8", "http-other", new TestingAuthenticationToken("bob", "n/a", "ROLE_USER"));
-        decorated.afterConnectionEstablished(admin);
-        decorated.afterConnectionEstablished(other);
-
-        tracker.onHttpSessionIdChanged(new HttpSessionIdChangedEvent(new MockHttpSession(null, "http-new"), "http-old"));
-
-        verify(admin).close(WebSocketSessionTracker.REVOKED);
-        verify(other, never()).close(any(CloseStatus.class));
-        assertThat(tracker.snapshot()).extracting(WebSocketSessionTracker.TrackedSession::username).containsExactly("bob");
-    }
-
-    @Test
     void failedClose_keepsSocketTracked_soNextCheckRetries() throws Exception {
         WebSocketSession socket = socket("ws-9", "http-9", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
         decorated.afterConnectionEstablished(socket);
@@ -157,20 +123,6 @@ class WebSocketSessionTrackerTest {
 
         assertThat(tracker.revoke(socket)).isFalse();
         verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
-    }
-
-    @Test
-    void failedCloseAfterSessionIdChange_staysMarkedRevoked_soJobCanRetry() throws Exception {
-        WebSocketSession socket = socket("ws-10", "http-old", new TestingAuthenticationToken("alice", "n/a", "ROLE_USER"));
-        decorated.afterConnectionEstablished(socket);
-        doThrow(new IllegalStateException("TEXT_FULL_WRITING")).when(socket).close(any(CloseStatus.class));
-
-        tracker.onHttpSessionIdChanged(new HttpSessionIdChangedEvent(new MockHttpSession(null, "http-new"), "http-old"));
-
-        // Object HttpSession vẫn sống và username vẫn hợp lệ: chỉ dấu thu hồi cho job biết phải đóng lại
-        assertThat(tracker.snapshot()).singleElement()
-                .extracting(WebSocketSessionTracker.TrackedSession::revoked).isEqualTo(true);
-        verify(delegate, never()).afterConnectionClosed(eq(socket), any());
     }
 
     @Test

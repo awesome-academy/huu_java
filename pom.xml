@@ -101,6 +101,13 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-messaging</artifactId>
         </dependency>
+        <!-- Session HTTP lưu trong MySQL (Spring Session JDBC, bảng SPRING_SESSION* do Flyway tạo): mọi instance sau load
+             balancer dùng chung session — không cần sticky, instance chết không làm user bị đăng xuất. Cấu hình:
+             config/SessionStoreConfig (pool connection riêng cho kho session) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-session-jdbc</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-mysql</artifactId>

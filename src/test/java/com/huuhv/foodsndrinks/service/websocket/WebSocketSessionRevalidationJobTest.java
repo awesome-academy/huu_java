@@ -6,9 +6,7 @@ import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.TestingAuthenticationToken;
-import org.springframework.security.web.session.HttpSessionIdChangedEvent;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
@@ -156,19 +154,27 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     @Test
-    void socketRevokedBySessionIdChange_whoseCloseFailed_isClosedByJob_withoutAudit() throws Exception {
+    void socketOfEndedSession_whoseCloseFailed_isClosedAgainNextCycle_withoutAskingAgainWhy() throws Exception {
+        // Session HTTP kết thúc ở instance khác (logout, đổi id khi đăng nhập lại): chỉ job này phát hiện được
         WebSocketSession socket = open("ws-1", "alice", "ROLE_USER");
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
-        tracker.onHttpSessionIdChanged(new HttpSessionIdChangedEvent(new MockHttpSession(null, "http-new"), "http-ws-1"));
-        // Object HttpSession vẫn sống, tài khoản vẫn hợp lệ
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.isAlive(socket)).thenReturn(false);
+        when(accountStatusService.findAccountStatuses(anyCollection()))
+                .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+        assertThat(tracker.snapshot()).singleElement()
+                .extracting(WebSocketSessionTracker.TrackedSession::revoked).isEqualTo(true);
 
         assertThat(job.revalidateOpenSessions()).isEqualTo(1);
 
         verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
         assertThat(tracker.snapshot()).isEmpty();
-        verifyNoInteractions(auditLogService, accountStatusService);
+        // Chu kỳ 2 chỉ còn socket đã thu hồi → không hỏi lại kho session, không query DB, không audit
+        verify(httpSessionLookup, times(1)).isAlive(socket);
+        verify(accountStatusService, times(1)).findAccountStatuses(anyCollection());
+        verifyNoInteractions(auditLogService);
     }
 
     @Test

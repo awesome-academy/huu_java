@@ -19,7 +19,8 @@ import java.util.Optional;
  * <ul>
  *   <li>tài khoản bị khoá, bị xoá, đổi role hoặc đổi mật khẩu sau khi session của socket đăng nhập (một query cho mọi username đang kết nối, cùng quy tắc
  *       {@link AccountStatusService#revocationReason}) → audit {@code SESSION_REVOKED};</li>
- *   <li>session HTTP đã kết thúc (logout, hết hạn, bị huỷ) — {@link HttpSessionLookup}.</li>
+ *   <li>session HTTP đã kết thúc ở bất kỳ instance nào (logout, hết hạn, bị huỷ, đổi id khi đăng nhập lại) —
+ *       {@link HttpSessionLookup} hỏi kho session dùng chung; đây là đường duy nhất, không có event nào báo.</li>
  * </ul>
  * Ngoài ra đóng lại ({@code RESYNC}) socket còn dấu {@link TrackedSession#resyncPending()} — lần đóng sau khi
  * subscription realtime được tạo lại đã thất bại.

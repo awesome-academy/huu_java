@@ -7,6 +7,7 @@ import com.huuhv.foodsndrinks.entity.User;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.enums.Role;
 import com.huuhv.foodsndrinks.service.OrderService;
+import com.huuhv.foodsndrinks.service.audit.AuditLogTestSupport;
 import com.huuhv.foodsndrinks.service.messaging.Destinations;
 import com.huuhv.foodsndrinks.support.BrowserSession;
 import com.zaxxer.hikari.HikariDataSource;
@@ -22,9 +23,11 @@ import org.springframework.jms.core.JmsTemplate;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 
 import javax.sql.DataSource;
+import java.net.http.HttpResponse;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,6 +37,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * instance B là một {@code SpringApplication} thứ hai trong cùng JVM — cổng riêng, {@code app.instance-id} riêng, chung
  * MySQL Testcontainers và nối in-VM vào broker của A (broker dùng chung như prod). Simple broker STOMP nằm trong bộ nhớ
  * từng instance: sự kiện phát ở một instance phải tới admin đang nối vào instance kia qua topic JMS.
+ * <p>
+ * Session HTTP nằm trong kho dùng chung (Spring Session JDBC, issue #44): cùng một "trình duyệt" (cookie) gửi request lần
+ * lượt tới A và B như sau một load balancer KHÔNG sticky — đăng nhập, CSRF, logout, thu hồi session và handshake WebSocket
+ * đều phải đúng ở instance không tạo ra session.
  */
 class MultiInstanceRealtimeIntegrationTest extends AbstractRealtimeIntegrationTest {
 
@@ -76,9 +83,130 @@ class MultiInstanceRealtimeIntegrationTest extends AbstractRealtimeIntegrationTe
         }
     }
 
+    private static int portB() {
+        return Integer.parseInt(instanceB.getEnvironment().getRequiredProperty("local.server.port"));
+    }
+
+    private static boolean redirectsToLogin(HttpResponse<String> response) {
+        return response.statusCode() == 302 && response.headers().firstValue("Location").orElse("").endsWith("/login");
+    }
+
+    // -------------------------------------------------------
+    // Session dùng chung (issue #44)
+    // -------------------------------------------------------
+
+    @Test
+    void sessionCreatedOnOneInstance_isAuthenticatedOnTheOther_andItsCsrfTokenIsAccepted() throws Exception {
+        User user = createUser(Role.ROLE_USER);
+        BrowserSession onA = login(user);                    // đăng nhập ở A
+        BrowserSession onB = onA.onInstance(portB());        // request kế tiếp của cùng trình duyệt rơi vào B
+
+        assertThat(onB.get("/profile").statusCode()).isEqualTo(200);
+        // Form/fetch POST mang token CSRF lấy từ trang do A render: B đọc cùng token trong session dùng chung. 404 = đã qua
+        // CSRF (không phải 403) và đã xác thực (không phải 302 /login) — sản phẩm này không tồn tại
+        HttpResponse<String> post = onB.post("/cart/add", Map.of("productId", "999999999", "_csrf", onA.csrfToken()));
+        assertThat(post.statusCode()).isEqualTo(404);
+        // ... và ngược lại: session vừa được B dùng vẫn hợp lệ ở A
+        assertThat(onA.get("/profile").statusCode()).isEqualTo(200);
+        // Không có session thì B vẫn đòi đăng nhập
+        assertThat(redirectsToLogin(BrowserSession.anonymous(portB()).get("/profile"))).isTrue();
+    }
+
+    @Test
+    void logoutOnOneInstance_endsTheSessionOnEveryInstance() throws Exception {
+        User user = createUser(Role.ROLE_USER);
+        BrowserSession onA = login(user);
+        BrowserSession onB = onA.onInstance(portB());
+        assertThat(onB.get("/profile").statusCode()).isEqualTo(200);
+
+        onA.logout();
+
+        assertThat(redirectsToLogin(onB.get("/profile"))).isTrue();
+        assertThat(redirectsToLogin(onA.get("/profile"))).isTrue();
+    }
+
+    @Test
+    void lockedAccount_isRevokedOnWhicheverInstanceSeesTheNextRequest_andStaysRevokedEverywhere() throws Exception {
+        User user = createUser(Role.ROLE_USER);
+        BrowserSession onA = login(user);
+        BrowserSession onB = onA.onInstance(portB());
+        assertThat(onB.get("/profile").statusCode()).isEqualTo(200);
+
+        user.setIsActive(false);
+        userRepository.saveAndFlush(user);
+
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            // Request kế tiếp tới B: AccountStatusFilter của B huỷ session (xoá khỏi kho dùng chung)
+            assertThat(redirectsToLogin(onB.get("/profile"))).isTrue();
+
+            assertThat(audit.lines()).anySatisfy(line -> assertThat(line).contains(
+                    "event.action=SESSION_REVOKED", "event.reason=DISABLED", "username=" + user.getUsername()));
+        }
+        // Mở khoá lại: session đã bị xoá nên cookie cũ không đăng nhập được ở A
+        user.setIsActive(true);
+        userRepository.saveAndFlush(user);
+        assertThat(redirectsToLogin(onA.get("/profile"))).isTrue();
+    }
+
+    @Test
+    void webSocketHandshake_worksOnAnInstanceThatDidNotCreateTheSession_andLogoutElsewhereClosesIt() throws Exception {
+        User admin = createUser(Role.ROLE_ADMIN);
+        BrowserSession onA = login(admin);
+        // Handshake + CONNECT (token CSRF của trang do A render) ở B bằng session tạo ở A
+        BrowserSession.Stomp socketOnB = track(onA.onInstance(portB()).connect());
+        assertThat(socketOnB.session().isConnected()).isTrue();
+        socketOnB.subscribe(StompDestinations.ADMIN_ORDERS);
+        awaitSubscribed(instanceB.getBean(SimpUserRegistry.class), admin.getUsername(), StompDestinations.ADMIN_ORDERS);
+
+        // Logout ở A: B không nhận event nào — job của B hỏi lại kho session và đóng socket (≤ 1 chu kỳ)
+        onA.logout();
+        instanceB.getBean(WebSocketSessionRevalidationJob.class).revalidateOpenSessions();
+
+        assertThat(socketOnB.awaitClosed()).isTrue();
+    }
+
+    @Test
+    void ownPasswordChange_keepsThatBrowserLoggedInUnderANewSessionId_andLogsOutTheOtherBrowser_onEveryInstance()
+            throws Exception {
+        User user = createUser(Role.ROLE_USER);
+        BrowserSession changer = login(user);        // trình duyệt 1, đăng nhập ở A
+        BrowserSession otherBrowser = login(user);   // trình duyệt 2 (cookie riêng), cùng tài khoản
+        String sessionBeforeChange = changer.sessionCookie();
+
+        // Trình duyệt 1 đổi mật khẩu; request rơi vào B (session, token CSRF và mốc xác thực đều đọc từ kho dùng chung)
+        HttpResponse<String> changed = changer.onInstance(portB()).post("/profile/edit", Map.of(
+                "fullName", user.getFullName(),
+                "email", user.getEmail(),
+                "phone", "09" + ThreadLocalRandom.current().nextInt(10_000_000, 100_000_000),
+                "currentPassword", PASSWORD,
+                "newPassword", "realtime-pass-456-new",
+                "confirmNewPassword", "realtime-pass-456-new",
+                "_csrf", changer.csrfToken()));
+        assertThat(changed.statusCode()).isEqualTo(302);
+        assertThat(changed.headers().firstValue("Location").orElse("")).endsWith("/profile");
+
+        // Session vừa đổi mật khẩu: id mới (cookie mới), vẫn đăng nhập ở cả hai instance
+        assertThat(changer.sessionCookie()).isNotBlank().isNotEqualTo(sessionBeforeChange);
+        assertThat(changer.get("/profile").statusCode()).isEqualTo(200);
+        assertThat(changer.onInstance(portB()).get("/profile").statusCode()).isEqualTo(200);
+
+        // Trình duyệt kia (đăng nhập bằng mật khẩu cũ): bị huỷ ở request kế tiếp, tới instance nào cũng vậy
+        try (AuditLogTestSupport audit = new AuditLogTestSupport()) {
+            assertThat(redirectsToLogin(otherBrowser.get("/profile"))).isTrue();
+
+            assertThat(audit.lines()).anySatisfy(line -> assertThat(line).contains("event.action=SESSION_REVOKED",
+                    "event.reason=PASSWORD_CHANGED", "username=" + user.getUsername()));
+        }
+        assertThat(redirectsToLogin(otherBrowser.onInstance(portB()).get("/profile"))).isTrue();
+    }
+
+    // -------------------------------------------------------
+    // Sự kiện realtime giữa các instance
+    // -------------------------------------------------------
+
     @Test
     void orderPlacedOnOneInstance_reachesAdminsConnectedToEveryInstance() throws Exception {
-        int portB = Integer.parseInt(instanceB.getEnvironment().getRequiredProperty("local.server.port"));
+        int portB = portB();
         User adminOnA = createUser(Role.ROLE_ADMIN);
         User adminOnB = createUser(Role.ROLE_ADMIN);
         BrowserSession.Stomp stompA = track(login(adminOnA).connect());

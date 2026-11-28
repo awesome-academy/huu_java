@@ -127,7 +127,7 @@ Bảo mật (chi tiết: [README — Realtime](../../README.md#realtime-websocke
 | Handshake từ origin khác | 403 |
 | Client SEND vào `/topic/**`, `/queue/**`, `/app/**` | Bị từ chối (không giả được sự kiện cho admin khác) |
 | Admin bị khoá/hạ quyền khi đang mở trang | Socket bị đóng trong ≤ `WEBSOCKET_REVALIDATE_INTERVAL` (60s), audit `SESSION_REVOKED` (`session.type=websocket`) |
-| Logout / session hết hạn | Socket bị đóng; logout thì trang không kết nối lại được (handshake bị chuyển hướng `/login`) |
+| Logout / session hết hạn | Socket bị đóng trong ≤ `WEBSOCKET_REVALIDATE_INTERVAL` (60s) — session nằm trong kho dùng chung giữa các instance, job hỏi lại kho đó mỗi chu kỳ (logout ở instance nào cũng vậy); logout thì trang không kết nối lại được (handshake bị chuyển hướng `/login`) |
 
 Frame WebSocket không gia hạn session HTTP: trang để yên quá 30 phút (timeout session) thì socket bị đóng; trang tự kết nối lại được nếu còn cookie remember-me (đăng nhập lại tự động), không thì realtime dừng và trang hiện thông báo "Tải lại trang" ở cuối màn hình. Mỗi lần nối lại, `realtime.js` lấy token CSRF của session hiện tại qua `GET /csrf-token` (token trong meta của trang gắn với session cũ); bị chuyển hướng `/login` → dừng hẳn (có thông báo). Mở quá `app.websocket.max-connections-per-user` (10) tab có realtime trên một instance → tab vượt dừng ngay với thông báo "quá nhiều tab" (không thử lại liên tục); quay lại tab đó sau khi đóng bớt tab thì nó thử kết nối lại. Mất mạng, deploy, tab bị trình duyệt bóp timer khi để nền → tự nối lại mãi (chờ tối đa 60s), tab hiện lại thì nối ngay. Đăng nhập lại ở tab khác của cùng trình duyệt (id session đổi) → socket đang mở bị đóng ngay rồi nối lại với danh tính mới.
 

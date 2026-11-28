@@ -10,12 +10,21 @@ spring:
   # Pool connection (URL/tài khoản theo profile). Thread nền có thể giữ connection cùng lúc — dashboard-* (4) + outbox-*
   # (2) + listener JMS (7: email, Slack, DLQ đơn hàng, WebSocket đơn mới, WebSocket đổi trạng thái, import Excel, DLQ
   # import Excel) + sched-* (2) = 15 — không được quá nửa pool (config/ConnectionBudgetCheck, vượt thì app không khởi
-  # động), nửa còn lại cho request web. Nhiều instance: số instance × maximum-pool-size < max_connections của MySQL (mặc
-  # định 151 → tối đa 5 instance). minimum-idle: không giữ sẵn cả pool khi rảnh.
+  # động), nửa còn lại cho request web. Kho session HTTP có pool riêng (app.session.pool-size, mặc định 10). Nhiều
+  # instance: số instance × (maximum-pool-size + app.session.pool-size) < max_connections của MySQL (mặc định 151 → tối
+  # đa 3 instance; cần nhiều hơn thì tăng max_connections). minimum-idle: không giữ sẵn cả pool khi rảnh.
   datasource:
     hikari:
       maximum-pool-size: 30
       minimum-idle: 5
+  # Session HTTP lưu trong MySQL (Spring Session JDBC) — mọi instance dùng chung, không cần load balancer sticky.
+  # Timeout và cờ cookie vẫn lấy từ server.servlet.session.* bên dưới.
+  session:
+    jdbc:
+      # Bảng SPRING_SESSION / SPRING_SESSION_ATTRIBUTES do Flyway tạo (V20261128120000) — không để Spring Session tự tạo
+      initialize-schema: never
+      # Xoá session hết hạn mỗi phút, trên mọi instance (một câu DELETE theo EXPIRY_TIME, chạy trùng vô hại — không ShedLock)
+      cleanup-cron: "0 * * * * *"
   servlet:
     multipart:
       # Áp dụng mọi profile (prod trước đây dùng mặc định của Spring). Ảnh sản phẩm/avatar: tối đa 5MB/file, 25MB/request
@@ -128,6 +137,9 @@ server:
     session:
       timeout: 30m # Session không hoạt động quá 30 phút thì hết hạn (remember-me vẫn đăng nhập lại được)
       cookie:
+        # Spring Session mặc định đặt tên cookie là SESSION — giữ tên JSESSIONID như trước khi chuyển kho session
+        # (logout xoá cookie theo tên này: SecurityConfig#webSecurityFilterChain)
+        name: JSESSIONID
         http-only: true   # JS không đọc được JSESSIONID
         same-site: lax    # Không gửi kèm request POST/iframe từ site khác (thêm một lớp ngoài CSRF token)
         # Chỉ gửi qua HTTPS. Dev (http://localhost) để false; prod mặc định true (application-prod.yml)
@@ -151,6 +163,12 @@ logging:
     org.apache.activemq.audit: WARN
 
 app:
+  # Pool connection riêng của kho session HTTP (config/SessionStoreConfig, config/properties/SessionStoreProperties):
+  # ghi session xảy ra giữa lúc render, khi thread request đang giữ một connection của pool chính (Open Session in View)
+  # — chung một pool thì nhiều request cùng lúc sẽ giữ-và-chờ lẫn nhau.
+  session:
+    pool-size: ${SESSION_POOL_SIZE:10}
+    connection-timeout: 5s
   cors:
     # Origin (đầy đủ scheme://host[:port], cách nhau bởi dấu phẩy) được gọi /api/** từ trình duyệt. Rỗng = chỉ same-origin.
     # Không chấp nhận '*' (app không khởi động).

@@ -10,13 +10,11 @@ import com.huuhv.foodsndrinks.service.websocket.WebSocketSessionTracker;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.TaskScheduler;
-import org.springframework.security.web.session.HttpSessionEventPublisher;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.StompWebSocketEndpointRegistration;
@@ -71,16 +69,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Lazy
     @Qualifier("messageBrokerTaskScheduler")
     private final TaskScheduler messageBrokerTaskScheduler;
-
-    /**
-     * Phát {@code HttpSessionDestroyedEvent} khi session HTTP bị huỷ/hết hạn — {@link WebSocketSessionTracker} đóng ngay
-     * socket của session đó (đường nhanh; job kiểm tra định kỳ vẫn là đường chính). Spring Boot tự đăng ký bean
-     * {@code HttpSessionListener} vào servlet container.
-     */
-    @Bean
-    public static HttpSessionEventPublisher httpSessionEventPublisher() {
-        return new HttpSessionEventPublisher();
-    }
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
