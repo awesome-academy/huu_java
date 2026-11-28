@@ -27,8 +27,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import java.lang.reflect.Parameter;
 import java.math.BigDecimal;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +57,7 @@ import static org.mockito.Mockito.when;
 class DashboardServiceTest {
 
     private static final Duration TIMEOUT = Duration.ofMillis(300);
+    private static final LocalDateTime ORDERED_AT = LocalDateTime.of(2026, 11, 20, 9, 30);
 
     @Mock private OrderRepository orderRepository;
     @Mock private OrderDetailRepository orderDetailRepository;
@@ -116,12 +117,14 @@ class DashboardServiceTest {
         assertThat(result.getTotalCompletedOrders()).isEqualTo(3L);
         assertThat(result.getActiveOrders()).isEqualTo(3L);   // PENDING + PROCESSING
         // Biểu đồ doanh thu theo tháng và top sản phẩm chỉ tính ở getChartData (5 truy vấn song song, không phải 7)
-        verify(orderRepository, never()).findMonthlyRevenue(any());
+        verify(orderRepository, never()).sumCompletedRevenueBetween(any(), any());
         verifyNoInteractions(orderDetailRepository);
 
         assertThat(result.getRecentOrders()).singleElement().satisfies(o -> {
             assertThat(o.getId()).isEqualTo(42L);
             assertThat(o.getUsername()).isEqualTo("alice");
+            // Cột thời gian là lúc ĐẶT đơn, không phải lúc tạo giỏ hàng (createdAt)
+            assertThat(o.getOrderedAt()).isEqualTo(ORDERED_AT);
         });
     }
 
@@ -195,9 +198,11 @@ class DashboardServiceTest {
 
     @Test
     void getChartData_returnsSixMonths_andStatusCounts() {
-        LocalDate now = LocalDate.now();
-        when(orderRepository.findMonthlyRevenue(any())).thenReturn(List.<Object[]>of(
-                new Object[]{now.getYear(), now.getMonthValue(), new BigDecimal("150000"), 3L}));
+        YearMonth now = YearMonth.now();
+        LocalDateTime startOfThisMonth = now.atDay(1).atStartOfDay();
+        // Doanh thu tính theo khoảng ngày ĐẶT [đầu tháng, đầu tháng sau) — cùng câu truy vấn với email báo cáo tháng
+        when(orderRepository.sumCompletedRevenueBetween(any(), any())).thenAnswer(inv ->
+                startOfThisMonth.equals(inv.getArgument(0)) ? new BigDecimal("150000") : BigDecimal.ZERO);
         when(orderRepository.countGroupByStatus()).thenReturn(List.<Object[]>of(
                 new Object[]{OrderStatus.PENDING, 2L},
                 new Object[]{OrderStatus.PROCESSING, 3L},
@@ -211,6 +216,16 @@ class DashboardServiceTest {
         assertThat(charts.monthRevenues().subList(0, 5))
                 .allSatisfy(v -> assertThat(v).isEqualByComparingTo(BigDecimal.ZERO));
         assertThat(charts.monthRevenues().get(5)).isEqualByComparingTo("150000");
+        // 6 khoảng liền nhau, mỗi khoảng đúng một tháng lịch (múi giờ JVM), tháng cũ nhất trước
+        ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> to = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(orderRepository, times(DashboardService.REVENUE_MONTHS))
+                .sumCompletedRevenueBetween(from.capture(), to.capture());
+        assertThat(from.getAllValues()).first().isEqualTo(now.minusMonths(5).atDay(1).atStartOfDay());
+        for (int i = 0; i < DashboardService.REVENUE_MONTHS; i++) {
+            assertThat(to.getAllValues().get(i)).isEqualTo(from.getAllValues().get(i).plusMonths(1));
+        }
+        assertThat(to.getAllValues()).last().isEqualTo(now.plusMonths(1).atDay(1).atStartOfDay());
         assertThat(charts.statusLabels()).containsExactly(OrderStatus.PENDING.getLabel(),
                 OrderStatus.PROCESSING.getLabel(), OrderStatus.COMPLETED.getLabel(), OrderStatus.CANCELLED.getLabel());
         assertThat(charts.statusCounts()).containsExactly(2L, 3L, 7L, 0L);
@@ -257,7 +272,8 @@ class DashboardServiceTest {
                 .user(user)
                 .totalPrice(new BigDecimal("50000"))
                 .status(OrderStatus.PENDING)
-                .createdAt(LocalDateTime.now())
+                .createdAt(ORDERED_AT.minusDays(40))   // giỏ hàng tạo từ tháng trước
+                .orderedAt(ORDERED_AT)
                 .build();
     }
 }

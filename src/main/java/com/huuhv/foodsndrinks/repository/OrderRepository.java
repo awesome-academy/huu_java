@@ -28,6 +28,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      * {@code orderedFrom}/{@code orderedBefore}: ngày đặt trong {@code [orderedFrom, orderedBefore)}, {@code null} = không
      * chặn đầu đó. Điều kiện WHERE phải giống hệt {@link #findExportRows} — file export là đúng danh sách đang lọc; sửa một
      * câu thì sửa cả ba (kể cả {@code countQuery}).
+     * <p>
+     * Xếp theo thời điểm ĐẶT ({@code orderedAt}), không theo {@code id}/{@code createdAt}: giỏ hàng là một order nên hai
+     * giá trị đó là lúc tạo giỏ — đơn vừa đặt từ một giỏ tạo từ lâu phải nằm trên cùng.
      */
     @Query(value = """
             SELECT o FROM Order o LEFT JOIN FETCH o.user u
@@ -40,7 +43,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                    OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
               AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
-            ORDER BY o.id DESC
+            ORDER BY o.orderedAt DESC, o.id DESC
             """,
             countQuery = """
             SELECT COUNT(o) FROM Order o LEFT JOIN o.user u
@@ -79,7 +82,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                    OR LOWER(u.email)    LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:orderedFrom   IS NULL OR o.orderedAt >= :orderedFrom)
               AND (:orderedBefore IS NULL OR o.orderedAt <  :orderedBefore)
-            ORDER BY o.id DESC
+            ORDER BY o.orderedAt DESC, o.id DESC
             """)
     List<OrderExportRow> findExportRows(@Param("status")  OrderStatus status,
                                         @Param("keyword") String keyword,
@@ -146,11 +149,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             """)
     Optional<Order> findByIdAndUserIdWithDetailsAndProducts(@Param("id") Long id, @Param("userId") Long userId);
 
-    /** Past orders (everything except CART) for the "order history" page */
+    /** Past orders (everything except CART) for the "order history" page — mới đặt nhất trước (orderedAt) */
     @Query(value = """
             SELECT o FROM Order o
             WHERE o.user.id = :userId AND o.status <> 'CART'
-            ORDER BY o.createdAt DESC
+            ORDER BY o.orderedAt DESC, o.id DESC
             """,
             countQuery = """
             SELECT COUNT(o) FROM Order o
@@ -172,7 +175,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT o.status, COUNT(o) FROM Order o WHERE o.status <> 'CART' GROUP BY o.status")
     List<Object[]> countGroupByStatus();
 
-    /** Doanh thu đơn COMPLETED đặt (orderedAt) trong {@code [from, to)} — báo cáo tháng. */
+    /**
+     * Doanh thu đơn COMPLETED đặt (orderedAt) trong {@code [from, to)} — báo cáo tháng và biểu đồ doanh thu của dashboard
+     * (cùng một câu nên hai nơi luôn khớp). Ranh giới tháng do Java tính theo múi giờ JVM rồi truyền vào: không dùng
+     * {@code YEAR()/MONTH()} của MySQL — DB lưu UTC nên đơn đặt 0h–7h ngày 1 (giờ VN) sẽ rơi vào tháng trước.
+     */
     @Query("""
             SELECT COALESCE(SUM(o.totalPrice), 0) FROM Order o
             WHERE o.status = 'COMPLETED' AND o.orderedAt >= :from AND o.orderedAt < :to
@@ -187,24 +194,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             """)
     List<Object[]> countGroupByStatusBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
-    /** Recent N orders (excluding CART) with user info */
-    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.user WHERE o.status <> 'CART' ORDER BY o.createdAt DESC")
-    List<Order> findRecent(Pageable pageable);
-
-    /**
-     * Monthly revenue for COMPLETED orders since a given date.
-     * Returns Object[]: [year(int), month(int), revenue(BigDecimal), count(long)]
-     */
+    /** N đơn mới ĐẶT gần nhất (trừ CART) kèm user — theo orderedAt, không theo lúc tạo giỏ */
     @Query("""
-            SELECT FUNCTION('YEAR', o.createdAt),
-                   FUNCTION('MONTH', o.createdAt),
-                   SUM(o.totalPrice),
-                   COUNT(o)
-            FROM Order o
-            WHERE o.status = 'COMPLETED' AND o.createdAt >= :from
-            GROUP BY FUNCTION('YEAR', o.createdAt), FUNCTION('MONTH', o.createdAt)
-            ORDER BY FUNCTION('YEAR', o.createdAt), FUNCTION('MONTH', o.createdAt)
+            SELECT o FROM Order o LEFT JOIN FETCH o.user
+            WHERE o.status <> 'CART'
+            ORDER BY o.orderedAt DESC, o.id DESC
             """)
-    List<Object[]> findMonthlyRevenue(@Param("from") LocalDateTime from);
+    List<Order> findRecent(Pageable pageable);
 }
 

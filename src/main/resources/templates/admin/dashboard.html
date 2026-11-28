@@ -129,7 +129,7 @@
                             <th class="py-2">Khách hàng</th>
                             <th class="py-2">Tổng tiền</th>
                             <th class="py-2">Trạng thái</th>
-                            <th class="py-2">Thời gian</th>
+                            <th class="py-2">Đặt lúc</th>
                         </tr>
                         </thead>
                         <tbody>
@@ -156,7 +156,7 @@
                                 </span>
                             </td>
                             <td class="text-muted small"
-                                th:text="${o.createdAt != null ? #temporals.format(o.createdAt, 'dd/MM HH:mm') : '—'}">
+                                th:text="${o.orderedAt != null ? #temporals.format(o.orderedAt, 'dd/MM HH:mm') : '—'}">
                             </td>
                         </tr>
                         </tbody>
