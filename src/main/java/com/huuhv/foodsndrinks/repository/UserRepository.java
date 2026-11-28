@@ -52,6 +52,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query(value = "SELECT id FROM users WHERE username = :username FOR UPDATE", nativeQuery = true)
     Optional<Long> lockIdByUsername(@Param("username") String username);
 
+    /**
+     * Như {@link #lockIdByUsername}, theo id — xếp hàng mọi thao tác ghi giỏ hàng + checkout của cùng một người dùng
+     * ({@code OrderService}).
+     *
+     * @return id tài khoản, rỗng nếu không còn tài khoản này
+     */
+    @Query(value = "SELECT id FROM users WHERE id = :id FOR UPDATE", nativeQuery = true)
+    Optional<Long> lockIdById(@Param("id") Long id);
+
     long countByIsActiveTrue();
 
     @Query(value = """

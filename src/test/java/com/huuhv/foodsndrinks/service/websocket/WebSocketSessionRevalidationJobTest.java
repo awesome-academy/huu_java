@@ -15,10 +15,12 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -62,7 +64,7 @@ class WebSocketSessionRevalidationJobTest {
     @Test
     void validSessions_areKept() throws Exception {
         WebSocketSession alice = open("ws-1", "alice", "ROLE_USER");
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
 
@@ -78,7 +80,7 @@ class WebSocketSessionRevalidationJobTest {
         WebSocketSession demoted = open("ws-2", "demoted", "ROLE_ADMIN");
         WebSocketSession deleted = open("ws-3", "deleted", "ROLE_USER");
         WebSocketSession ok = open("ws-4", "ok", "ROLE_ADMIN");
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
                 "locked", new Status(false, Role.ROLE_USER),
                 "demoted", new Status(true, Role.ROLE_USER),
@@ -105,7 +107,7 @@ class WebSocketSessionRevalidationJobTest {
         WebSocketSession changer = open("ws-2", "alice", "ROLE_USER", PASSWORD_CHANGED_AT);
         WebSocketSession unstamped = open("ws-3", "alice", "ROLE_USER");
         WebSocketSession otherUser = open("ws-4", "bob", "ROLE_USER", PASSWORD_CHANGED_AT.minusSeconds(60));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
                 "alice", new Status(true, Role.ROLE_USER, PASSWORD_CHANGED_AT),
                 "bob", new Status(true, Role.ROLE_USER)));
@@ -120,9 +122,28 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     @Test
+    void sessionStore_isAskedOnceForAllOpenSockets() throws Exception {
+        WebSocketSession alice = open("ws-1", "alice", "ROLE_USER");
+        WebSocketSession bob = open("ws-2", "bob", "ROLE_USER");
+        WebSocketSession carol = open("ws-3", "carol", "ROLE_USER");
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of(bob));
+        when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
+                "alice", new Status(true, Role.ROLE_USER), "carol", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(1);
+
+        // Một lần hỏi kho session cho cả 3 socket (không phải một findById mỗi socket)
+        verify(httpSessionLookup, times(1)).findEnded(argThat(sockets -> sockets.size() == 3
+                && sockets.containsAll(List.of(alice, bob, carol))));
+        verify(bob).close(WebSocketSessionTracker.REVOKED);
+        verify(alice, never()).close(any(CloseStatus.class));
+        verify(carol, never()).close(any(CloseStatus.class));
+    }
+
+    @Test
     void endedHttpSession_isClosed_withoutAudit() throws Exception {
         WebSocketSession loggedOut = open("ws-1", "alice", "ROLE_USER");
-        when(httpSessionLookup.isAlive(loggedOut)).thenReturn(false);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of(loggedOut));
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
 
@@ -137,7 +158,7 @@ class WebSocketSessionRevalidationJobTest {
         WebSocketSession locked = open("ws-1", "locked", "ROLE_USER");
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(locked))
                 .when(locked).close(any(CloseStatus.class));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("locked", new Status(false, Role.ROLE_USER)));
 
@@ -159,7 +180,7 @@ class WebSocketSessionRevalidationJobTest {
         WebSocketSession socket = open("ws-1", "alice", "ROLE_USER");
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
-        when(httpSessionLookup.isAlive(socket)).thenReturn(false);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of(socket));
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("alice", new Status(true, Role.ROLE_USER)));
 
@@ -172,7 +193,7 @@ class WebSocketSessionRevalidationJobTest {
         verify(socket, times(2)).close(WebSocketSessionTracker.REVOKED);
         assertThat(tracker.snapshot()).isEmpty();
         // Chu kỳ 2 chỉ còn socket đã thu hồi → không hỏi lại kho session, không query DB, không audit
-        verify(httpSessionLookup, times(1)).isAlive(socket);
+        verify(httpSessionLookup, times(1)).findEnded(any());
         verify(accountStatusService, times(1)).findAccountStatuses(anyCollection());
         verifyNoInteractions(auditLogService);
     }
@@ -184,7 +205,7 @@ class WebSocketSessionRevalidationJobTest {
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
         tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
                 "alice", new Status(true, Role.ROLE_USER)));
 
@@ -204,7 +225,7 @@ class WebSocketSessionRevalidationJobTest {
         doThrow(new IllegalStateException("TEXT_FULL_WRITING")).doAnswer(closesLikeContainer(socket))
                 .when(socket).close(any(CloseStatus.class));
         tracker.onRealtimeSubscriptionRestored(new RealtimeSubscriptionRestoredEvent("order.placed"));
-        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(httpSessionLookup.findEnded(any())).thenReturn(Set.of());
         when(accountStatusService.findAccountStatuses(anyCollection()))
                 .thenReturn(Map.of("locked", new Status(false, Role.ROLE_USER)));
 

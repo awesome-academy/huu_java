@@ -1,6 +1,8 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.repository.HttpSessionStoreRepository;
 import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServletServerHttpRequest;
@@ -9,30 +11,47 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.session.MapSession;
-import org.springframework.session.MapSessionRepository;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
  * {@link SpringSessionHttpSessionLookup}: socket chỉ nhớ ID của session HTTP lúc handshake, "còn sống" = kho session dùng
- * chung còn giữ session đó — đúng cả khi session bị huỷ ở instance khác. Kho ở đây là {@link MapSessionRepository} (cùng
- * hợp đồng {@code SessionRepository} với kho JDBC của app).
+ * chung còn giữ session đó — đúng cả khi session bị huỷ ở instance khác; mọi socket của một chu kỳ được hỏi bằng một
+ * query. Câu truy vấn thật trên MySQL: {@code SessionStoreConfigTest}.
  */
 class SpringSessionHttpSessionLookupTest {
 
-    private final Map<String, org.springframework.session.Session> store = new ConcurrentHashMap<>();
-    private final MapSessionRepository sessionRepository = new MapSessionRepository(store);
-    private final SpringSessionHttpSessionLookup lookup = new SpringSessionHttpSessionLookup(sessionRepository);
+    /** Kho session giả: id → session (hạn theo {@link MapSession#isExpired}, cùng quy tắc EXPIRY_TIME của kho JDBC). */
+    private final Map<String, MapSession> store = new ConcurrentHashMap<>();
+    private final HttpSessionStoreRepository storeRepository = mock(HttpSessionStoreRepository.class);
+    private final SpringSessionHttpSessionLookup lookup = new SpringSessionHttpSessionLookup(storeRepository);
+
+    @BeforeEach
+    void fakeStore() {
+        when(storeRepository.findLiveSessionIds(anyCollection(), anyLong())).thenAnswer(invocation -> {
+            Collection<String> ids = invocation.getArgument(0);
+            return ids.stream().filter(id -> store.containsKey(id) && !store.get(id).isExpired())
+                    .collect(Collectors.toSet());
+        });
+    }
     private final MockHttpServletResponse servletResponse = new MockHttpServletResponse();
 
     @Test
@@ -70,11 +89,11 @@ class SpringSessionHttpSessionLookupTest {
         save("http-1", Duration.ofMinutes(30), Instant.now());
         WebSocketSession socket = handshake(new MockHttpSession(null, "http-1"));
 
-        assertThat(lookup.isAlive(socket)).isTrue();
+        assertThat(lookup.findEnded(List.of(socket))).isEmpty();
 
         // Logout / AccountStatusFilter ở BẤT KỲ instance nào xoá session khỏi kho
-        sessionRepository.deleteById("http-1");
-        assertThat(lookup.isAlive(socket)).isFalse();
+        store.remove("http-1");
+        assertThat(lookup.findEnded(List.of(socket))).containsExactly(socket);
     }
 
     @Test
@@ -83,34 +102,49 @@ class SpringSessionHttpSessionLookupTest {
         MapSession session = save("http-old", Duration.ofMinutes(30), Instant.now());
         WebSocketSession socket = handshake(new MockHttpSession(null, "http-old"));
 
-        sessionRepository.deleteById("http-old");
+        store.remove("http-old");
         session.setId("http-new");
-        sessionRepository.save(session);
+        store.put("http-new", session);
 
-        assertThat(lookup.isAlive(socket)).isFalse();
+        assertThat(lookup.findEnded(List.of(socket))).containsExactly(socket);
     }
 
     @Test
     void expiredSession_isNotAlive() {
         // Quá 30 phút không có request HTTP nào — frame WebSocket không gia hạn session
         save("http-idle", Duration.ofMinutes(30), Instant.now().minus(Duration.ofMinutes(31)));
+        WebSocketSession socket = handshake(new MockHttpSession(null, "http-idle"));
 
-        assertThat(lookup.isAlive(handshake(new MockHttpSession(null, "http-idle")))).isFalse();
+        assertThat(lookup.findEnded(List.of(socket))).containsExactly(socket);
     }
 
     @Test
-    void socketWithoutRecordedSession_isNotAlive() {
+    void socketWithoutRecordedSession_isNotAlive_andTheStoreIsNotAsked() {
         WebSocketSession socket = mock(WebSocketSession.class);
         when(socket.getAttributes()).thenReturn(new HashMap<>());
 
-        assertThat(lookup.isAlive(socket)).isFalse();
+        assertThat(lookup.findEnded(List.of(socket))).containsExactly(socket);
+        verifyNoInteractions(storeRepository);
+    }
+
+    @Test
+    void manySockets_areCheckedWithOneStoreQuery() {
+        save("http-1", Duration.ofMinutes(30), Instant.now());
+        save("http-2", Duration.ofMinutes(30), Instant.now());
+        WebSocketSession first = handshake(new MockHttpSession(null, "http-1"));
+        WebSocketSession secondTab = handshake(new MockHttpSession(null, "http-1"));
+        WebSocketSession other = handshake(new MockHttpSession(null, "http-2"));
+        WebSocketSession loggedOut = handshake(new MockHttpSession(null, "http-3"));
+
+        assertThat(lookup.findEnded(List.of(first, secondTab, other, loggedOut))).containsExactly(loggedOut);
+
+        verify(storeRepository, times(1)).findLiveSessionIds(anyCollection(), anyLong());
     }
 
     private MapSession save(String id, Duration maxInactive, Instant lastAccessed) {
         MapSession session = new MapSession(id);
         session.setMaxInactiveInterval(maxInactive);
         session.setLastAccessedTime(lastAccessed);
-        // Ghi thẳng vào map: MapSessionRepository.findById tự xoá session hết hạn như kho JDBC
         store.put(id, session);
         return session;
     }

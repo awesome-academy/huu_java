@@ -4,6 +4,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Set;
 
 /**
  * Điểm thay thế duy nhất cho câu hỏi "session HTTP đã xác thực kết nối WebSocket này còn sống không" — job
@@ -26,8 +28,13 @@ public interface HttpSessionLookup extends HandshakeInterceptor {
      */
     String AUTHENTICATED_AT_ATTRIBUTE = "HTTP.SESSION.AUTHENTICATED_AT";
 
-    /** @return {@code false} nếu session HTTP của lúc handshake đã bị huỷ hoặc hết hạn */
-    boolean isAlive(WebSocketSession session);
+    /**
+     * Hỏi kho session MỘT lần cho cả danh sách (job chạy mỗi chu kỳ với mọi socket đang mở của instance).
+     *
+     * @return các socket trong {@code sessions} mà session HTTP của lúc handshake đã bị huỷ hoặc hết hạn — kể cả socket
+     *         không ghi lại id session. So sánh theo identity của {@link WebSocketSession}.
+     */
+    Set<WebSocketSession> findEnded(Collection<WebSocketSession> sessions);
 
     /** Mốc xác thực của session HTTP lúc handshake, {@code null} nếu session không mang mốc. */
     static Instant authenticatedAt(WebSocketSession session) {

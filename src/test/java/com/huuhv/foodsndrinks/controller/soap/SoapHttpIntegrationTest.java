@@ -103,6 +103,25 @@ class SoapHttpIntegrationTest extends AbstractRealtimeIntegrationTest {
     }
 
     @Test
+    void concurrentCallsOfOnePartnerAccount_allSucceed_beyondTheConcurrentLoginAttemptLimit() {
+        // Một IP + một tài khoản, nhiều hơn max-failures (5) request cùng lúc: trước đây request thứ 6 trở đi bị
+        // LoginThrottledException → 401 dù đúng mật khẩu (SoapBasicAuthenticationProvider gộp các lần xác thực trùng)
+        User user = createUser(Role.ROLE_USER);
+        String body = envelope(getProducts(""));
+
+        List<java.util.concurrent.CompletableFuture<HttpResponse<String>>> responses = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url("/ws")))
+                    .header("Content-Type", "text/xml; charset=utf-8")
+                    .POST(HttpRequest.BodyPublishers.ofString(body));
+            authenticate(request, user.getUsername(), PASSWORD);
+            responses.add(http.sendAsync(request.build(), HttpResponse.BodyHandlers.ofString()));
+        }
+
+        assertThat(responses).allSatisfy(response -> assertThat(response.join().statusCode()).isEqualTo(200));
+    }
+
+    @Test
     void browserSessionCookie_isNotAnIdentityForSoap() throws Exception {
         // CSRF tắt ở /ws/** vì chain này không nhận cookie: session của trình duyệt đang đăng nhập không gọi được SOAP
         User user = createUser(Role.ROLE_USER);

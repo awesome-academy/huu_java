@@ -128,6 +128,22 @@ class LoginAttemptServiceTest {
         assertAllowed("dave", IP);
     }
 
+    @Test
+    void verified_releasesTheSlot_butKeepsEarlierFailures() {
+        // Máy gọi SOAP định kỳ đúng mật khẩu không được xoá bộ đếm chống dò mật khẩu phân tán của tài khoản đó
+        for (int i = 0; i < 7; i++) {
+            fail("svc", "198.51.100." + i, 1);
+        }
+        for (int i = 0; i < 3; i++) {
+            service.verified(service.begin("svc", IP));
+        }
+
+        fail("svc", "198.51.100.200", 1);
+
+        assertBlocked("svc", "192.0.2.1");
+        verify(auditLogService).loginLockedOut("svc", LoginAttemptService.SCOPE_ACCOUNT, 8, Duration.ofMinutes(10));
+    }
+
     // -------------------------------------------------------
     // #1 Chuẩn hoá tên đăng nhập như collation MySQL
     // -------------------------------------------------------

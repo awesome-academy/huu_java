@@ -193,7 +193,7 @@ Khai báo trong file `.env` (mẫu: [.env.example](.env.example)) hoặc bằng 
 | `SESSION_POOL_SIZE` | — | Số connection tối đa của pool riêng cho kho session HTTP (mặc định `10`, 2–50). Tổng connection mỗi instance = 30 (pool chính) + giá trị này |
 | `LB_PORT` | — | Cổng nginx của profile compose `multi` (2 instance, mặc định `8088`) |
 | `SOAP_EXCHANGE_RATE_URL` | Khi muốn hiện doanh thu quy đổi USD | Địa chỉ dịch vụ tỷ giá SOAP mà app gọi (`http`/`https`; giá trị khác làm app không khởi động). **Trống = tắt tính năng.** Local: `http://localhost:8080/ws` (endpoint mock của chính app) — xem [docs/soap](docs/soap/README.md#soap-client--tỷ-giá-trên-dashboard) |
-| `SOAP_EXCHANGE_RATE_USERNAME`, `SOAP_EXCHANGE_RATE_PASSWORD` | Khi dịch vụ tỷ giá cần HTTP Basic | Tài khoản của dịch vụ tỷ giá. Với endpoint mock: tài khoản của một user đã đăng ký trong app |
+| `SOAP_EXCHANGE_RATE_USERNAME`, `SOAP_EXCHANGE_RATE_PASSWORD` | Khi dịch vụ tỷ giá cần HTTP Basic | Tài khoản của dịch vụ tỷ giá. Với endpoint mock: một tài khoản `ROLE_USER` riêng đã đăng ký trong app (không dùng tài khoản admin) |
 | `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint tỷ giá giả ở `/ws` (operation `GetExchangeRate`). Mặc định `false`; profile `dev` mặc định `true`; profile `prod` luôn tắt (không đọc biến này) |
 | `NVD_API_KEY` | Khi chạy Dependency-Check | API key của NVD cho `dependency-check:check` (xem [Quét lỗ hổng thư viện](#quét-lỗ-hổng-thư-viện-owasp-dependency-check)); không dùng khi chạy app |
 | `PASSWORD_BREACH_CHECK_ENABLED` | — | Từ chối mật khẩu mới nằm trong danh sách bị lộ qua Pwned Passwords (mặc định `true`; chỉ gửi 5 ký tự đầu SHA-1, lỗi/timeout thì cho qua). Test luôn tắt |

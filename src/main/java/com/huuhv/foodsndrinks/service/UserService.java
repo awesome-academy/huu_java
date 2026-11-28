@@ -12,8 +12,8 @@ import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.AuthenticationClock;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
-import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +27,7 @@ import java.time.Instant;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 @Service
 @Slf4j
@@ -37,6 +38,7 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
     private final LoginAttemptService loginAttemptService;
+    private final AuthenticationClock authenticationClock;
 
     // -------------------------------------------------------
     // Existence checks (used by registration)
@@ -157,12 +159,17 @@ public class UserService {
     }
 
     /**
-     * @return thời điểm đổi mật khẩu vừa ghi vào {@code passwordChangedAt} nếu lần cập nhật này có đổi mật khẩu — người
-     *         gọi dùng nó để giữ lại session hiện tại ({@code PasswordChangeSessionHandler}); mọi session khác của tài
-     *         khoản bị huỷ ({@code AccountStatusService}). Rỗng nếu không đổi mật khẩu.
+     * @param beforePasswordChangeCommit chỉ gọi khi lần cập nhật này đổi mật khẩu: nhận đúng giá trị sắp ghi vào
+     *                                   {@code passwordChangedAt}, chạy TRƯỚC khi transaction commit — người gọi ghi mốc
+     *                                   xác thực của session hiện tại vào kho session ở đây
+     *                                   ({@code PasswordChangeSessionHandler#stampCurrentSession}), để request song song
+     *                                   của chính session đó không bị huỷ. Ném exception → không đổi gì.
+     * @return thời điểm đổi mật khẩu vừa ghi vào {@code passwordChangedAt} nếu lần cập nhật này có đổi mật khẩu; mọi
+     *         session khác của tài khoản bị huỷ ({@code AccountStatusService}). Rỗng nếu không đổi mật khẩu.
      */
     @Transactional
-    public Optional<Instant> updateProfile(Long id, ProfileUpdateReqDto dto) {
+    public Optional<Instant> updateProfile(Long id, ProfileUpdateReqDto dto,
+                                           Consumer<Instant> beforePasswordChangeCommit) {
         User user = findById(id);
 
         if (userRepository.existsByEmailAndIdNot(dto.getEmail(), id)) {
@@ -192,7 +199,9 @@ public class UserService {
                 throw new IllegalArgumentException("Mật khẩu xác nhận mới không khớp!");
             }
             user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
-            user.setPasswordChangedAt(SessionAuthenticationTime.now());
+            // Lấy mốc SAU khi encode (BCrypt chậm): khoảng từ mốc tới commit càng ngắn càng tốt
+            user.setPasswordChangedAt(authenticationClock.now());
+            beforePasswordChangeCommit.accept(user.getPasswordChangedAt());
         }
 
         user.setFullName(dto.getFullName());
@@ -278,7 +287,7 @@ public class UserService {
             user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
             // Admin đặt lại mật khẩu: MỌI session của tài khoản này (đều xác thực trước mốc) bị huỷ ở request kế tiếp —
             // kể cả session của chính admin nếu họ đặt lại mật khẩu của mình ở đây
-            user.setPasswordChangedAt(SessionAuthenticationTime.now());
+            user.setPasswordChangedAt(authenticationClock.now());
         }
 
         userRepository.save(user);

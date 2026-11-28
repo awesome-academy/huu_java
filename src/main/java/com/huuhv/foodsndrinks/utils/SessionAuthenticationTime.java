@@ -4,7 +4,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 
 /**
  * Mốc "session này được xác thực lúc nào", lưu ngay trong session HTTP — để huỷ các session đăng nhập TRƯỚC khi mật khẩu
@@ -15,7 +14,9 @@ import java.time.temporal.ChronoUnit;
  * ({@code PasswordChangeSessionHandler}). Đường đăng nhập mới mà quên ghi thì session của tài khoản đã từng đổi mật khẩu
  * bị huỷ ngay ở request kế tiếp (thiếu mốc = coi như cũ) — lỗi lộ ra ngay, không âm thầm bỏ qua việc thu hồi.
  * <p>
- * Giá trị là {@code Long} epoch-millis (không phải {@link Instant}) để serialize được ở mọi kho session.
+ * Giá trị là {@code Long} epoch-millis (không phải {@link Instant}) để serialize được ở mọi kho session. Thời điểm lấy
+ * từ {@code service.security.AuthenticationClock} (đồng hồ DB, cùng nguồn với {@code users.password_changed_at}), không
+ * từ đồng hồ JVM.
  */
 public final class SessionAuthenticationTime {
 
@@ -23,11 +24,6 @@ public final class SessionAuthenticationTime {
     public static final String ATTRIBUTE = "foodsndrinks.authenticatedAt";
 
     private SessionAuthenticationTime() {
-    }
-
-    /** "Bây giờ", cắt tới mili giây — đúng độ chính xác được lưu, nên giá trị đọc lại so bằng được với giá trị ghi. */
-    public static Instant now() {
-        return Instant.now().truncatedTo(ChronoUnit.MILLIS);
     }
 
     /** Ghi mốc xác thực vào session của request (tạo session nếu chưa có). */

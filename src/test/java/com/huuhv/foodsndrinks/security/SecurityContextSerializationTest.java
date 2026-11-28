@@ -1,6 +1,5 @@
 package com.huuhv.foodsndrinks.security;
 
-import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.authentication.RememberMeAuthenticationToken;
@@ -132,7 +131,7 @@ class SecurityContextSerializationTest {
     void csrfToken_andAuthenticationTime_surviveTheSessionStore() throws Exception {
         DefaultCsrfToken token = new DefaultCsrfToken("X-CSRF-TOKEN", "_csrf", "token-value");
         // Kiểu của attribute mốc xác thực (SessionAuthenticationTime.stamp ghi Long epoch-millis)
-        Long authenticatedAt = SessionAuthenticationTime.now().toEpochMilli();
+        Long authenticatedAt = Instant.now().toEpochMilli();
 
         assertThat(((DefaultCsrfToken) serializeAndRead(token)).getToken()).isEqualTo("token-value");
         assertThat(serializeAndRead(authenticatedAt)).isEqualTo(authenticatedAt);

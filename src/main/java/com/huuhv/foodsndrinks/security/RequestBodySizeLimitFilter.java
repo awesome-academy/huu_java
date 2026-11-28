@@ -66,10 +66,16 @@ public class RequestBodySizeLimitFilter extends OncePerRequestFilter {
         }
     }
 
+    /**
+     * Theo hợp đồng Servlet (như Tomcat): {@link #getInputStream} và {@link #getReader} luôn trả về cùng một đối tượng
+     * qua mọi lần gọi, và chỉ được dùng MỘT trong hai cho mỗi request (gọi cái còn lại → {@link IllegalStateException}).
+     * Tạo reader mới mỗi lần gọi sẽ làm mất phần byte reader trước đã đọc trước vào buffer.
+     */
     private static final class LimitedRequest extends HttpServletRequestWrapper {
 
         private final long maxBytes;
         private ServletInputStream stream;
+        private BufferedReader reader;
 
         LimitedRequest(HttpServletRequest request, long maxBytes) {
             super(request);
@@ -78,15 +84,29 @@ public class RequestBodySizeLimitFilter extends OncePerRequestFilter {
 
         @Override
         public ServletInputStream getInputStream() throws IOException {
-            if (stream == null) {
-                stream = new LimitedStream(super.getInputStream(), maxBytes, (HttpServletRequest) getRequest());
+            if (reader != null) {
+                throw new IllegalStateException("getReader() has already been called for this request");
             }
-            return stream;
+            return limitedStream();
         }
 
         @Override
         public BufferedReader getReader() throws IOException {
-            return new BufferedReader(new InputStreamReader(getInputStream(), charset()));
+            if (reader == null) {
+                if (stream != null) {
+                    throw new IllegalStateException("getInputStream() has already been called for this request");
+                }
+                Charset charset = charset();
+                reader = new BufferedReader(new InputStreamReader(limitedStream(), charset));
+            }
+            return reader;
+        }
+
+        private ServletInputStream limitedStream() throws IOException {
+            if (stream == null) {
+                stream = new LimitedStream(super.getInputStream(), maxBytes, (HttpServletRequest) getRequest());
+            }
+            return stream;
         }
 
         /** Charset do client khai báo: tên sai/không hỗ trợ là lỗi đọc (IOException) như Tomcat, không phải 500. */

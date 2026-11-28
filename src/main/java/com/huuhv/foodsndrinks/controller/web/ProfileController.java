@@ -65,10 +65,13 @@ public class ProfileController {
 
         User user = userService.getCurrentUser(principal.getName());
         try {
-            // Đổi mật khẩu: mọi session khác của tài khoản bị huỷ (AccountStatusFilter); session này được giữ lại
-            userService.updateProfile(user.getId(), dto).ifPresent(passwordChangedAt ->
-                    passwordChangeSessionHandler.keepCurrentSession(request, response, principal.getName(),
-                            passwordChangedAt));
+            // Đổi mật khẩu: mọi session khác của tài khoản bị huỷ (AccountStatusFilter); session này được giữ lại —
+            // mốc xác thực ghi vào kho session TRƯỚC commit, đổi session id + cấp lại remember-me SAU commit
+            userService.updateProfile(user.getId(), dto,
+                            passwordChangedAt -> passwordChangeSessionHandler.stampCurrentSession(request,
+                                    passwordChangedAt))
+                    .ifPresent(passwordChangedAt ->
+                            passwordChangeSessionHandler.renewCurrentSession(request, response, principal.getName()));
             ra.addFlashAttribute("successMessage", "Cập nhật thông tin thành công!");
             return "redirect:/profile";
         } catch (PasswordChangeThrottledException e) {

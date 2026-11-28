@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.exception.DuplicateResourceException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.AuthenticationClock;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,6 +45,7 @@ class UserServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private AuditLogService auditLogService;
     @Mock private LoginAttemptService loginAttemptService;
+    @Mock private AuthenticationClock authenticationClock;
 
     @InjectMocks private UserService userService;
 
@@ -236,12 +237,14 @@ class UserServiceTest {
             when(passwordEncoder.encode("new-password-123")).thenReturn("new-hash");
             UserEditReqDto dto = edit("bob@example.com", Role.ROLE_USER, true);
             dto.setNewPassword("new-password-123");
-            Instant before = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+            Instant dbNow = Instant.parse("2026-11-28T03:04:05.678Z");
+            when(authenticationClock.now()).thenReturn(dbNow);
 
             userService.updateUser(5L, dto);
 
             assertThat(user.getPassword()).isEqualTo("new-hash");
-            assertThat(user.getPasswordChangedAt()).isAfterOrEqualTo(before);
+            // Theo đồng hồ DB (cùng nguồn với mốc xác thực của session), không theo đồng hồ JVM của instance này
+            assertThat(user.getPasswordChangedAt()).isEqualTo(dbNow);
             verify(auditLogService).userPasswordReset(5L, "bob");
         }
     }

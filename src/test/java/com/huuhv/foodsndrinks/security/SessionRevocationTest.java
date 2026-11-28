@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.security;
 
+import com.huuhv.foodsndrinks.dto.request.ProfileUpdateReqDto;
 import com.huuhv.foodsndrinks.dto.request.UserEditReqDto;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.entity.User;
@@ -17,7 +18,9 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -56,6 +59,7 @@ class SessionRevocationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private UserService userService;
+    @Autowired private SessionAuthenticationTimeStore sessionAuthenticationTimeStore;
 
     private User createUser(String username, Role role) {
         return userRepository.saveAndFlush(User.builder()
@@ -218,6 +222,26 @@ class SessionRevocationTest {
         }
         assertThat(isLoggedIn(otherBrowser)).isFalse();
         assertThat(isLoggedIn(afterChange)).isTrue();
+    }
+
+    @Test
+    void requestOfTheChangingSession_betweenPasswordCommitAndSessionSave_isNotRevoked() throws Exception {
+        // POST /profile/edit commit mật khẩu mới TRƯỚC khi response của nó lưu session (Spring Session lưu lúc response
+        // commit). Request song song của chính session đó (polling 2s của trang import, tab khác) rơi vào khoảng giữa
+        // chỉ thấy những gì đã nằm trong kho session: mốc xác thực phải được ghi thẳng vào kho trước commit
+        User user = createUser("pwdrace", Role.ROLE_USER);
+        Cookie changer = login(user.getUsername());
+        Cookie otherBrowser = login(user.getUsername());
+        String changerSessionId = new String(Base64.getDecoder().decode(changer.getValue()), StandardCharsets.UTF_8);
+
+        // Đúng bước của PasswordChangeSessionHandler#stampCurrentSession, dừng trước khi response của POST lưu session
+        userService.updateProfile(user.getId(), new ProfileUpdateReqDto(user.getFullName(), user.getEmail(),
+                        randomPhone(), PASSWORD, NEW_PASSWORD, NEW_PASSWORD),
+                passwordChangedAt -> assertThat(sessionAuthenticationTimeStore.persist(changerSessionId,
+                        passwordChangedAt)).isTrue());
+
+        assertThat(isLoggedIn(changer)).isTrue();
+        assertThat(isLoggedIn(otherBrowser)).isFalse();
     }
 
     @Test

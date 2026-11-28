@@ -8,10 +8,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Đóng các kết nối WebSocket không còn được phép — tương đương {@code AccountStatusFilter} của request HTTP, vì frame
@@ -20,7 +22,8 @@ import java.util.Optional;
  *   <li>tài khoản bị khoá, bị xoá, đổi role hoặc đổi mật khẩu sau khi session của socket đăng nhập (một query cho mọi username đang kết nối, cùng quy tắc
  *       {@link AccountStatusService#revocationReason}) → audit {@code SESSION_REVOKED};</li>
  *   <li>session HTTP đã kết thúc ở bất kỳ instance nào (logout, hết hạn, bị huỷ, đổi id khi đăng nhập lại) —
- *       {@link HttpSessionLookup} hỏi kho session dùng chung; đây là đường duy nhất, không có event nào báo.</li>
+ *       {@link HttpSessionLookup} hỏi kho session dùng chung (một query theo lô cho mọi socket); đây là đường duy nhất,
+ *       không có event nào báo.</li>
  * </ul>
  * Ngoài ra đóng lại ({@code RESYNC}) socket còn dấu {@link TrackedSession#resyncPending()} — lần đóng sau khi
  * subscription realtime được tạo lại đã thất bại.
@@ -57,15 +60,17 @@ public class WebSocketSessionRevalidationJob {
         if (sessions.isEmpty()) {
             return 0;
         }
-        List<String> usernames = sessions.stream().filter(tracked -> !tracked.revoked())
-                .map(TrackedSession::username).distinct().toList();
+        List<TrackedSession> unrevoked = sessions.stream().filter(tracked -> !tracked.revoked()).toList();
+        List<String> usernames = unrevoked.stream().map(TrackedSession::username).distinct().toList();
         Map<String, UserAccountStatus> statuses = usernames.isEmpty() ? Map.of()
                 : accountStatusService.findAccountStatuses(usernames);
+        Set<WebSocketSession> ended = unrevoked.isEmpty() ? Set.of()
+                : httpSessionLookup.findEnded(unrevoked.stream().map(TrackedSession::session).toList());
         int closed = 0;
         for (TrackedSession tracked : sessions) {
             // Đã thu hồi mà chưa đóng được (chu kỳ trước, đổi id session...) → chỉ đóng lại: lý do có thể không còn kiểm
             // tra được nữa và đã được audit. Session HTTP kết thúc → đóng, không audit.
-            if (tracked.revoked() || !httpSessionLookup.isAlive(tracked.session())) {
+            if (tracked.revoked() || ended.contains(tracked.session())) {
                 tracker.revoke(tracked.session());
                 closed++;
                 continue;

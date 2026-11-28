@@ -16,11 +16,14 @@ import com.huuhv.foodsndrinks.security.CustomOidcUserService;
 import com.huuhv.foodsndrinks.security.CustomUserDetailsService;
 import com.huuhv.foodsndrinks.security.JwtAuthenticationFilter;
 import com.huuhv.foodsndrinks.security.LoginAttemptAwareAuthenticationProvider;
+import com.huuhv.foodsndrinks.security.SessionAuthenticationTimeStore;
+import com.huuhv.foodsndrinks.security.SoapBasicAuthenticationProvider;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
 import com.huuhv.foodsndrinks.security.RegistrationRateLimitFilter;
 import com.huuhv.foodsndrinks.security.RequestBodySizeLimitFilter;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
+import com.huuhv.foodsndrinks.service.security.AuthenticationClock;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
 import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
@@ -41,6 +44,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.DefaultAuthenticationEventPublisher;
+import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.event.AuthenticationFailureLockedEvent;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.Customizer;
@@ -262,9 +266,12 @@ public class SecurityConfig {
     // -------------------------------------------------------
     /**
      * {@code /ws/**} ({@code MessageDispatcherServlet}): client là hệ thống đối tác, không phải trình duyệt — không
-     * session/cookie nên CSRF tắt CHỈ ở chain này; xác thực bằng HTTP Basic với tài khoản của app, đi qua cùng
-     * {@code LoginAttemptAwareAuthenticationProvider} với form/API (giới hạn đăng nhập sai, từ chối tài khoản bị khoá —
-     * stateless nên được kiểm tra ở MỌI request). Mọi operation cần {@code USER}/{@code ADMIN}; riêng file WSDL (GET) là
+     * session/cookie nên CSRF tắt CHỈ ở chain này; xác thực bằng HTTP Basic với tài khoản của app qua
+     * {@link SoapBasicAuthenticationProvider} (AuthenticationManager riêng của chain): bọc
+     * {@code LoginAttemptAwareAuthenticationProvider} như form/API (giới hạn đăng nhập sai) nhưng gộp request song song
+     * cùng thông tin đăng nhập, nhớ lần xác thực đúng ngắn hạn và không xoá bộ đếm khi đúng; tài khoản bị khoá bị từ chối
+     * ở MỌI request (stateless). Event đăng nhập vẫn qua {@code authenticationEventPublisher} (audit
+     * {@code auth.method=SOAP}). Mọi operation cần {@code USER}/{@code ADMIN}; riêng file WSDL (GET) là
      * public — hợp đồng vốn nằm trong repo. Chưa/sai tài khoản → 401 + {@code WWW-Authenticate}, không body.
      * <p>
      * Phân quyền theo từng operation không làm được ở đây: Spring-WS định tuyến theo PAYLOAD, mọi operation chung một URL —
@@ -273,13 +280,24 @@ public class SecurityConfig {
      */
     @Bean
     @Order(3)
-    public SecurityFilterChain soapSecurityFilterChain(HttpSecurity http, SoapProperties soapProperties) throws Exception {
+    public SecurityFilterChain soapSecurityFilterChain(HttpSecurity http, SoapProperties soapProperties,
+                                                       CustomUserDetailsService userDetailsService,
+                                                       PasswordEncoder passwordEncoder,
+                                                       LoginAttemptService loginAttemptService,
+                                                       AuthenticationEventPublisher authenticationEventPublisher)
+            throws Exception {
+        ProviderManager soapAuthenticationManager = new ProviderManager(new SoapBasicAuthenticationProvider(
+                new LoginAttemptAwareAuthenticationProvider(userDetailsService, passwordEncoder, loginAttemptService,
+                        false),
+                userDetailsService));
+        soapAuthenticationManager.setAuthenticationEventPublisher(authenticationEventPublisher);
         AuthenticationEntryPoint unauthorized = (request, response, exception) -> {
             response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"" + SOAP_REALM + "\"");
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
         };
         http
                 .securityMatcher(SoapProperties.PATH, SoapProperties.PATH + "/**")
+                .authenticationManager(soapAuthenticationManager)
                 .headers(SecurityConfig::securityHeaders)
                 .csrf(AbstractHttpConfigurer::disable)   // stateless, không cookie → không có gì để CSRF
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -298,12 +316,13 @@ public class SecurityConfig {
     }
 
     @Bean
-    public AuthenticationSuccessHandler customAuthenticationSuccessHandler() {
+    public AuthenticationSuccessHandler customAuthenticationSuccessHandler(AuthenticationClock authenticationClock) {
         return (HttpServletRequest request, HttpServletResponse response, Authentication authentication) -> {
 
             // Form + OAuth2: ghi mốc xác thực vào session — session đăng nhập trước lần đổi mật khẩu gần nhất bị huỷ
-            // (AccountStatusService). Remember-me ghi ở AuditingRememberMeServices.
-            SessionAuthenticationTime.stamp(request, SessionAuthenticationTime.now());
+            // (AccountStatusService). Đồng hồ DB: cùng nguồn với users.password_changed_at dù hai mốc được ghi ở hai
+            // instance khác nhau. Remember-me ghi ở AuditingRememberMeServices.
+            SessionAuthenticationTime.stamp(request, authenticationClock.now());
 
             // Honor any saved request (e.g. user was trying to access /profile before being redirected to /login)
             var requestCache = new HttpSessionRequestCache();
@@ -353,9 +372,10 @@ public class SecurityConfig {
     /** Remember-me (cookie ký HMAC, 7 ngày) có ghi audit log khi cookie bị từ chối — xem AuditingRememberMeServices. */
     @Bean
     public AuditingRememberMeServices rememberMeServices(CustomUserDetailsService userDetailsService,
-                                                         AuditLogService auditLogService) {
-        AuditingRememberMeServices services =
-                new AuditingRememberMeServices(rememberMeKey, userDetailsService, auditLogService);
+                                                         AuditLogService auditLogService,
+                                                         AuthenticationClock authenticationClock) {
+        AuditingRememberMeServices services = new AuditingRememberMeServices(rememberMeKey, userDetailsService,
+                auditLogService, authenticationClock);
         services.setTokenValiditySeconds(7 * 24 * 60 * 60);
         services.setParameter("remember-me");
         return services;
@@ -368,7 +388,9 @@ public class SecurityConfig {
                                                        AuditingRememberMeServices rememberMeServices,
                                                        AccountStatusService accountStatusService,
                                                        AuditLogService auditLogService,
-                                                       RegistrationRateLimitService registrationRateLimitService)
+                                                       RegistrationRateLimitService registrationRateLimitService,
+                                                       SessionAuthenticationTimeStore sessionAuthenticationTimeStore,
+                                                       AuthenticationSuccessHandler customAuthenticationSuccessHandler)
             throws Exception {
         http
                 .headers(headers -> {
@@ -407,14 +429,14 @@ public class SecurityConfig {
                         .passwordParameter("password")
 
                         // THAY THẾ .defaultSuccessUrl bằng .successHandler vừa tạo ở trên
-                        .successHandler(customAuthenticationSuccessHandler())
+                        .successHandler(customAuthenticationSuccessHandler)
 
                         .failureHandler(formLoginFailureHandler())
                         .permitAll()
                 )
                 .oauth2Login(oauth2 -> oauth2
                         .loginPage("/login")
-                        .successHandler(customAuthenticationSuccessHandler())
+                        .successHandler(customAuthenticationSuccessHandler)
                         // Redirect về /login?error=true như failureUrl, kèm audit log (lỗi OAuth2 không sinh event)
                         .failureHandler(oAuth2LoginFailureHandler)
                         .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(pkceAuthorizationRequestResolver))
@@ -442,7 +464,8 @@ public class SecurityConfig {
                 )
                 // Huỷ session của tài khoản bị khoá/đổi role sau khi đăng nhập. Sau remember-me, trước anonymous: request
                 // bị huỷ session đi tiếp như khách
-                .addFilterBefore(new AccountStatusFilter(accountStatusService, auditLogService, rememberMeServices),
+                .addFilterBefore(new AccountStatusFilter(accountStatusService, auditLogService, rememberMeServices,
+                                sessionAuthenticationTimeStore),
                         AnonymousAuthenticationFilter.class)
                 // Giới hạn POST /register theo IP — trước khi validation của form (gồm Pwned Passwords) chạy
                 .addFilterBefore(new RegistrationRateLimitFilter(registrationRateLimitService),

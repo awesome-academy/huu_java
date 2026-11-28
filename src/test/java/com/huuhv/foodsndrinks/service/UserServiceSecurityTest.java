@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.exception.OAuthEmailConflictException;
 import com.huuhv.foodsndrinks.exception.PasswordChangeThrottledException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.service.security.AuthenticationClock;
 import com.huuhv.foodsndrinks.service.security.InMemoryAttemptLimitRepository;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,7 +23,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
-import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,19 +42,25 @@ import static org.mockito.Mockito.when;
 class UserServiceSecurityTest {
 
     private static final String EMAIL = "victim@gmail.com";
+    /** "Bây giờ" theo đồng hồ DB (AuthenticationClock) — cố ý khác đồng hồ JVM. */
+    private static final Instant DB_NOW = Instant.parse("2026-11-28T03:04:05.678Z");
 
     @Mock private UserRepository userRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private AuditLogService auditLogService;
+    @Mock private AuthenticationClock authenticationClock;
 
     private UserService userService;
+    private final List<Instant> stampedBeforeCommit = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
         LoginAttemptService loginAttemptService = new LoginAttemptService(
                 new LoginAttemptProperties(3, 20, 50, Duration.ofMinutes(15), Duration.ofMinutes(15)),
                 InMemoryAttemptLimitRepository.factory(InstantSource.system()), auditLogService);
-        userService = new UserService(userRepository, passwordEncoder, auditLogService, loginAttemptService);
+        userService = new UserService(userRepository, passwordEncoder, auditLogService, loginAttemptService,
+                authenticationClock);
+        lenient().when(authenticationClock.now()).thenReturn(DB_NOW);
         lenient().when(userRepository.findByAuthProviderAndProviderId(any(), anyString())).thenReturn(Optional.empty());
     }
 
@@ -124,12 +132,12 @@ class UserServiceSecurityTest {
         when(passwordEncoder.matches(anyString(), any())).thenReturn(false);
 
         for (int i = 0; i < 2; i++) {
-            assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess")));
+            assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess"), stampedBeforeCommit::add));
         }
-        assertThatThrownBy(() -> userService.updateProfile(1L, passwordChange("guess")))
+        assertThatThrownBy(() -> userService.updateProfile(1L, passwordChange("guess"), stampedBeforeCommit::add))
                 .isInstanceOf(PasswordChangeThrottledException.class);
         // Đã khoá: không so mật khẩu nữa, kể cả khi đoán đúng
-        assertThatThrownBy(() -> userService.updateProfile(1L, passwordChange("right")))
+        assertThatThrownBy(() -> userService.updateProfile(1L, passwordChange("right"), stampedBeforeCommit::add))
                 .isInstanceOf(PasswordChangeThrottledException.class);
 
         verify(passwordEncoder, never()).matches("right", "hash");
@@ -144,12 +152,11 @@ class UserServiceSecurityTest {
         when(passwordEncoder.encode("new-password-123")).thenReturn("new-hash");
 
         for (int i = 0; i < 2; i++) {
-            assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess")));
+            assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess"), stampedBeforeCommit::add));
         }
-        Instant before = Instant.now().truncatedTo(ChronoUnit.MILLIS);
-        Optional<Instant> changedAt = userService.updateProfile(1L, passwordChange("right"));
+        Optional<Instant> changedAt = userService.updateProfile(1L, passwordChange("right"), stampedBeforeCommit::add);
         for (int i = 0; i < 2; i++) {
-            assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess")));
+            assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess"), stampedBeforeCommit::add));
         }
 
         ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
@@ -157,7 +164,10 @@ class UserServiceSecurityTest {
         assertThat(saved.getValue().getPassword()).isEqualTo("new-hash");
         // Mốc đổi mật khẩu được lưu (mili giây) và trả về cho người gọi — để giữ lại đúng session vừa đổi (issue #37)
         assertThat(changedAt).get().isEqualTo(saved.getValue().getPasswordChangedAt());
-        assertThat(changedAt.get()).isAfterOrEqualTo(before).isEqualTo(changedAt.get().truncatedTo(ChronoUnit.MILLIS));
+        // Mốc theo đồng hồ DB (không theo JVM) và được báo cho người gọi TRƯỚC commit, đúng một lần, với đúng giá trị
+        // sẽ lưu — để ghi mốc của session hiện tại vào kho session trước khi request khác thấy mật khẩu mới
+        assertThat(changedAt).contains(DB_NOW);
+        assertThat(stampedBeforeCommit).containsExactly(DB_NOW);
     }
 
     @Test
@@ -166,10 +176,11 @@ class UserServiceSecurityTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(victim));
 
         Optional<Instant> changedAt = userService.updateProfile(1L,
-                new ProfileUpdateReqDto("Victim Renamed", EMAIL, "0912345678", null, "", ""));
+                new ProfileUpdateReqDto("Victim Renamed", EMAIL, "0912345678", null, "", ""), stampedBeforeCommit::add);
 
         // Không đổi mật khẩu → không session nào bị huỷ
         assertThat(changedAt).isEmpty();
+        assertThat(stampedBeforeCommit).isEmpty();
         assertThat(victim.getPasswordChangedAt()).isNull();
         assertThat(victim.getPassword()).isEqualTo("hash");
     }

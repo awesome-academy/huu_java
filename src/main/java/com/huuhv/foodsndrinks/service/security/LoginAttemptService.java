@@ -126,6 +126,17 @@ public class LoginAttemptService {
         }
     }
 
+    /**
+     * Đúng mật khẩu nhưng KHÔNG xoá bộ đếm: chỉ trả lại các lần đã giữ chỗ (như {@link #abandoned}). Dùng cho xác thực
+     * lặp lại tự động của máy (HTTP Basic của SOAP — mỗi request một lần xác thực): nếu mỗi lần gọi thành công đều xoá bộ
+     * đếm theo tài khoản như {@link #succeeded}, hệ thống gọi định kỳ bằng tài khoản đó sẽ liên tục reset giới hạn chống
+     * dò mật khẩu phân tán của chính tài khoản ấy — kẻ tấn công rải đoán từ nhiều IP không bao giờ chạm ngưỡng khoá.
+     * Lần sai trước đó vẫn được tính tới hết cửa sổ.
+     */
+    public void verified(LoginAttempt attempt) {
+        abandoned(attempt);
+    }
+
     /** Lần thử kết thúc vì lý do khác sai mật khẩu (vd. tài khoản bị khoá, lỗi DB): trả lại các lần đã giữ chỗ. */
     public void abandoned(LoginAttempt attempt) {
         for (Slot slot : attempt.slots) {

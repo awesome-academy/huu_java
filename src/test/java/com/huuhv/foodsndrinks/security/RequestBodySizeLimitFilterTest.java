@@ -8,10 +8,13 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -90,6 +93,33 @@ class RequestBodySizeLimitFilterTest {
                 assertThatThrownBy(req::getReader).isInstanceOf(UnsupportedEncodingException.class)
                         // Không lặp lại tên charset client gửi
                         .hasMessage("Unsupported request character encoding"));
+    }
+
+    @Test
+    void reader_isTheSameObjectOnEveryCall_soBufferedBytesAreNotLost() throws Exception {
+        byte[] body = "x".repeat(20_000).getBytes(StandardCharsets.ISO_8859_1);
+        AtomicReference<String> read = new AtomicReference<>();
+
+        new RequestBodySizeLimitFilter(body.length).doFilter(post(body), response, (req, res) -> {
+            // Lần gọi đầu đọc trước một khối vào buffer; lần gọi sau phải đọc tiếp từ đúng chỗ đó
+            assertThat(req.getReader().read()).isEqualTo('x');
+            assertThat(req.getReader()).isSameAs(req.getReader());
+            read.set("x" + req.getReader().lines().collect(Collectors.joining()));
+        });
+
+        assertThat(read.get()).hasSize(body.length);
+    }
+
+    @Test
+    void streamAndReader_cannotBothBeUsed() throws Exception {
+        filter.doFilter(post("ok".getBytes()), response, (req, res) -> {
+            req.getInputStream();
+            assertThatIllegalStateException().isThrownBy(req::getReader);
+        });
+        filter.doFilter(post("ok".getBytes()), response, (req, res) -> {
+            req.getReader();
+            assertThatIllegalStateException().isThrownBy(req::getInputStream);
+        });
     }
 
     @Test

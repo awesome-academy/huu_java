@@ -6,10 +6,12 @@ import com.huuhv.foodsndrinks.security.CustomOidcUserService;
 import com.huuhv.foodsndrinks.security.CustomUserDetailsService;
 import com.huuhv.foodsndrinks.security.JwtUtil;
 import com.huuhv.foodsndrinks.security.OAuth2LoginFailureHandler;
+import com.huuhv.foodsndrinks.security.SessionAuthenticationTimeStore;
 import com.huuhv.foodsndrinks.service.OrderService;
 import com.huuhv.foodsndrinks.service.UserService;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
+import com.huuhv.foodsndrinks.service.security.AuthenticationClock;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -50,6 +52,7 @@ import java.lang.annotation.Target;
         CustomOidcUserService.class, CustomOAuth2UserService.class, OAuth2LoginFailureHandler.class,
         CustomUserDetailsService.class, PasswordEncoder.class, LoginAttemptService.class, AuditLogService.class,
         AccountStatusService.class, RegistrationRateLimitService.class, ClientRegistrationRepository.class,
+        AuthenticationClock.class, SessionAuthenticationTimeStore.class,
         // JwtAuthenticationFilter (Filter → được slice nạp)
         JwtUtil.class,
         // WebLayoutModelAdvice (@ControllerAdvice → được slice nạp)

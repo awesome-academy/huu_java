@@ -15,6 +15,7 @@ import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
@@ -51,6 +52,7 @@ public class OrderService {
     private final OrderDetailRepository  orderDetailRepository;
     private final ProductRepository      productRepository;
     private final ProductImageRepository productImageRepository;
+    private final UserRepository         userRepository;
     private final OutboxService          outboxService;
     private final AuditLogService        auditLogService;
 
@@ -120,6 +122,7 @@ public class OrderService {
 
     @Transactional
     public void addToCart(User user, Long productId, int quantity) {
+        lockCartOwner(user);
         int qty = Math.max(quantity, 1);
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm không tồn tại!"));
@@ -152,6 +155,7 @@ public class OrderService {
 
     @Transactional
     public void updateCartItemQuantity(User user, Long orderDetailId, int quantity) {
+        lockCartOwner(user);
         OrderDetail detail = requireOwnedCartItem(user, orderDetailId);
         Order cart = detail.getOrder();
 
@@ -168,6 +172,7 @@ public class OrderService {
 
     @Transactional
     public void removeCartItem(User user, Long orderDetailId) {
+        lockCartOwner(user);
         OrderDetail detail = requireOwnedCartItem(user, orderDetailId);
         Order cart = detail.getOrder();
         cart.getOrderDetails().remove(detail);
@@ -175,8 +180,14 @@ public class OrderService {
         orderRepository.save(cart);
     }
 
+    /**
+     * Đặt giỏ hàng thành đơn ({@code CART} → {@code PENDING}). Khoá chủ giỏ trước ({@link #lockCartOwner}): bấm "Đặt hàng"
+     * hai lần hay sửa giỏ ở tab khác cùng lúc thì request sau chờ request trước commit rồi mới đọc giỏ — lần checkout thứ
+     * hai thấy giỏ đã thành đơn (không còn {@code CART}) và báo giỏ trống, không ghi outbox lần nữa.
+     */
     @Transactional
     public void checkout(User user, String shippingAddress, String note) {
+        lockCartOwner(user);
         Order cart = orderRepository.findCartByUserId(user.getId())
                 .filter(o -> !o.getOrderDetails().isEmpty())
                 .orElseThrow(() -> new IllegalArgumentException("Giỏ hàng của bạn đang trống!"));
@@ -325,6 +336,22 @@ public class OrderService {
 
         return new OrderPlacedMessage(order.getId(), user.getFullName(), user.getEmail(), user.getPhone(),
                 order.getShippingAddress(), order.getNote(), order.getTotalPrice(), order.getOrderedAt(), items);
+    }
+
+    /**
+     * Khoá dòng {@code users} của chủ giỏ tới hết transaction — câu lệnh ĐẦU TIÊN của mọi thao tác ghi giỏ hàng và của
+     * {@link #checkout}, để các thao tác đó của cùng một người dùng chạy lần lượt.
+     * <p>
+     * Không khoá thì hai request cùng đọc giỏ ở trạng thái {@code CART}: checkout hai lần ghi hai {@code ORDER_PLACED}
+     * vào outbox, hoặc thêm/sửa món ngay lúc checkout lưu lại TOÀN BỘ entity {@code Order} đã đọc trước đó — đưa đơn vừa
+     * đặt về {@code CART} hay thêm món vào đơn đã đặt. Khoá chủ giỏ (không khoá dòng {@code orders}) xếp hàng được cả lúc
+     * người dùng chưa có giỏ (hai lần thêm món đầu tiên song song không tạo hai giỏ). Phải đứng trước mọi lần đọc trong
+     * transaction: ở REPEATABLE READ, snapshot được chụp ở lần đọc thường đầu tiên — sau khi chờ khoá xong mới chụp thì
+     * thấy thay đổi request trước vừa commit.
+     */
+    private void lockCartOwner(User user) {
+        userRepository.lockIdById(user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Tài khoản không tồn tại!"));
     }
 
     private Order createEmptyCart(User user) {

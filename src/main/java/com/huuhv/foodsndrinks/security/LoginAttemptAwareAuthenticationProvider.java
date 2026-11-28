@@ -26,6 +26,10 @@ import org.springframework.security.web.authentication.WebAuthenticationDetails;
  * Key phải là chuỗi người dùng nhập (không qua {@code AuthenticationSuccessEvent}): event thành công chỉ còn username
  * chuẩn, đăng nhập bằng email sẽ không bao giờ xoá được bộ đếm của email.
  * <p>
+ * Mặc định đăng nhập đúng xoá bộ đếm của tên đăng nhập/tài khoản ({@link LoginAttemptService#succeeded}); provider
+ * dùng cho HTTP Basic của SOAP tạo với {@code resetCountersOnSuccess = false} — chỉ trả lại lần giữ chỗ
+ * ({@link LoginAttemptService#verified}), vì máy gọi định kỳ sẽ liên tục xoá bộ đếm chống dò mật khẩu của chính tài khoản đó.
+ * <p>
  * Trạng thái tài khoản (disabled...) được kiểm tra SAU khi so mật khẩu (mặc định của Spring là trước): nếu không,
  * ai cũng dò được tài khoản nào tồn tại và đang bị khoá mà không cần biết mật khẩu.
  */
@@ -35,15 +39,28 @@ public class LoginAttemptAwareAuthenticationProvider extends DaoAuthenticationPr
     private static final ThreadLocal<LoginAttempt> CURRENT_ATTEMPT = new ThreadLocal<>();
 
     private final LoginAttemptService loginAttemptService;
+    private final boolean resetCountersOnSuccess;
 
     public LoginAttemptAwareAuthenticationProvider(UserDetailsService userDetailsService,
                                                    PasswordEncoder passwordEncoder,
                                                    LoginAttemptService loginAttemptService) {
+        this(userDetailsService, passwordEncoder, loginAttemptService, true);
+    }
+
+    /**
+     * @param resetCountersOnSuccess {@code false}: đăng nhập đúng chỉ trả lại lần giữ chỗ, không xoá bộ đếm (xác thực tự
+     *                               động lặp lại — HTTP Basic của SOAP)
+     */
+    public LoginAttemptAwareAuthenticationProvider(UserDetailsService userDetailsService,
+                                                   PasswordEncoder passwordEncoder,
+                                                   LoginAttemptService loginAttemptService,
+                                                   boolean resetCountersOnSuccess) {
         super(userDetailsService);
         setPasswordEncoder(passwordEncoder);
         setPreAuthenticationChecks(user -> { });
         setPostAuthenticationChecks(new AccountStatusUserDetailsChecker());
         this.loginAttemptService = loginAttemptService;
+        this.resetCountersOnSuccess = resetCountersOnSuccess;
     }
 
     @Override
@@ -53,7 +70,11 @@ public class LoginAttemptAwareAuthenticationProvider extends DaoAuthenticationPr
         boolean finished = false;
         try {
             Authentication result = super.authenticate(authentication);
-            loginAttemptService.succeeded(attempt);
+            if (resetCountersOnSuccess) {
+                loginAttemptService.succeeded(attempt);
+            } else {
+                loginAttemptService.verified(attempt);
+            }
             finished = true;
             return result;
         } catch (BadCredentialsException ex) {

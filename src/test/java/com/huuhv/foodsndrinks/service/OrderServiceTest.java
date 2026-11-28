@@ -14,16 +14,19 @@ import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.repository.projection.OrderStatusView;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -44,6 +47,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -61,11 +66,18 @@ class OrderServiceTest {
     @Mock private ProductImageRepository productImageRepository;
     @Mock private OutboxService outboxService;
     @Mock private AuditLogService auditLogService;
+    @Mock private UserRepository userRepository;
 
     @InjectMocks private OrderService orderService;
 
     private final User alice = user(1L, "alice");
     private final User mallory = user(2L, "mallory");
+
+    /** Thao tác ghi giỏ + checkout khoá dòng {@code users} của chủ giỏ trước tiên; tài khoản còn tồn tại. */
+    @BeforeEach
+    void cartOwnersExist() {
+        lenient().when(userRepository.lockIdById(any())).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+    }
 
     @Test
     void searchOrders_cartStatusFilter_isIgnored_soAdminNeverListsCarts() {
@@ -364,6 +376,40 @@ class OrderServiceTest {
 
     @Nested
     class Checkout {
+
+        @Test
+        void locksTheCartOwner_beforeReadingTheCart() {
+            Order cart = cartOf(alice, OrderStatus.CART);
+            line(500L, cart, product(10L, "25000", true), 1);
+            when(orderRepository.findCartByUserId(1L)).thenReturn(Optional.of(cart));
+
+            orderService.checkout(alice, "1 Lê Lợi", null);
+
+            // Lần checkout thứ hai (bấm hai lần) chờ ở khoá này rồi mới đọc giỏ — lúc đó giỏ đã là PENDING
+            InOrder order = inOrder(userRepository, orderRepository, outboxService);
+            order.verify(userRepository).lockIdById(1L);
+            order.verify(orderRepository).findCartByUserId(1L);
+            order.verify(outboxService).enqueue(eq(OutboxType.ORDER_PLACED), any());
+        }
+
+        @Test
+        void secondCheckoutAfterTheFirstCommitted_findsNoCart_andEnqueuesNothing() {
+            // Request thứ hai chờ khoá xong thì giỏ đã thành đơn: không còn đơn CART nào của user
+            when(orderRepository.findCartByUserId(1L)).thenReturn(Optional.empty());
+
+            assertThatIllegalArgumentException().isThrownBy(() -> orderService.checkout(alice, "1 Lê Lợi", null));
+            verify(userRepository).lockIdById(1L);
+            verifyNoInteractions(outboxService);
+        }
+
+        @Test
+        void deletedAccount_isRejected_withoutTouchingOrders() {
+            when(userRepository.lockIdById(1L)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.checkout(alice, "1 Lê Lợi", null))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verifyNoInteractions(orderRepository, outboxService);
+        }
 
         @Test
         void withoutCart_isRejected() {

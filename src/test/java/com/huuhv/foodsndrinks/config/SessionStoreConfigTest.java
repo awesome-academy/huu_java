@@ -1,5 +1,7 @@
 package com.huuhv.foodsndrinks.config;
 
+import com.huuhv.foodsndrinks.repository.HttpSessionStoreRepository;
+import com.huuhv.foodsndrinks.security.SessionAuthenticationTimeStore;
 import com.huuhv.foodsndrinks.config.properties.SessionStoreProperties;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
 import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
@@ -28,6 +30,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import javax.sql.DataSource;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -50,6 +54,8 @@ class SessionStoreConfigTest {
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private ApplicationContext context;
     @Autowired private Environment environment;
+    @Autowired private HttpSessionStoreRepository httpSessionStoreRepository;
+    @Autowired private SessionAuthenticationTimeStore sessionAuthenticationTimeStore;
 
     @Test
     void sessionPool_isASecondPool_andTheAutoConfiguredPrimaryPoolIsStillThere() throws Exception {
@@ -92,7 +98,7 @@ class SessionStoreConfigTest {
 
     @Test
     void session_withSecurityContextAndAuthenticationTime_isReadBackIntact() {
-        Instant authenticatedAt = SessionAuthenticationTime.now();
+        Instant authenticatedAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         User principal = new User("alice", "", AuthorityUtils.createAuthorityList("ROLE_USER"));
         SecurityContext securityContext = new SecurityContextImpl(
                 UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
@@ -141,6 +147,49 @@ class SessionStoreConfigTest {
             sessionRepository.deleteById(live);
             sessionRepository.deleteById(expired);
         }
+    }
+
+    @Test
+    void liveSessionIds_areFoundInOneQuery_excludingExpiredAndUnknownIds() {
+        // Job thu hồi WebSocket hỏi kho session theo lô (thay vì findById từng socket)
+        String expired = create(sessionRepository, Duration.ofMinutes(30), Instant.now().minus(Duration.ofMinutes(31)),
+                session -> session.setAttribute("marker", "expired"));
+        String live = create(sessionRepository, Duration.ofMinutes(30), Instant.now(),
+                session -> session.setAttribute("marker", "live"));
+        try {
+            assertThat(httpSessionStoreRepository.findLiveSessionIds(
+                    List.of(live, expired, "no-such-session", live), Instant.now().toEpochMilli()))
+                    .containsExactly(live);
+            // Chỉ đọc: không xoá session hết hạn (việc của job dọn dẹp), không gia hạn session còn sống
+            assertThat(rowsOf(expired)).isEqualTo(1);
+        } finally {
+            sessionRepository.deleteById(live);
+            sessionRepository.deleteById(expired);
+        }
+    }
+
+    @Test
+    void authenticationTime_isWrittenStraightIntoTheStoredSession_andReadBack() {
+        Instant loggedInAt = Instant.parse("2026-11-28T01:00:00.123Z");
+        Instant passwordChangedAt = Instant.parse("2026-11-28T02:00:00.456Z");
+        String id = create(sessionRepository, Duration.ofMinutes(30), Instant.now(),
+                session -> session.setAttribute(SessionAuthenticationTime.ATTRIBUTE, loggedInAt.toEpochMilli()));
+        try {
+            assertThat(sessionAuthenticationTimeStore.reload(id)).isEqualTo(loggedInAt);
+
+            assertThat(sessionAuthenticationTimeStore.persist(id, passwordChangedAt)).isTrue();
+
+            // Request khác của cùng session thấy ngay, không chờ request đang chạy lưu session lúc response commit
+            Session stored = sessionRepository.findById(id);
+            assertThat(stored.<Long>getAttribute(SessionAuthenticationTime.ATTRIBUTE))
+                    .isEqualTo(passwordChangedAt.toEpochMilli());
+            assertThat(sessionAuthenticationTimeStore.reload(id)).isEqualTo(passwordChangedAt);
+        } finally {
+            sessionRepository.deleteById(id);
+        }
+        // Session không có trong kho (mới tạo trong request hiện tại) → người gọi ghi vào session của request
+        assertThat(sessionAuthenticationTimeStore.persist(id, passwordChangedAt)).isFalse();
+        assertThat(sessionAuthenticationTimeStore.reload(id)).isNull();
     }
 
     @Test

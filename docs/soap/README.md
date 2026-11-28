@@ -22,6 +22,8 @@ Class JAXB (`com.huuhv.foodsndrinks.soap.store.*`) được **sinh lúc build** 
 - **Mọi operation cần HTTP Basic.** Thiếu hoặc sai tài khoản → `401` + header `WWW-Authenticate: Basic realm="foodsndrinks-soap"`, **không có body** (không redirect `/login`, không trang HTML). Chỉ file WSDL là public.
 - **Stateless:** không session, không cookie — vì vậy CSRF được tắt *chỉ* cho `/ws/**`. Cookie đăng nhập của trình duyệt **không** phải danh tính với SOAP.
 - Tài khoản được kiểm tra lại ở **mỗi request**: bị khoá → `401` ngay. Giới hạn đăng nhập sai áp dụng như form/API (sai 5 lần / 15 phút → tạm khoá, xem [docs/api](../api/README.md#xác-thực)). Audit ghi `LOGIN_SUCCESS` / `LOGIN_FAILURE` với `auth.method=SOAP`.
+- **Gọi song song được:** nhiều request cùng lúc bằng cùng một tài khoản chỉ được xác thực (so BCrypt, giữ chỗ trong bộ đếm đăng nhập sai) một lần; lần xác thực đúng được nhớ 1 phút (tài khoản vẫn được tra lại DB ở mỗi request — khoá tài khoản hay đổi mật khẩu có hiệu lực ngay). Gọi đúng mật khẩu **không** xoá bộ đếm đăng nhập sai của tài khoản (khác form login), nên hệ thống tự động gọi định kỳ không làm mất tác dụng của giới hạn chống dò mật khẩu.
+- **Dùng tài khoản riêng cho hệ thống đối tác/dịch vụ** (`ROLE_USER`), không dùng tài khoản admin hay tài khoản của người thật.
 - Tài khoản chỉ đăng nhập bằng Google/Facebook/X (không có mật khẩu) không dùng được SOAP.
 - **Phân quyền theo dữ liệu:** `GetOrderStatus` chỉ trả đơn của chính người gọi; `ROLE_ADMIN` xem được mọi đơn. Đơn của người khác được trả lời **y hệt** đơn không tồn tại (chống dò mã đơn).
 - **Request được validate theo XSD** trước khi tới code; response cũng được validate trước khi gửi.
@@ -158,7 +160,7 @@ Ngoài vai trò server, app còn là **SOAP client**: gọi một dịch vụ t�
 | `SOAP_EXCHANGE_RATE_USERNAME` / `_PASSWORD` | HTTP Basic của dịch vụ (trống = không gửi `Authorization`) |
 | `SOAP_MOCK_ENDPOINT_ENABLED` | Bật endpoint tỷ giá giả. Mặc định `false`; profile `dev` (kể cả container `app` của compose) mặc định `true`; `prod` **luôn** tắt |
 
-**Bật ở local:** đăng ký một tài khoản trong app rồi đặt vào `.env` (endpoint mock nằm dưới `/ws` nên cũng yêu cầu HTTP Basic):
+**Bật ở local:** đăng ký một tài khoản **riêng** trong app (`ROLE_USER`, chỉ dùng cho việc này — không dùng tài khoản admin) rồi đặt vào `.env` (endpoint mock nằm dưới `/ws` nên cũng yêu cầu HTTP Basic):
 
 ```properties
 SOAP_EXCHANGE_RATE_URL=http://localhost:8080/ws
