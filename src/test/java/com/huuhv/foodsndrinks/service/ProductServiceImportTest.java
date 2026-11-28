@@ -118,6 +118,53 @@ class ProductServiceImportTest {
     }
 
     @Test
+    void longestAllowedName_whoseSlugIsTaken_getsASuffixedSlugThatStillFitsTheColumn() {
+        // Tên 255 ký tự → slug gốc 255 ký tự ("aaa…a-bc"); slug đó đã có sản phẩm khác dùng
+        String name = "a".repeat(252) + " bc";
+        String base = "a".repeat(252) + "-bc";
+        when(categoryRepository.findById(10L)).thenReturn(Optional.of(drinks));
+        when(productRepository.existsBySlug(any())).thenAnswer(invocation -> base.equals(invocation.getArgument(0)));
+
+        productService.applyImport(List.of(new ProductImportCommand(2, null, product(name, "1000", null, true))));
+
+        ArgumentCaptor<Product> saved = ArgumentCaptor.forClass(Product.class);
+        verify(productRepository).save(saved.capture());
+        // Cắt slug gốc để chừa chỗ cho "-1", không để "-" treo trước hậu tố
+        assertThat(saved.getValue().getSlug()).isEqualTo("a".repeat(252) + "-1")
+                .hasSizeLessThanOrEqualTo(ProductService.SLUG_MAX_LENGTH);
+    }
+
+    @Test
+    void updateKeepingTheName_keepsTheSlug_evenWhenTheBaseSlugHasBecomeFree() {
+        // "Cà phê!" được tạo sau "Cà phê" nên mang "ca-phe-1"; "Cà phê" đã bị xoá → "ca-phe" đang trống
+        Product product = Product.builder().id(8L).name("Cà phê!").slug("ca-phe-1").price(new BigDecimal("29000"))
+                .type(ProductType.DRINK).isAvailable(true).build();
+        when(categoryRepository.findById(10L)).thenReturn(Optional.of(drinks));
+        when(productRepository.findById(8L)).thenReturn(Optional.of(product));
+        when(productImageRepository.findByProductIdOrderBySortOrderAsc(8L)).thenReturn(List.of());
+
+        productService.applyImport(List.of(new ProductImportCommand(2, 8L, product("Cà phê!", "31000", null, true))));
+
+        // Link /products/ca-phe-1 đã chia sẻ vẫn dùng được
+        assertThat(product.getSlug()).isEqualTo("ca-phe-1");
+        assertThat(product.getPrice()).isEqualByComparingTo("31000");
+        verify(productRepository, never()).existsBySlugAndIdNot(any(), any());
+    }
+
+    @Test
+    void updateChangingTheName_regeneratesTheSlug() {
+        Product product = Product.builder().id(8L).name("Cà phê").slug("ca-phe").price(new BigDecimal("29000"))
+                .type(ProductType.DRINK).isAvailable(true).build();
+        when(categoryRepository.findById(10L)).thenReturn(Optional.of(drinks));
+        when(productRepository.findById(8L)).thenReturn(Optional.of(product));
+        when(productImageRepository.findByProductIdOrderBySortOrderAsc(8L)).thenReturn(List.of());
+
+        productService.updateProduct(8L, product("Cà phê sữa", "31000", null, true), null, null, null);
+
+        assertThat(product.getSlug()).isEqualTo("ca-phe-sua");
+    }
+
+    @Test
     void applyImport_productDeletedSinceValidation_fails() {
         when(productRepository.findById(7L)).thenReturn(Optional.empty());
 

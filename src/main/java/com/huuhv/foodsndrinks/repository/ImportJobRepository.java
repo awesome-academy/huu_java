@@ -2,12 +2,15 @@ package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.ImportJob;
 import com.huuhv.foodsndrinks.enums.ImportJobStatus;
+import com.huuhv.foodsndrinks.repository.projection.ImportJobSummary;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -84,6 +87,11 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, Long> {
             """, nativeQuery = true)
     List<ImportJob> findStale(@Param("staleSeconds") long staleSeconds, @Param("limit") int limit);
 
+    /** Trong {@code storedFiles}: các file mà một lần import CHƯA kết thúc còn trỏ tới (không được xoá). */
+    @Query("SELECT j.storedFile FROM ImportJob j WHERE j.storedFile IN :storedFiles"
+            + " AND j.status IN ('PENDING', 'PROCESSING')")
+    List<String> findUnfinishedStoredFiles(@Param("storedFiles") Collection<String> storedFiles);
+
     @Query("SELECT j.status FROM ImportJob j WHERE j.id = :id")
     Optional<ImportJobStatus> findStatusById(@Param("id") long id);
 
@@ -91,5 +99,13 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, Long> {
     @Query("SELECT COUNT(j) FROM ImportJob j WHERE j.createdBy = :createdBy AND j.status IN ('PENDING', 'PROCESSING')")
     long countUnfinishedByCreatedBy(@Param("createdBy") String createdBy);
 
-    List<ImportJob> findTop10ByOrderByIdDesc();
+    /** Các lần import mới nhất trước, KHÔNG kèm cột {@code errors} (danh sách không hiển thị bảng lỗi). */
+    @Query("""
+            SELECT new com.huuhv.foodsndrinks.repository.projection.ImportJobSummary(
+                j.id, j.fileName, j.status, j.totalRows, j.createdCount, j.updatedCount, j.unchangedCount,
+                j.errorCount, j.failureMessage, j.createdBy, j.createdAt, j.finishedAt)
+            FROM ImportJob j
+            ORDER BY j.id DESC
+            """)
+    List<ImportJobSummary> findRecentSummaries(Limit limit);
 }

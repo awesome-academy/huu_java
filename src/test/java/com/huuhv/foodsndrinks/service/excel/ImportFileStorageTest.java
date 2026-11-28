@@ -84,7 +84,7 @@ class ImportFileStorageTest {
     }
 
     @Test
-    void deleteOlderThan_removesOnlyOldStoredFiles_andLeavesForeignFilesAlone() throws IOException {
+    void listOlderThan_listsOnlyOldStoredFiles_ignoresForeignFiles_andDeletesNothing() throws IOException {
         String old = storage.store(upload("a.xlsx", new byte[]{1}));
         String fresh = storage.store(upload("b.xlsx", new byte[]{2}));
         Path foreign = Files.write(importDir.resolve("ghi-chu.xlsx"), new byte[]{3});
@@ -94,13 +94,16 @@ class ImportFileStorageTest {
         Files.setLastModifiedTime(foreign, twoHoursAgo);
         Files.setLastModifiedTime(keep, twoHoursAgo);
 
-        assertThat(storage.deleteOlderThan(Duration.ofHours(1))).isEqualTo(1);
+        assertThat(storage.listOlderThan(Duration.ofHours(1))).containsExactly(old);
 
-        assertThat(storage.exists(old)).isFalse();
+        // Chỉ liệt kê — người gọi quyết định xoá
+        assertThat(storage.exists(old)).isTrue();
         assertThat(storage.exists(fresh)).isTrue();
         assertThat(foreign).exists();
         assertThat(keep).exists();
-        assertThat(storage.deleteOlderThan(Duration.ofHours(1))).isZero();
+        assertThat(storage.delete(old)).isTrue();
+        assertThat(storage.delete(old)).isFalse();
+        assertThat(storage.listOlderThan(Duration.ofHours(1))).isEmpty();
     }
 
     @Test

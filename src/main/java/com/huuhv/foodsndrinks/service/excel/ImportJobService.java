@@ -15,6 +15,7 @@ import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -25,7 +26,10 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Vòng đời của một lần import Excel chạy nền (bảng {@code import_jobs}): tạo khi admin tải file lên, đọc trạng thái cho
@@ -43,6 +47,8 @@ public class ImportJobService {
     static final String STALE_FAILURE = "File không được xử lý kịp (hệ thống bận hoặc bị gián đoạn). Vui lòng import lại!";
     private static final int FILE_NAME_MAX_LENGTH = 255;
     private static final int STALE_BATCH_SIZE = 100;
+    private static final int ORPHAN_BATCH_SIZE = 500;
+    static final int RECENT_LIMIT = 10;
     private static final TypeReference<List<ImportRowErrorResDto>> ERROR_LIST = new TypeReference<>() {
     };
 
@@ -120,10 +126,13 @@ public class ImportJobService {
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy lần import #" + id));
     }
 
-    /** 10 lần import gần nhất (của mọi admin — dữ liệu quản trị dùng chung), mới nhất trước; không kèm bảng lỗi. */
+    /**
+     * {@link #RECENT_LIMIT} lần import gần nhất (của mọi admin — dữ liệu quản trị dùng chung), mới nhất trước; không kèm
+     * bảng lỗi — projection không đọc cột {@code errors}.
+     */
     public List<ImportJobResDto> recent() {
-        return repository.findTop10ByOrderByIdDesc().stream()
-                .map(job -> ImportJobResDto.of(job, List.of()))
+        return repository.findRecentSummaries(Limit.of(RECENT_LIMIT)).stream()
+                .map(ImportJobResDto::of)
                 .toList();
     }
 
@@ -152,6 +161,30 @@ public class ImportJobService {
             }
         }
         return failed;
+    }
+
+    /**
+     * Xoá file tạm sót lại trong thư mục import: file cũ hơn {@code olderThan} mà KHÔNG còn lần import chưa kết thúc nào
+     * trỏ tới (lần import đã kết thúc nhưng xoá file lỗi, instance chết trước khi xoá, transaction tạo lần import lỗi sau
+     * khi ghi file). Tuổi file (lúc upload) không nói được lần import đã xong chưa — lần import được nhận việc muộn (outbox
+     * chờ broker, queue dồn) vẫn có thể đang chạy — nên luôn hỏi DB; file của lần import chưa kết thúc được giữ, nếu nó kẹt
+     * thật thì {@link #failStale} kết thúc nó và xoá file.
+     *
+     * @return số file đã xoá
+     */
+    public int deleteOrphanFiles(Duration olderThan) {
+        List<String> old = storage.listOlderThan(olderThan);
+        int deleted = 0;
+        for (int from = 0; from < old.size(); from += ORPHAN_BATCH_SIZE) {
+            List<String> batch = old.subList(from, Math.min(from + ORPHAN_BATCH_SIZE, old.size()));
+            Set<String> inUse = new HashSet<>(repository.findUnfinishedStoredFiles(batch));
+            for (String storedFile : batch) {
+                if (!inUse.contains(storedFile) && storage.delete(storedFile)) {
+                    deleted++;
+                }
+            }
+        }
+        return deleted;
     }
 
     private boolean failUnfinished(long id, String message) {

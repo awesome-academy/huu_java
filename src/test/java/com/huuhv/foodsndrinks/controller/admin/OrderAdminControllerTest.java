@@ -25,6 +25,9 @@ import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
 import org.springframework.http.MediaType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
@@ -122,7 +125,11 @@ class OrderAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(view().name("admin/orders/list"))
                 .andExpect(model().attribute("errorMessage", "Ngày bắt đầu không được sau ngày kết thúc!"))
-                .andExpect(model().attribute("searchFrom", "2026-11-30"));
+                // Danh sách đang hiện không lọc ngày → link Export/phân trang cũng không mang ngày sai
+                .andExpect(model().attribute("searchFrom", nullValue()))
+                .andExpect(model().attribute("searchTo", nullValue()))
+                .andExpect(content().string(not(containsString("from=2026-11-30"))))
+                .andExpect(content().string(not(containsString("to=2026-11-01"))));
     }
 
     @Test

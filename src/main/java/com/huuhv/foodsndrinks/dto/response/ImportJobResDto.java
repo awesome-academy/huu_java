@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.dto.response;
 
 import com.huuhv.foodsndrinks.entity.ImportJob;
 import com.huuhv.foodsndrinks.enums.ImportJobStatus;
+import com.huuhv.foodsndrinks.repository.projection.ImportJobSummary;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,6 +32,15 @@ public record ImportJobResDto(Long id, String fileName, ImportJobStatus status, 
                 orZero(job.getUpdatedCount()), orZero(job.getUnchangedCount()), orZero(job.getErrorCount()),
                 List.copyOf(errors), job.getFailureMessage(), job.getCreatedBy(), job.getCreatedAt(),
                 job.getFinishedAt());
+    }
+
+    /** Dòng của danh sách "gần đây": projection không có bảng lỗi → {@code errors} rỗng ({@code errorCount} vẫn đúng). */
+    public static ImportJobResDto of(ImportJobSummary job) {
+        ImportJobStatus status = job.status();
+        return new ImportJobResDto(job.id(), job.fileName(), status, status.getLabel(), status.getBadgeClass(),
+                status.isTerminal(), orZero(job.totalRows()), orZero(job.createdCount()), orZero(job.updatedCount()),
+                orZero(job.unchangedCount()), orZero(job.errorCount()), List.of(), job.failureMessage(),
+                job.createdBy(), job.createdAt(), job.finishedAt());
     }
 
     /** Số lỗi không nằm trong {@link #errors} vì vượt giới hạn lưu. */

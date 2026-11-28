@@ -109,7 +109,9 @@ public class ProductImportValidator {
 
     private static ProductReqDto toProduct(ProductImportRow row, Map<String, Long> categoryIds, Candidate candidate) {
         ProductReqDto product = new ProductReqDto();
-        product.setName(row.name() == null ? null : row.name().strip());
+        // trim() như ProductService.normalizeName (form): strip() bỏ thêm khoảng trắng Unicode (U+3000...) → tên đã lưu
+        // còn ký tự đó không khớp nữa (collation NO PAD) và export → import lại thành thêm sản phẩm trùng
+        product.setName(row.name() == null ? null : row.name().trim());
         product.setCategoryId(categoryId(row.category(), categoryIds, candidate));
         product.setType(type(row.type(), candidate));
         product.setPrice(price(row.price(), candidate));

@@ -16,12 +16,15 @@ public final class CollationKeys {
     private CollationKeys() {
     }
 
-    /** NFKD + bỏ dấu + viết thường (đã bỏ khoảng trắng đầu/cuối); {@code null} → chuỗi rỗng. */
+    /**
+     * NFKD + bỏ dấu + viết thường + {@code đ → d} (đã bỏ khoảng trắng đầu/cuối); {@code null} → chuỗi rỗng. "đ" (U+0111)
+     * là chữ có gạch, không phải "d" + dấu nên NFKD không tách — nhưng collation coi {@code đ = d} ("Do uong" = "Đồ uống").
+     */
     public static String of(String value) {
         if (value == null) {
             return "";
         }
         String decomposed = Normalizer.normalize(value.strip(), Normalizer.Form.NFKD);
-        return COMBINING_MARKS.matcher(decomposed).replaceAll("").toLowerCase(Locale.ROOT);
+        return COMBINING_MARKS.matcher(decomposed).replaceAll("").toLowerCase(Locale.ROOT).replace('đ', 'd');
     }
 }

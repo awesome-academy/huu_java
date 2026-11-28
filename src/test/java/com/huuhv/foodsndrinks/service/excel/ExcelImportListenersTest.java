@@ -173,9 +173,8 @@ class ExcelImportListenersTest {
     class CleanupJob {
 
         private final ImportJobService importJobService = mock(ImportJobService.class);
-        private final ImportFileStorage storage = mock(ImportFileStorage.class);
         private final ExcelProperties properties = ExcelTestFiles.properties();
-        private final ImportJobCleanupJob job = new ImportJobCleanupJob(importJobService, storage, properties);
+        private final ImportJobCleanupJob job = new ImportJobCleanupJob(importJobService, properties);
 
         @Test
         void failStaleJobs_delegatesToTheService_andNeverLetsAnErrorEscapeTheScheduler(CapturedOutput output) {
@@ -189,14 +188,15 @@ class ExcelImportListenersTest {
         }
 
         @Test
-        void deleteOrphanFiles_onlyRemovesFilesOlderThanTwiceTheStaleAge(CapturedOutput output) {
-            // Lúc đó lần import của file chắc chắn đã kết thúc (bị đánh dấu thất bại sau stale-after)
-            when(storage.deleteOlderThan(Duration.ofMinutes(60))).thenReturn(3);
+        void deleteOrphanFiles_looksAtFilesOlderThanTwiceTheStaleAge_andNeverLetsAnErrorEscape(CapturedOutput output) {
+            when(importJobService.deleteOrphanFiles(Duration.ofMinutes(60))).thenReturn(3)
+                    .thenThrow(new QueryTimeoutException("db down"));
 
             job.deleteOrphanFiles();
+            assertThatNoException().isThrownBy(job::deleteOrphanFiles);
 
-            verify(storage).deleteOlderThan(Duration.ofMinutes(60));
-            assertThat(output).contains("Deleted 3 leftover import file(s)");
+            assertThat(output).contains("Deleted 3 leftover import file(s)")
+                    .contains("Deleting leftover import files failed, will retry next cycle");
         }
     }
 }

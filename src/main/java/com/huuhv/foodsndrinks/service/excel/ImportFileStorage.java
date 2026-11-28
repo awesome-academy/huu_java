@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -25,8 +27,8 @@ import java.util.regex.Pattern;
  *   <li><b>Tên file do server sinh</b> ({@code <UUID>.xlsx}); tên client gửi không bao giờ chạm tới hệ thống file. Mọi tên
  *       nhận vào ({@link #resolve}) phải đúng mẫu đó và đường dẫn kết quả phải nằm trong thư mục gốc (chống path
  *       traversal, kể cả khi giá trị đọc từ DB bị sửa).</li>
- *   <li><b>File tạm:</b> bị xoá khi lần import kết thúc ({@link #delete}); file sót lại (instance chết giữa chừng) bị
- *       {@link #deleteOlderThan} dọn.</li>
+ *   <li><b>File tạm:</b> bị xoá khi lần import kết thúc ({@link #delete}); file sót lại (instance chết giữa chừng) được
+ *       {@code ImportJobService#deleteOrphanFiles} dọn (liệt kê bằng {@link #listOlderThan}).</li>
  * </ul>
  * Chạy nhiều instance: thư mục phải là volume dùng chung — instance nhận upload và instance xử lý message của queue có
  * thể khác nhau.
@@ -94,43 +96,47 @@ public class ImportFileStorage {
         return Files.isRegularFile(resolve(storedName));
     }
 
-    /** Xoá file đã lưu; không có file thì thôi. Lỗi chỉ ghi log — file sót lại sẽ bị {@link #deleteOlderThan} dọn. */
-    public void delete(String storedName) {
+    /**
+     * Xoá file đã lưu; không có file thì thôi. Lỗi chỉ ghi log — file sót lại sẽ được job dọn dẹp xoá sau.
+     *
+     * @return {@code true} nếu file vừa bị xoá
+     */
+    public boolean delete(String storedName) {
         try {
-            deleteQuietly(resolve(storedName));
+            return deleteQuietly(resolve(storedName));
         } catch (IllegalArgumentException e) {
             log.warn("Ignored request to delete a file that is not a stored import file");
+            return false;
         }
     }
 
     /**
-     * Xoá các file import có lần sửa cuối cũ hơn {@code age} (chỉ file đúng mẫu tên của {@link #store}; file lạ trong thư
-     * mục không bị đụng tới).
-     *
-     * @return số file đã xoá
+     * Tên các file import có lần sửa cuối cũ hơn {@code age} (chỉ file đúng mẫu tên của {@link #store}; file lạ trong thư
+     * mục bị bỏ qua). Chỉ liệt kê: có xoá hay không là việc của người gọi (file của lần import chưa kết thúc phải giữ).
      */
-    public int deleteOlderThan(Duration age) {
+    public List<String> listOlderThan(Duration age) {
         Instant threshold = Instant.now().minus(age);
-        int deleted = 0;
+        List<String> old = new ArrayList<>();
         try (DirectoryStream<Path> files = Files.newDirectoryStream(root, "*" + ExcelUploadValidator.EXTENSION)) {
             for (Path file : files) {
-                if (STORED_NAME.matcher(file.getFileName().toString()).matches()
-                        && Files.getLastModifiedTime(file).toInstant().isBefore(threshold)
-                        && Files.deleteIfExists(file)) {
-                    deleted++;
+                String name = file.getFileName().toString();
+                if (STORED_NAME.matcher(name).matches()
+                        && Files.getLastModifiedTime(file).toInstant().isBefore(threshold)) {
+                    old.add(name);
                 }
             }
         } catch (IOException e) {
-            log.warn("Could not clean up the import directory", e);
+            log.warn("Could not list the import directory", e);
         }
-        return deleted;
+        return old;
     }
 
-    private static void deleteQuietly(Path file) {
+    private static boolean deleteQuietly(Path file) {
         try {
-            Files.deleteIfExists(file);
+            return Files.deleteIfExists(file);
         } catch (IOException e) {
             log.warn("Could not delete import file {}", file.getFileName(), e);
+            return false;
         }
     }
 }

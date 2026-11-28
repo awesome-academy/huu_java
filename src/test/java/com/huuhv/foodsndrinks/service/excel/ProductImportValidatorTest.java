@@ -105,6 +105,31 @@ class ProductImportValidatorTest {
     }
 
     @Test
+    void nameIsTrimmedExactlyLikeTheForm_soAnExportedNameWithUnicodeSpaceStillMatches() {
+        // Form/ProductService cắt bằng trim() (chỉ ký tự ≤ U+0020) nên tên đã lưu có thể còn khoảng trắng Unicode ở
+        // cuối (U+3000); collation NO PAD coi nó là một phần của tên → bộ đọc file phải giữ nguyên như vậy
+        String stored = "Trà sữa　";
+        existing.put(stored, List.of(match(5L, stored, DRINKS, ProductType.DRINK, "30000", null, true)));
+
+        ProductImportPlan plan = validator.validate(List.of(
+                row(2, " " + stored + " ", "Đồ uống", "Đồ uống", "30000", null, "Có")));
+
+        assertThat(plan.hasErrors()).isFalse();
+        assertThat(plan.unchangedCount()).isEqualTo(1);
+        assertThat(plan.createCount()).isZero();
+    }
+
+    @Test
+    void categoryAndTypeTypedWithPlainD_matchLikeMySqlDoes() {
+        // utf8mb4_0900_ai_ci coi "đ" = "d": "Do uong" là danh mục "Đồ uống", "Do an" là loại "Đồ ăn"
+        ProductImportPlan plan = validator.validate(List.of(row(2, "Trà đào", "Do uong", "Do an", "1000", null, null)));
+
+        assertThat(plan.errors()).isEmpty();
+        assertThat(plan.commands().getFirst().product().getCategoryId()).isEqualTo(DRINKS);
+        assertThat(plan.commands().getFirst().product().getType()).isEqualTo(ProductType.FOOD);
+    }
+
+    @Test
     void blankAvailableCell_defaultsToAvailable_likeTheAddForm() {
         for (String yes : new String[]{null, "Có", "co", "TRUE", "1"}) {
             assertThat(validator.validate(List.of(row(2, "Trà đào", "Đồ uống", "DRINK", "1000", null, yes)))

@@ -17,6 +17,13 @@ class CollationKeysTest {
     }
 
     @Test
+    void dWithStroke_isTheSameLetterAsD_likeTheMySqlCollation() {
+        // "đ" không phải "d" + dấu nên NFKD không tách — phải thay riêng
+        assertThat(CollationKeys.of("Đồ uống")).isEqualTo("do uong").isEqualTo(CollationKeys.of("Do uong"));
+        assertThat(CollationKeys.of("Đậu đỏ")).isEqualTo(CollationKeys.of("dau do"));
+    }
+
+    @Test
     void sameTextInComposedAndDecomposedUnicode_hasTheSameKey() {
         String composed = "Trà sữa trân châu";
         assertThat(CollationKeys.of(Normalizer.normalize(composed, Normalizer.Form.NFD)))

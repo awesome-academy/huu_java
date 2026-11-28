@@ -39,6 +39,8 @@ import java.util.stream.Collectors;
 public class ProductService {
 
     private static final String IMAGE_FOLDER = "products";
+    /** Độ dài cột {@code products.slug}. */
+    static final int SLUG_MAX_LENGTH = 255;
 
     private final ProductRepository      productRepository;
     private final ProductImageRepository productImageRepository;
@@ -166,8 +168,12 @@ public class ProductService {
         // Upload new images
         saveImages(product, newImages, -1, remaining.isEmpty() ? new ArrayList<>() : remaining);
 
+        // Slug chỉ đổi khi tên đổi: link /products/{slug} đã chia sẻ không được tự hỏng khi sửa giá/mô tả (vd. import lại
+        // file export — slug gốc của tên này có thể vừa được trả lại vì sản phẩm khác bị xoá)
+        if (!normalizedName.equals(product.getName()) || product.getSlug() == null) {
+            product.setSlug(uniqueSlug(normalizedName, id));
+        }
         product.setName(normalizedName);
-        product.setSlug(uniqueSlug(normalizedName, id));
         product.setCategory(findCategory(dto.getCategoryId()));
         product.setType(dto.getType());
         product.setPrice(dto.getPrice());
@@ -332,16 +338,35 @@ public class ProductService {
         return name.trim();
     }
 
+    /**
+     * Slug chưa sản phẩm nào khác dùng, dài tối đa {@link #SLUG_MAX_LENGTH} (cột {@code products.slug}): tên dài tới 255
+     * ký tự cho slug gốc dài ngang vậy, nên slug gốc bị cắt bớt để chừa chỗ cho hậu tố {@code -N} — không thì MySQL báo
+     * "Data too long" (lỗi hệ thống thay vì một slug hợp lệ).
+     */
     private String uniqueSlug(String name, Long currentId) {
         String base = SlugUtils.toSlug(name);
         if (base.isBlank()) throw new IllegalArgumentException("Tên sản phẩm không hợp lệ để tạo slug!");
-        String candidate = base;
+        String candidate = truncateSlug(base, SLUG_MAX_LENGTH);
         int i = 1;
         while (currentId == null ? productRepository.existsBySlug(candidate)
                                  : productRepository.existsBySlugAndIdNot(candidate, currentId)) {
-            candidate = base + "-" + i++;
+            String suffix = "-" + i++;
+            candidate = truncateSlug(base, SLUG_MAX_LENGTH - suffix.length()) + suffix;
         }
         return candidate;
+    }
+
+    /** Cắt slug về tối đa {@code maxLength} ký tự, không để dấu {@code -} treo ở cuối. */
+    private static String truncateSlug(String slug, int maxLength) {
+        if (slug.length() <= maxLength) {
+            return slug;
+        }
+        String cut = slug.substring(0, maxLength);
+        int end = cut.length();
+        while (end > 1 && cut.charAt(end - 1) == '-') {
+            end--;
+        }
+        return cut.substring(0, end);
     }
 
     private static <E extends Enum<E>> E parseEnum(Class<E> type, String value) {

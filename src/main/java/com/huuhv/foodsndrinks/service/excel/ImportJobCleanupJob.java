@@ -14,10 +14,11 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>{@link #failStaleJobs}: lần import chưa kết thúc quá {@code app.excel.import.stale-after} → {@code FAILED} + xoá
  *       file. Làm việc trên bảng dùng chung nên có {@code @SchedulerLock} — chỉ một instance chạy mỗi chu kỳ.</li>
- *   <li>{@link #deleteOrphanFiles}: file tạm cũ hơn 2 × {@code stale-after} (lúc đó lần import của nó chắc chắn đã kết
- *       thúc — hoặc chưa từng được tạo vì transaction lỗi sau khi ghi file). Cố ý KHÔNG {@code @SchedulerLock}, như
- *       {@code OutboxRelayJob}/{@code WebSocketSessionRevalidationJob}: mỗi instance quét thư mục nó nhìn thấy (đúng cả
- *       khi cấu hình sai và các instance không dùng chung thư mục), xoá là idempotent, không đụng DB.</li>
+ *   <li>{@link #deleteOrphanFiles}: file tạm cũ hơn 2 × {@code stale-after} mà không còn lần import chưa kết thúc nào trỏ
+ *       tới (tra {@code import_jobs} — tuổi file không cho biết lần import đã xong chưa: lần import được nhận việc muộn
+ *       vẫn có thể đang chạy). Cố ý KHÔNG {@code @SchedulerLock}, như {@code OutboxRelayJob}/
+ *       {@code WebSocketSessionRevalidationJob}: mỗi instance quét thư mục nó nhìn thấy (đúng cả khi cấu hình sai và các
+ *       instance không dùng chung thư mục), chỉ đọc DB, xoá là idempotent.</li>
  * </ul>
  * Method job không {@code @Transactional} (quy ước của ShedLock trong dự án): service tự mở transaction ngắn.
  */
@@ -27,7 +28,6 @@ import java.util.concurrent.TimeUnit;
 public class ImportJobCleanupJob {
 
     private final ImportJobService importJobService;
-    private final ImportFileStorage storage;
     private final ExcelProperties properties;
 
     @Scheduled(initialDelay = 2, fixedDelay = 5, timeUnit = TimeUnit.MINUTES)
@@ -46,9 +46,14 @@ public class ImportJobCleanupJob {
 
     @Scheduled(initialDelay = 3, fixedDelay = 5, timeUnit = TimeUnit.MINUTES)
     public void deleteOrphanFiles() {
-        int deleted = storage.deleteOlderThan(properties.imports().staleAfter().multipliedBy(2));
-        if (deleted > 0) {
-            log.warn("Deleted {} leftover import file(s)", deleted);
+        try {
+            int deleted = importJobService.deleteOrphanFiles(properties.imports().staleAfter().multipliedBy(2));
+            if (deleted > 0) {
+                log.warn("Deleted {} leftover import file(s)", deleted);
+            }
+        } catch (RuntimeException ex) {
+            // DB lỗi → không biết file nào còn dùng → không xoá gì chu kỳ này
+            log.error("Deleting leftover import files failed, will retry next cycle", ex);
         }
     }
 }

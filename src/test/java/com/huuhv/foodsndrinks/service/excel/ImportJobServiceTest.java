@@ -9,6 +9,7 @@ import com.huuhv.foodsndrinks.exception.ExcelFileException;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.ImportJobRepository;
 import com.huuhv.foodsndrinks.repository.UserRepository;
+import com.huuhv.foodsndrinks.repository.projection.ImportJobSummary;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
@@ -19,6 +20,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Limit;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -26,6 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -274,16 +277,20 @@ class ImportJobServiceTest {
 
     @Test
     void recent_listsJobsWithoutTheirErrorTables() {
-        ImportJob failed = job(2L, ImportJobStatus.FAILED);
-        failed.setErrorCount(5);
-        failed.setErrors("[{\"row\":3,\"column\":\"Giá\",\"message\":\"x\"}]");
-        when(repository.findTop10ByOrderByIdDesc()).thenReturn(List.of(failed, job(1L, ImportJobStatus.COMPLETED)));
+        ImportJobSummary failed = new ImportJobSummary(2L, "a.xlsx", ImportJobStatus.FAILED, 10, null, null, null, 5,
+                null, "admin", LocalDateTime.now(), LocalDateTime.now());
+        ImportJobSummary completed = new ImportJobSummary(1L, "b.xlsx", ImportJobStatus.COMPLETED, 3, 2, 1, 0, 0,
+                null, "admin", LocalDateTime.now(), LocalDateTime.now());
+        when(repository.findRecentSummaries(Limit.of(ImportJobService.RECENT_LIMIT)))
+                .thenReturn(List.of(failed, completed));
 
         List<ImportJobResDto> recent = service.recent();
 
         assertThat(recent).extracting(ImportJobResDto::id).containsExactly(2L, 1L);
         assertThat(recent.getFirst().errorCount()).isEqualTo(5);
         assertThat(recent.getFirst().errors()).isEmpty();
+        assertThat(recent.getFirst().created()).isZero();
+        assertThat(recent.get(1).created()).isEqualTo(2);
     }
 
     // -------------------------------------------------------
@@ -326,6 +333,42 @@ class ImportJobServiceTest {
 
         verify(storage).delete(STORED);
         verify(repository, never()).findById(2L);
+    }
+
+    @Test
+    void deleteOrphanFiles_keepsOldFilesOfImportsThatAreStillUnfinished() {
+        String finished = "11111111-1111-4111-8111-111111111111.xlsx";
+        String orphan = "22222222-2222-4222-8222-222222222222.xlsx";
+        // Lần import được nhận việc muộn (outbox chờ broker): file đã cũ nhưng lần import vẫn đang chạy
+        String stillRunning = "33333333-3333-4333-8333-333333333333.xlsx";
+        when(storage.listOlderThan(Duration.ofMinutes(60))).thenReturn(List.of(finished, orphan, stillRunning));
+        when(repository.findUnfinishedStoredFiles(List.of(finished, orphan, stillRunning)))
+                .thenReturn(List.of(stillRunning));
+        when(storage.delete(finished)).thenReturn(true);
+        when(storage.delete(orphan)).thenReturn(true);
+
+        assertThat(service.deleteOrphanFiles(Duration.ofMinutes(60))).isEqualTo(2);
+
+        verify(storage, never()).delete(stillRunning);
+    }
+
+    @Test
+    void deleteOrphanFiles_databaseError_deletesNothing() {
+        when(storage.listOlderThan(any())).thenReturn(List.of(STORED));
+        when(repository.findUnfinishedStoredFiles(any())).thenThrow(new IllegalStateException("db down"));
+
+        assertThatIllegalStateException().isThrownBy(() -> service.deleteOrphanFiles(Duration.ofMinutes(60)));
+
+        verify(storage, never()).delete(any());
+    }
+
+    @Test
+    void deleteOrphanFiles_noOldFile_doesNotQueryTheDatabase() {
+        when(storage.listOlderThan(any())).thenReturn(List.of());
+
+        assertThat(service.deleteOrphanFiles(Duration.ofMinutes(60))).isZero();
+
+        verifyNoInteractions(repository);
     }
 
     @Test

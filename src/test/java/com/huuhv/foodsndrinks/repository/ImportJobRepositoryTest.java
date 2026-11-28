@@ -2,15 +2,18 @@ package com.huuhv.foodsndrinks.repository;
 
 import com.huuhv.foodsndrinks.entity.ImportJob;
 import com.huuhv.foodsndrinks.enums.ImportJobStatus;
+import com.huuhv.foodsndrinks.repository.projection.ImportJobSummary;
 import com.huuhv.foodsndrinks.support.IntegrationTest;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.domain.Limit;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -169,12 +172,40 @@ class ImportJobRepositoryTest {
     }
 
     @Test
-    void recentJobs_areListedNewestFirst() {
+    void findUnfinishedStoredFiles_returnsOnlyFilesOfPendingOrProcessingJobs() {
+        long pending = newJob();
+        long processing = newJob();
+        repository.claim(processing);
+        long finished = newJob();
+        repository.claim(finished);
+        repository.complete(finished, 1, 1, 0, 0);
+        String unknown = UUID.randomUUID() + ".xlsx";
+
+        assertThat(repository.findUnfinishedStoredFiles(List.of(find(pending).getStoredFile(),
+                find(processing).getStoredFile(), find(finished).getStoredFile(), unknown)))
+                .containsExactlyInAnyOrder(find(pending).getStoredFile(), find(processing).getStoredFile());
+    }
+
+    @Test
+    void recentJobs_areListedNewestFirst_withoutTheErrorsColumn() {
         long first = newJob();
         long second = newJob();
+        repository.claim(second);
+        repository.fail(second, 4, 1, "[{\"row\":2,\"column\":\"Giá\",\"message\":\"x\"}]", null);
 
-        assertThat(repository.findTop10ByOrderByIdDesc()).extracting(ImportJob::getId)
-                .containsSubsequence(second, first).hasSizeLessThanOrEqualTo(10);
+        List<ImportJobSummary> recent = repository.findRecentSummaries(Limit.of(10));
+
+        assertThat(recent).extracting(ImportJobSummary::id).containsSubsequence(second, first)
+                .hasSizeLessThanOrEqualTo(10);
+        assertThat(recent.getFirst()).satisfies(job -> {
+            assertThat(job.id()).isEqualTo(second);
+            assertThat(job.status()).isEqualTo(ImportJobStatus.FAILED);
+            assertThat(job.totalRows()).isEqualTo(4);
+            assertThat(job.errorCount()).isEqualTo(1);
+            assertThat(job.fileName()).isEqualTo("san-pham.xlsx");
+            assertThat(job.createdBy()).isEqualTo(admin);
+        });
+        assertThat(repository.findRecentSummaries(Limit.of(1))).hasSize(1);
     }
 
     private long newJob() {

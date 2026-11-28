@@ -42,8 +42,11 @@ public class OrderAdminController {
         try {
             orderPage = orderService.searchOrders(status, keyword, orderId, from, to, safePage, safeSize);
         } catch (IllegalArgumentException e) {
-            // Khoảng ngày sai: báo lỗi và hiển thị danh sách không lọc theo ngày
+            // Khoảng ngày sai: báo lỗi và hiển thị danh sách không lọc theo ngày. Bỏ luôn ngày sai khỏi model — link
+            // Export/phân trang phải mang đúng bộ lọc của danh sách đang hiện ("lọc gì xuất nấy"), không mang lại lỗi
             model.addAttribute("errorMessage", e.getMessage());
+            from = null;
+            to = null;
             orderPage = orderService.searchOrders(status, keyword, orderId, null, null, safePage, safeSize);
         }
 
