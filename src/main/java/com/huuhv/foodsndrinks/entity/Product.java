@@ -4,6 +4,7 @@ import com.huuhv.foodsndrinks.enums.ProductType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
@@ -11,8 +12,14 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * {@code @DynamicUpdate}: UPDATE chỉ ghi các cột thật sự đổi. Không có nó, mỗi lần lưu ghi lại MỌI cột bằng giá trị entity
+ * đã nạp — một lượt đánh giá ({@code RatingService} lưu {@code ratingAvg}/{@code ratingCount}) nạp sản phẩm trước khi
+ * import Excel commit sẽ ghi đè lại giá/mô tả vừa import bằng giá trị cũ.
+ */
 @Entity
 @Table(name = "products")
+@DynamicUpdate
 @Getter
 @Setter
 @NoArgsConstructor

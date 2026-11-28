@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -198,7 +199,9 @@ class DashboardServiceTest {
         when(orderRepository.findMonthlyRevenue(any())).thenReturn(List.<Object[]>of(
                 new Object[]{now.getYear(), now.getMonthValue(), new BigDecimal("150000"), 3L}));
         when(orderRepository.countGroupByStatus()).thenReturn(List.<Object[]>of(
-                new Object[]{OrderStatus.PENDING, 2L}));
+                new Object[]{OrderStatus.PENDING, 2L},
+                new Object[]{OrderStatus.PROCESSING, 3L},
+                new Object[]{OrderStatus.COMPLETED, 7L}));
 
         DashboardChartResDto charts = dashboardService.getChartData();
 
@@ -210,7 +213,10 @@ class DashboardServiceTest {
         assertThat(charts.monthRevenues().get(5)).isEqualByComparingTo("150000");
         assertThat(charts.statusLabels()).containsExactly(OrderStatus.PENDING.getLabel(),
                 OrderStatus.PROCESSING.getLabel(), OrderStatus.COMPLETED.getLabel(), OrderStatus.CANCELLED.getLabel());
-        assertThat(charts.statusCounts()).containsExactly(2L, 0L, 0L, 0L);
+        assertThat(charts.statusCounts()).containsExactly(2L, 3L, 7L, 0L);
+        // KPI "Đơn đang xử lý" realtime: Chờ xác nhận + Đang xử lý, từ cùng một lần đếm (không thêm query)
+        assertThat(charts.activeOrders()).isEqualTo(5L);
+        verify(orderRepository, times(1)).countGroupByStatus();
         assertThat(charts.topProductLabels()).isEmpty();
         assertThat(charts.topProductQuantities()).isEmpty();
     }

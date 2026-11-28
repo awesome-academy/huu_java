@@ -35,7 +35,7 @@
         });
         if (tooLarge.length > 0) {
             const maxMb = (maxBytes / (1024 * 1024)).toFixed(0);
-            window.alert("Ảnh vượt quá " + maxMb + "MB: " + tooLarge.map(function (f) { return f.name; }).join(", "));
+            window.alert("File vượt quá " + maxMb + "MB: " + tooLarge.map(function (f) { return f.name; }).join(", "));
             input.value = "";
         }
     });

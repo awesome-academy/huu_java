@@ -10,6 +10,8 @@
 // - Tab ẩn: không tải, đánh dấu cũ; hiện lại thì tải 1 lần.
 // - Mỗi canvas chỉ tạo Chart 1 lần, các lần sau gán data rồi update(). Lỗi tải giữ nguyên biểu đồ đang có và hiện thông
 //   báo; lần tải sau thành công thì ẩn đi.
+// - KPI "Đơn đang xử lý" ([data-dashboard-active-orders], render sẵn bởi server) cập nhật từ activeOrders của cùng JSON —
+//   cùng kết quả đếm với biểu đồ trạng thái nên hai chỗ luôn khớp. Các KPI khác, bảng đơn gần đây không realtime.
 (function () {
     "use strict";
 
@@ -25,6 +27,7 @@
     const topEmpty = document.getElementById("topProductsEmpty");
     const statusList = document.getElementById("statusCountList");
     const errorBox = document.getElementById("dashboardChartsError");
+    const activeOrders = document.querySelector("[data-dashboard-active-orders]");
     if (!container || !container.dataset.chartsUrl || !revenueCanvas || !statusCanvas || !topCanvas
             || typeof Chart === "undefined") {
         return;
@@ -177,6 +180,11 @@
         upsert("status", statusCanvas, statusConfig, data.statusLabels, data.statusCounts);
         renderStatusList(data.statusLabels, data.statusCounts);
         renderTopProducts(data.topProductLabels, data.topProductQuantities);
+        // Field thêm sau (hợp đồng JSON chỉ thêm field): JSON của instance cũ không có nó trong lúc rolling deploy →
+        // giữ số đang hiện, không chặn phần biểu đồ
+        if (activeOrders && Number.isSafeInteger(data.activeOrders) && data.activeOrders >= 0) {
+            activeOrders.textContent = String(data.activeOrders);
+        }
     }
 
     function load() {

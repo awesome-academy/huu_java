@@ -56,6 +56,10 @@ app:
     # lịch. Thử lại không chờ để bản ghi vừa lỗi tới hạn ngay.
     poll-interval: 24h
     retry-delay: 0s
+  excel:
+    import:
+      # File import của test nằm trong target/ (bị xoá bởi mvn clean), không lẫn vào ./import-tmp của máy dev
+      dir: target/import-tmp
   dashboard:
     # Tắt cache biểu đồ: các test dùng chung DB, số liệu phải đọc lại mỗi request (DashboardChartCacheTest kiểm tra cache)
     chart-cache-ttl: 0s

@@ -82,6 +82,8 @@ services:
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       UPLOAD_DIR: /app/uploads
+      # File Excel đang chờ import (service/excel/ImportFileStorage) — KHÔNG nằm trong uploads/ (public tại /uploads/**)
+      EXCEL_IMPORT_DIR: /app/import-tmp
       # Dùng broker của service artemis (không chạy broker embedded trong container). Cần cả hai biến: Boot 4 tạo broker
       # embedded theo ARTEMIS_EMBEDDED_ENABLED, không xét mode. Không đặt ở x-app-common: container maven chạy test
       # luôn dùng broker embedded.
@@ -94,6 +96,9 @@ services:
       # logs/ có sẵn trong repo (logs/.gitignore) để Docker không tự tạo nó thuộc root.
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+      # import-tmp/ có sẵn trong repo (import-tmp/.gitignore) để Docker không tự tạo nó thuộc root. Chạy nhiều instance
+      # app thì mọi instance phải mount CÙNG thư mục này: instance nhận upload và instance xử lý message có thể khác nhau.
+      - ./import-tmp:/app/import-tmp
     depends_on:
       mysql:
         condition: service_healthy

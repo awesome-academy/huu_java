@@ -1,14 +1,11 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
-import com.huuhv.foodsndrinks.logging.LogSanitizer;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
-import jakarta.jms.TextMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jms.annotation.JmsListener;
-import org.springframework.jms.support.converter.MessageConversionException;
 import org.springframework.jms.support.converter.MessageConverter;
 import org.springframework.stereotype.Component;
 
@@ -33,7 +30,7 @@ import org.springframework.stereotype.Component;
 public class OrderPlacedDlqListener {
 
     /** Property Artemis ghi vào message dead-letter: hàng đợi gốc — với topic là tên subscription. */
-    static final String ORIGINAL_QUEUE_PROPERTY = "_AMQ_ORIG_QUEUE";
+    static final String ORIGINAL_QUEUE_PROPERTY = DeadLetters.ORIGINAL_QUEUE_PROPERTY;
 
     private final MessageConverter messageConverter;
     private final OutboxService outboxService;
@@ -41,25 +38,25 @@ public class OrderPlacedDlqListener {
     // Một thread là đủ, không chiếm thêm chỗ trong ngân sách connection (ConnectionBudgetCheck)
     @JmsListener(destination = Destinations.ORDER_PLACED_DLQ, concurrency = "1")
     public void onDeadLetter(Message message) {
-        String subscription = originalQueueOf(message);
-        Long outboxId = outboxIdOf(message);
+        String subscription = DeadLetters.originalQueueOf(message);
+        Long outboxId = DeadLetters.outboxIdOf(message);
         Object payload;
         try {
             payload = messageConverter.fromMessage(message);
         } catch (JMSException | RuntimeException ex) {
             // Mọi lỗi đọc message đều là lỗi của chính message: ném ra thì broker giao lại mãi (maxDeliveryAttempts=-1)
             log.error("Unreadable {} message dead-lettered from subscription {}: {} (sent at {}, body length {}, "
-                            + "outbox {})", Destinations.ORDER_PLACED, subscription, describeError(ex),
-                    timestampOf(message), bodyLength(message), describe(outboxId));
+                            + "outbox {})", Destinations.ORDER_PLACED, subscription, DeadLetters.describeError(ex),
+                    DeadLetters.timestampOf(message), DeadLetters.bodyLength(message), DeadLetters.describeOutbox(outboxId));
             keepOutboxRecord(outboxId);
             return;
         }
         if (payload instanceof OrderPlacedMessage orderPlaced) {
             log.error("Notification for order #{} dead-lettered from subscription {} after all delivery attempts "
-                    + "(outbox {})", orderPlaced.orderId(), subscription, describe(outboxId));
+                    + "(outbox {})", orderPlaced.orderId(), subscription, DeadLetters.describeOutbox(outboxId));
         } else {
             log.error("Unexpected {} payload dead-lettered from subscription {} (outbox {})", Destinations.ORDER_PLACED,
-                    subscription, describe(outboxId));
+                    subscription, DeadLetters.describeOutbox(outboxId));
         }
         keepOutboxRecord(outboxId);
     }
@@ -68,57 +65,6 @@ public class OrderPlacedDlqListener {
         if (outboxId != null && !outboxService.markDeadLettered(outboxId)) {
             // Bản ghi đã DEAD_LETTERED (subscription khác đẩy cùng message vào DLQ trước) tính là thành công, không vào đây
             log.warn("Outbox message #{} is no longer SENT (reset to PENDING or purged), left unchanged", outboxId);
-        }
-    }
-
-    private static String describe(Long outboxId) {
-        return outboxId == null ? "none" : "#" + outboxId;
-    }
-
-    /**
-     * Thông điệp lỗi chuyển đổi đã được {@code AliasOnlyJsonMessageConverter} làm sạch (không chứa payload/alias); lỗi
-     * khác chỉ ghi tên loại lỗi — thông điệp của client JMS có thể nối nguyên dữ liệu của message.
-     */
-    private static String describeError(Exception ex) {
-        return ex instanceof MessageConversionException ? ex.getMessage() : ex.getClass().getSimpleName();
-    }
-
-    /** Subscription gốc (broker tự đặt) đã làm sạch; {@code "?"} nếu thiếu hoặc không đọc được. */
-    private static String originalQueueOf(Message message) {
-        try {
-            return LogSanitizer.sanitize(message.getStringProperty(ORIGINAL_QUEUE_PROPERTY));
-        } catch (JMSException | RuntimeException ex) {
-            return "?";
-        }
-    }
-
-    /** {@code null} nếu message không đi qua outbox (gửi thẳng) hoặc property không hợp lệ/không đọc được. */
-    private static Long outboxIdOf(Message message) {
-        try {
-            if (!message.propertyExists(MessageTypes.OUTBOX_ID_PROPERTY)) {
-                return null;
-            }
-            long id = message.getLongProperty(MessageTypes.OUTBOX_ID_PROPERTY);
-            return id > 0 ? id : null;
-        } catch (JMSException | RuntimeException ex) {
-            return null;
-        }
-    }
-
-    private static String timestampOf(Message message) {
-        try {
-            return String.valueOf(message.getJMSTimestamp());
-        } catch (JMSException | RuntimeException ex) {
-            return "?";
-        }
-    }
-
-    private static String bodyLength(Message message) {
-        try {
-            return message instanceof TextMessage text && text.getText() != null
-                    ? String.valueOf(text.getText().length()) : "?";
-        } catch (JMSException | RuntimeException ex) {
-            return "?";
         }
     }
 }

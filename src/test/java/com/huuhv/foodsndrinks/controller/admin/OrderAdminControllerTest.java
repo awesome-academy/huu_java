@@ -3,17 +3,31 @@ package com.huuhv.foodsndrinks.controller.admin;
 import com.huuhv.foodsndrinks.enums.OrderStatus;
 import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.service.OrderService;
+import com.huuhv.foodsndrinks.service.excel.ExcelFile;
+import com.huuhv.foodsndrinks.service.excel.ExcelSheetWriter;
+import com.huuhv.foodsndrinks.service.excel.OrderExportService;
 import com.huuhv.foodsndrinks.support.SecuredWebMvcTest;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.io.ByteArrayInputStream;
+import java.util.List;
 
 import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
 import org.springframework.http.MediaType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
@@ -29,6 +43,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -40,6 +55,116 @@ class OrderAdminControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private OrderService orderService;
+    @MockitoBean private OrderExportService orderExportService;
+
+    // -------------------------------------------------------
+    // Export Excel
+    // -------------------------------------------------------
+
+    @Test
+    void export_anonymous_isRedirectedToLogin() throws Exception {
+        mockMvc.perform(get("/admin/orders/export")).andExpect(redirectedUrl("/login"));
+        verifyNoInteractions(orderExportService);
+    }
+
+    @Test
+    @WithMockUser(roles = "USER")
+    void export_user_isForbidden() throws Exception {
+        mockMvc.perform(get("/admin/orders/export")).andExpect(status().isForbidden());
+        verifyNoInteractions(orderExportService);
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void export_admin_downloadsXlsxBuiltFromTheCurrentFilter() throws Exception {
+        ExcelSheetWriter sheet = new ExcelSheetWriter("Đơn hàng", List.of(new ExcelSheetWriter.Column("Mã đơn", 10)));
+        sheet.row().integer(42);
+        when(orderExportService.export("PENDING", "alice", 7L, "2026-11-01", "2026-11-30"))
+                .thenReturn(new ExcelFile("foodsndrinks-orders-20261127.xlsx", 1, sheet));
+
+        MockHttpServletResponse response = mockMvc.perform(get("/admin/orders/export")
+                        .param("status", "PENDING").param("keyword", "alice").param("orderId", "7")
+                        .param("from", "2026-11-01").param("to", "2026-11-30"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(ExcelSheetWriter.XLSX_CONTENT_TYPE))
+                .andExpect(header().string("Content-Disposition",
+                        "attachment; filename=\"foodsndrinks-orders-20261127.xlsx\""))
+                // File tải về không bị sniff thành kiểu khác và không nằm trong cache dùng chung
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andReturn().getResponse();
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(response.getContentAsByteArray()))) {
+            assertThat(workbook.getSheetAt(0).getRow(0).getCell(0).getStringCellValue()).isEqualTo("Mã đơn");
+            assertThat(workbook.getSheetAt(0).getRow(1).getCell(0).getNumericCellValue()).isEqualTo(42d);
+        }
+        // Trang không render view → không tốn truy vấn đếm đơn chờ của layout
+        verify(orderService, never()).countPendingOrders();
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void export_invalidFilterOrTooManyRows_redirectsBackToTheListWithTheFilterAndAFriendlyError() throws Exception {
+        when(orderExportService.export(any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("Ngày bắt đầu không được sau ngày kết thúc!"));
+
+        mockMvc.perform(get("/admin/orders/export").param("status", "PENDING")
+                        .param("from", "2026-11-30").param("to", "2026-11-01"))
+                .andExpect(redirectedUrl("/admin/orders?status=PENDING&from=2026-11-30&to=2026-11-01"))
+                .andExpect(flash().attribute("errorMessage", "Ngày bắt đầu không được sau ngày kết thúc!"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void list_invalidDateRange_showsTheError_andListsWithoutTheDateFilter() throws Exception {
+        when(orderService.searchOrders(any(), any(), any(), eq("2026-11-30"), eq("2026-11-01"), anyInt(), anyInt()))
+                .thenThrow(new IllegalArgumentException("Ngày bắt đầu không được sau ngày kết thúc!"));
+        when(orderService.searchOrders(any(), any(), any(), isNull(), isNull(), anyInt(), anyInt()))
+                .thenReturn(Page.empty());
+
+        mockMvc.perform(get("/admin/orders").param("from", "2026-11-30").param("to", "2026-11-01"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin/orders/list"))
+                .andExpect(model().attribute("errorMessage", "Ngày bắt đầu không được sau ngày kết thúc!"))
+                // Danh sách đang hiện không lọc ngày → link Export/phân trang cũng không mang ngày sai
+                .andExpect(model().attribute("searchFrom", nullValue()))
+                .andExpect(model().attribute("searchTo", nullValue()))
+                .andExpect(content().string(not(containsString("from=2026-11-30"))))
+                .andExpect(content().string(not(containsString("to=2026-11-01"))));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void export_blankFilterParameters_meanNoFilter() throws Exception {
+        // Link export của trang danh sách gửi tham số rỗng cho các ô không lọc
+        when(orderExportService.export(any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("stop"));
+
+        mockMvc.perform(get("/admin/orders/export").param("status", "").param("keyword", "").param("orderId", "")
+                        .param("from", "").param("to", ""))
+                .andExpect(status().is3xxRedirection());
+
+        verify(orderExportService).export("", "", null, "", "");
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void list_exportLinkAndPagination_carryTheWholeFilter() throws Exception {
+        when(orderService.searchOrders(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 15), 40));
+
+        String html = mockMvc.perform(get("/admin/orders").param("status", "PENDING").param("keyword", "alice")
+                        .param("from", "2026-11-01").param("to", "2026-11-30"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        // Tham số không lọc (orderId) được render rỗng — controller coi chuỗi rỗng là "không lọc"
+        String filter = "status=PENDING&amp;keyword=alice&amp;orderId=&amp;from=2026-11-01&amp;to=2026-11-30";
+        assertThat(html)
+                .contains("href=\"/admin/orders/export?" + filter + "\"")
+                .contains("name=\"from\" class=\"form-control\" value=\"2026-11-01\"")
+                .contains("href=\"/admin/orders?page=1&amp;size=15&amp;" + filter + "\"");
+        verify(orderService).searchOrders("PENDING", "alice", null, "2026-11-01", "2026-11-30", 0, 15);
+    }
 
     // -------------------------------------------------------
     // Bảo mật
@@ -77,14 +202,14 @@ class OrderAdminControllerTest {
     @Test
     @WithMockUser(roles = "ADMIN")
     void admin_listsOrders_withClampedPageSize() throws Exception {
-        when(orderService.searchOrders(eq("PENDING"), isNull(), isNull(), eq(0), anyInt())).thenReturn(Page.empty());
+        when(orderService.searchOrders(eq("PENDING"), isNull(), isNull(), isNull(), isNull(), eq(0), anyInt())).thenReturn(Page.empty());
 
         mockMvc.perform(get("/admin/orders").param("status", "PENDING").param("page", "-3").param("size", "5000"))
                 .andExpect(status().isOk())
                 .andExpect(view().name("admin/orders/list"))
                 .andExpect(model().attribute("pageSize", 100))
                 .andExpect(model().attribute("totalElements", 0L));
-        verify(orderService).searchOrders("PENDING", null, null, 0, 100);
+        verify(orderService).searchOrders("PENDING", null, null, null, null, 0, 100);
     }
 
     @Test
@@ -147,7 +272,7 @@ class OrderAdminControllerTest {
     @Test
     @WithMockUser(roles = "ADMIN")
     void adminPage_rendersPendingBadge_andRealtimeSettings() throws Exception {
-        when(orderService.searchOrders(any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(orderService.searchOrders(any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
         when(orderService.countPendingOrders()).thenReturn(3L);
 
         String html = mockMvc.perform(get("/admin/orders"))
@@ -170,7 +295,7 @@ class OrderAdminControllerTest {
     @Test
     @WithMockUser(roles = "ADMIN")
     void noPendingOrders_badgeIsHidden() throws Exception {
-        when(orderService.searchOrders(any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(orderService.searchOrders(any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
 
         String html = mockMvc.perform(get("/admin/orders"))
                 .andReturn().getResponse().getContentAsString();
@@ -181,7 +306,7 @@ class OrderAdminControllerTest {
     @Test
     @WithMockUser(roles = "ADMIN")
     void pendingCountFailure_stillRendersPage_withBadgeHidden() throws Exception {
-        when(orderService.searchOrders(any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(orderService.searchOrders(any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
         when(orderService.countPendingOrders()).thenThrow(new IllegalStateException("lock wait timeout"));
 
         String html = mockMvc.perform(get("/admin/orders"))
@@ -215,7 +340,7 @@ class OrderAdminControllerTest {
     @Test
     @WithMockUser(roles = "ADMIN")
     void statusFilterAndDropdown_doNotOfferCart() throws Exception {
-        when(orderService.searchOrders(any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(orderService.searchOrders(any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
 
         String html = mockMvc.perform(get("/admin/orders"))
                 .andExpect(model().attribute("orderStatuses", OrderStatus.placedStatuses()))

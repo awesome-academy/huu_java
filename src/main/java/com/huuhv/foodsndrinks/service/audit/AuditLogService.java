@@ -210,6 +210,54 @@ public class AuditLogService {
     }
 
     // -------------------------------------------------------
+    // Admin: Excel
+    // -------------------------------------------------------
+
+    /**
+     * Admin xuất dữ liệu ra file Excel (dữ liệu rời khỏi hệ thống hàng loạt).
+     *
+     * @param dataset tên cố định của loại dữ liệu ({@code orders}, {@code products}) — không phải dữ liệu người dùng nhập
+     * @param rows    số dòng dữ liệu trong file
+     */
+    public void dataExported(String dataset, int rows) {
+        write(event(Level.INFO, "Data exported", "DATA_EXPORTED", "success")
+                .with("actor", currentActor())
+                .with("export.dataset", dataset)
+                .with("export.rows", rows));
+    }
+
+    /**
+     * Admin tải lên một file Excel để import sản phẩm (đã tạo lần import, chưa xử lý). Gọi trên thread request — actor và
+     * IP là của người tải lên.
+     *
+     * @param fileName tên file admin tải lên (dữ liệu người dùng — được cắt ngắn, encoder của log làm sạch ký tự ngắt dòng)
+     */
+    public void productImportSubmitted(Long importJobId, String fileName) {
+        write(event(Level.INFO, "Product import submitted", "PRODUCT_IMPORT_SUBMITTED", "success")
+                .with("actor", currentActor())
+                .with("import.id", importJobId)
+                .with("import.file", fileName));
+    }
+
+    /**
+     * Import sản phẩm từ Excel đã ghi xong (thay đổi hàng loạt). Gọi sau khi transaction ghi đã commit, trên thread của
+     * listener JMS — không có SecurityContext/request, nên người tải file lên được truyền tường minh (IP nằm ở sự kiện
+     * {@code PRODUCT_IMPORT_SUBMITTED} cùng {@code import.id}).
+     *
+     * @param actor username của admin đã tải file lên ({@code import_jobs.created_by})
+     */
+    public void productsImported(String actor, Long importJobId, String fileName, int created, int updated,
+                                 int unchanged) {
+        write(event(Level.INFO, "Products imported", "PRODUCTS_IMPORTED", "success")
+                .with("actor", actor)
+                .with("import.id", importJobId)
+                .with("import.file", fileName)
+                .with("import.created", created)
+                .with("import.updated", updated)
+                .with("import.unchanged", unchanged));
+    }
+
+    // -------------------------------------------------------
     // Helpers
     // -------------------------------------------------------
 

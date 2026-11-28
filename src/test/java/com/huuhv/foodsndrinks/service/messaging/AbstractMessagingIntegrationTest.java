@@ -38,12 +38,14 @@ import static org.mockito.Mockito.when;
  * Không {@code @Transactional}: message chỉ được gửi sau commit thật, consumer chạy trên thread khác. Mỗi test dùng
  * {@code orderId} ngẫu nhiên riêng và tự xoá {@code notification_logs}/{@code outbox_messages} của nó. Thời gian chờ giao
  * lại 100ms ({@code artemis/broker-test.properties}); số lần giao (5) và DLQ như production.
+ * <p>
+ * {@code public} để integration test JMS ở package khác (vd. {@code service.excel}) kế thừa và dùng chung context này.
  */
 @IntegrationTest
 @ExtendWith(OutputCaptureExtension.class)
-abstract class AbstractMessagingIntegrationTest {
+public abstract class AbstractMessagingIntegrationTest {
 
-    static final Duration WAIT = Duration.ofSeconds(15);
+    protected static final Duration WAIT = Duration.ofSeconds(15);
 
     @Autowired protected OutboxService outboxService;
     @Autowired protected PlatformTransactionManager transactionManager;
@@ -58,7 +60,7 @@ abstract class AbstractMessagingIntegrationTest {
     private final List<Long> orderIds = new ArrayList<>();
 
     @BeforeEach
-    void setUpMessaging() {
+    protected void setUpMessaging() {
         when(slackNotificationService.isEnabled()).thenReturn(true);
         when(emailNotificationService.isEnabled()).thenReturn(true);
         // Subscription chỉ tồn tại khi consumer đã đăng ký: gửi trước đó thì message mất
@@ -67,7 +69,7 @@ abstract class AbstractMessagingIntegrationTest {
     }
 
     @AfterEach
-    void cleanUpMessaging() {
+    protected void cleanUpMessaging() {
         for (Long id : orderIds) {
             jdbcTemplate.update("DELETE FROM notification_logs WHERE order_id = ?", id);
             jdbcTemplate.update("DELETE FROM outbox_messages WHERE JSON_EXTRACT(payload, '$.orderId') = ?", id);

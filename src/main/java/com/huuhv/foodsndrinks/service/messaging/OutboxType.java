@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.messaging;
 
+import com.huuhv.foodsndrinks.dto.message.ExcelImportMessage;
 import com.huuhv.foodsndrinks.dto.message.OrderPlacedMessage;
 import com.huuhv.foodsndrinks.dto.message.OrderStatusChangedMessage;
 
@@ -15,7 +16,8 @@ public enum OutboxType {
 
     ORDER_PLACED(MessageTypes.ORDER_PLACED, OrderPlacedMessage.class, Destinations.ORDER_PLACED, true),
     ORDER_STATUS_CHANGED(MessageTypes.ORDER_STATUS_CHANGED, OrderStatusChangedMessage.class,
-            Destinations.ORDER_STATUS_CHANGED, true);
+            Destinations.ORDER_STATUS_CHANGED, true),
+    EXCEL_IMPORT(MessageTypes.EXCEL_IMPORT, ExcelImportMessage.class, Destinations.EXCEL_IMPORT, false);
 
     private final String alias;
     private final Class<?> payloadType;

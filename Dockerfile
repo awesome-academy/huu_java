@@ -25,10 +25,12 @@ WORKDIR /app
 # Đây là giá trị mặc định: compose ghi đè bằng APP_TZ trong .env, docker run thì -e TZ=... — mọi instance phải dùng chung một giá trị.
 ENV TZ=Asia/Ho_Chi_Minh
 
-# logs/ (profile prod ghi file log) và uploads/ (FileStorageService, UPLOAD_DIR) phải ghi được bởi user spring.
-# docker-compose ghi đè user bằng UID/GID của máy host (HOST_UID/HOST_GID) vì 2 thư mục này là bind mount.
+# logs/ (profile prod ghi file log), uploads/ (FileStorageService, UPLOAD_DIR) và import-tmp/ (file Excel chờ import,
+# EXCEL_IMPORT_DIR — mặc định ./import-tmp của WORKDIR) phải ghi được bởi user spring.
+# docker-compose ghi đè user bằng UID/GID của máy host (HOST_UID/HOST_GID) vì các thư mục này là bind mount.
 RUN groupadd --system spring && useradd --system --gid spring --no-create-home spring \
-    && mkdir -p /app/logs /app/uploads && chown spring:spring /app/logs /app/uploads
+    && mkdir -p /app/logs /app/uploads /app/import-tmp \
+    && chown spring:spring /app/logs /app/uploads /app/import-tmp
 COPY --from=build --chown=spring:spring /workspace/app.jar app.jar
 USER spring
 

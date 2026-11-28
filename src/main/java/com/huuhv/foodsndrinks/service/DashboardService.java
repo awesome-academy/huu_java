@@ -92,7 +92,7 @@ public class DashboardService {
         DashboardResDto result = DashboardResDto.builder()
                 .totalRevenue(revenue.join())
                 .totalCompletedOrders(counts.get(OrderStatus.COMPLETED))
-                .activeOrders(counts.get(OrderStatus.PENDING) + counts.get(OrderStatus.PROCESSING))
+                .activeOrders(activeOrders(counts))
                 .totalProducts(products.join())
                 .totalUsers(users.join())
                 .statusCounts(toLabels(counts))
@@ -104,14 +104,16 @@ public class DashboardService {
     }
 
     /**
-     * Chỉ dữ liệu 3 biểu đồ (3 query gom nhóm, một transaction read-only) — cho {@code dashboard.js} lúc tải trang và mỗi
-     * lần cập nhật realtime, không tính lại KPI/bảng. Luôn đọc lại từ DB: dashboard ở mọi instance hội tụ cùng số liệu,
-     * client không cộng dồn từ sự kiện.
+     * Dữ liệu 3 biểu đồ (3 query gom nhóm, một transaction read-only) + KPI "Đơn đang xử lý" (suy ra từ kết quả đếm theo
+     * trạng thái, không thêm query) — cho {@code dashboard.js} lúc tải trang và mỗi lần cập nhật realtime. Các KPI khác
+     * và bảng đơn gần đây không tính lại. Luôn đọc lại từ DB: dashboard ở mọi instance hội tụ cùng số liệu, client không
+     * cộng dồn từ sự kiện.
      */
     @Transactional(readOnly = true)
     public DashboardChartResDto getChartData() {
         List<DashboardResDto.MonthlyRevenueDto> monthly = buildMonthlyRevenue();
-        Map<String, Long> statusCounts = toLabels(countByStatus());
+        Map<OrderStatus, Long> counts = countByStatus();
+        Map<String, Long> statusCounts = toLabels(counts);
         List<String> topLabels = new ArrayList<>();
         List<Long> topQuantities = new ArrayList<>();
         for (Object[] row : orderDetailRepository.findTopSellingProducts(PageRequest.of(0, TOP_PRODUCTS))) {
@@ -124,7 +126,13 @@ public class DashboardService {
                 List.copyOf(statusCounts.keySet()),
                 List.copyOf(statusCounts.values()),
                 List.copyOf(topLabels),
-                List.copyOf(topQuantities));
+                List.copyOf(topQuantities),
+                activeOrders(counts));
+    }
+
+    /** KPI "Đơn đang xử lý": Chờ xác nhận + Đang xử lý — một công thức cho trang SSR và JSON realtime. */
+    private static long activeOrders(Map<OrderStatus, Long> counts) {
+        return counts.get(OrderStatus.PENDING) + counts.get(OrderStatus.PROCESSING);
     }
 
     // -------------------------------------------------------

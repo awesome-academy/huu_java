@@ -14,17 +14,21 @@ import com.huuhv.foodsndrinks.repository.OrderDetailRepository;
 import com.huuhv.foodsndrinks.repository.OrderRepository;
 import com.huuhv.foodsndrinks.repository.ProductImageRepository;
 import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.projection.OrderExportRow;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxService;
 import com.huuhv.foodsndrinks.service.messaging.OutboxType;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -48,15 +52,42 @@ public class OrderService {
     private final OutboxService          outboxService;
     private final AuditLogService        auditLogService;
 
+    /**
+     * Danh sách đơn của admin theo bộ lọc. {@code from}/{@code to}: ngày đặt (yyyy-MM-dd, tính cả hai đầu), để trống =
+     * không chặn đầu đó.
+     *
+     * @throws IllegalArgumentException khi ngày sai định dạng hoặc {@code from} sau {@code to}
+     */
     @Transactional(readOnly = true)
-    public Page<OrderResDto> searchOrders(String statusStr, String keyword,
-                                          Long orderId, int page, int size) {
-        OrderStatus status = parseStatus(statusStr);
-        String kw = blank(keyword) ? null : keyword.trim();
+    public Page<OrderResDto> searchOrders(String statusStr, String keyword, Long orderId,
+                                          String from, String to, int page, int size) {
+        OrderFilter filter = OrderFilter.of(statusStr, keyword, orderId, from, to);
 
         return orderRepository
-                .search(status, kw, orderId, PageRequest.of(Math.max(page, 0), size))
+                .search(filter.status(), filter.keyword(), filter.orderId(), filter.orderedFrom(),
+                        filter.orderedBefore(), PageRequest.of(Math.max(page, 0), size))
                 .map(OrderResDto::forList);
+    }
+
+    /**
+     * Các dòng của file export: đúng các đơn mà {@link #searchOrders} liệt kê với cùng bộ lọc (mọi trang), mới nhất trước.
+     *
+     * @param maxRows số dòng tối đa của một file
+     * @throws IllegalArgumentException khi bộ lọc sai (như {@link #searchOrders}) hoặc khớp nhiều hơn {@code maxRows} đơn
+     */
+    @Transactional(readOnly = true)
+    public List<OrderExportRow> findExportRows(String statusStr, String keyword, Long orderId,
+                                               String from, String to, int maxRows) {
+        OrderFilter filter = OrderFilter.of(statusStr, keyword, orderId, from, to);
+
+        // Xin thừa 1 dòng: biết bộ lọc vượt giới hạn mà không cần đếm riêng, và không bao giờ đọc quá maxRows + 1 dòng
+        List<OrderExportRow> rows = orderRepository.findExportRows(filter.status(), filter.keyword(), filter.orderId(),
+                filter.orderedFrom(), filter.orderedBefore(), Limit.of(maxRows + 1));
+        if (rows.size() > maxRows) {
+            throw new IllegalArgumentException("Số đơn hàng khớp bộ lọc vượt giới hạn " + maxRows
+                    + " dòng của một file Excel. Hãy thu hẹp khoảng ngày đặt hoặc bộ lọc!");
+        }
+        return rows;
     }
 
     /** Chi tiết đơn cho admin. Giỏ hàng ({@code CART}) không phải đơn → 404 như mọi màn hình admin. */
@@ -303,6 +334,43 @@ public class OrderService {
 
     private static boolean blank(String s) {
         return s == null || s.isBlank();
+    }
+
+    /**
+     * Bộ lọc danh sách đơn của admin sau khi chuẩn hoá — dùng chung cho trang danh sách và file export để hai nơi luôn
+     * lọc như nhau. Ngày đặt nằm trong {@code [orderedFrom, orderedBefore)}; {@code null} = không lọc theo trường đó.
+     */
+    private record OrderFilter(OrderStatus status, String keyword, Long orderId,
+                               LocalDateTime orderedFrom, LocalDateTime orderedBefore) {
+
+        /** Khoảng năm chấp nhận: ngoài khoảng này chắc chắn là nhập sai, và tránh tràn khi cộng ngày / đổi sang kiểu của DB. */
+        private static final int MIN_YEAR = 2000;
+        private static final int MAX_YEAR = 2999;
+
+        static OrderFilter of(String status, String keyword, Long orderId, String from, String to) {
+            LocalDate fromDate = parseDate(from, "Ngày bắt đầu");
+            LocalDate toDate = parseDate(to, "Ngày kết thúc");
+            if (fromDate != null && toDate != null && fromDate.isAfter(toDate)) {
+                throw new IllegalArgumentException("Ngày bắt đầu không được sau ngày kết thúc!");
+            }
+            return new OrderFilter(parseStatus(status), blank(keyword) ? null : keyword.trim(), orderId,
+                    fromDate == null ? null : fromDate.atStartOfDay(),
+                    // "Đến ngày" tính cả ngày đó → chặn trên là 00:00 ngày kế tiếp
+                    toDate == null ? null : toDate.plusDays(1).atStartOfDay());
+        }
+
+        private static LocalDate parseDate(String value, String label) {
+            if (blank(value)) return null;
+            try {
+                LocalDate date = LocalDate.parse(value.trim());
+                if (date.getYear() >= MIN_YEAR && date.getYear() <= MAX_YEAR) {
+                    return date;
+                }
+            } catch (DateTimeParseException e) {
+                // báo lỗi chung bên dưới — không lặp lại giá trị người dùng nhập
+            }
+            throw new IllegalArgumentException(label + " không hợp lệ!");
+        }
     }
 }
 

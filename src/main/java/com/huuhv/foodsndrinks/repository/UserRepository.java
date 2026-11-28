@@ -40,6 +40,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     List<UsernameAccountStatus> findAccountStatusesByUsernameIn(@Param("usernames") Collection<String> usernames);
     Optional<User> findByAuthProviderAndProviderId(AuthProvider authProvider, String providerId);
 
+    /**
+     * Khoá dòng của tài khoản ({@code SELECT … FOR UPDATE}) tới hết transaction hiện tại — để xếp hàng các thao tác
+     * "đếm rồi chèn" song song của CÙNG một người dùng (vd. giới hạn số lần import Excel đang chạy). Chỉ chặn các thao tác
+     * khoá cùng dòng; đọc thường (kiểm tra trạng thái tài khoản mỗi request) không bị chặn.
+     *
+     * @return id tài khoản, rỗng nếu không có {@code username} này
+     */
+    @Query(value = "SELECT id FROM users WHERE username = :username FOR UPDATE", nativeQuery = true)
+    Optional<Long> lockIdByUsername(@Param("username") String username);
+
     long countByIsActiveTrue();
 
     @Query(value = """

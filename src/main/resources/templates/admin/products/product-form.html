@@ -83,6 +83,7 @@
                             <label class="form-label fw-medium">Mô tả</label>
                             <textarea class="form-control" th:field="*{description}" rows="4"
                                       placeholder="Mô tả ngắn gọn về sản phẩm..."></textarea>
+                            <div class="text-danger small mt-1" th:if="${#fields.hasErrors('description')}" th:errors="*{description}"></div>
                         </div>
 
                     </div>
@@ -147,7 +148,7 @@
                                class="form-control">
                         <div class="form-text mt-1">
                             Cho phép nhiều ảnh. Ảnh đầu tiên sẽ là ảnh chính (nếu chưa có ảnh nào).
-                            Tối đa 10 MB mỗi file.
+                            Tối đa 5 MB mỗi file.
                         </div>
                     </div>
                 </div>

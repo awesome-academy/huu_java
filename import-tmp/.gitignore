@@ -1,0 +1,3 @@
+# Giữ thư mục import-tmp/ trong repo: docker-compose bind mount ./import-tmp (file Excel đang chờ import — EXCEL_IMPORT_DIR),
+# nếu máy host chưa có thì Docker tự tạo nó thuộc root và app (chạy bằng user thường) không ghi được → không khởi động.
+# Quy tắc ignore nằm ở .gitignore gốc (import-tmp/* và !import-tmp/.gitignore) — không khai báo lại ở đây.

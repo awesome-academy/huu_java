@@ -41,7 +41,8 @@
                     </div>
                     <div>
                         <div class="text-muted small">Đơn đang xử lý</div>
-                        <div class="fw-bold fs-5" th:text="${stats.activeOrders}"></div>
+                        <!-- Cập nhật realtime bởi dashboard.js (activeOrders trong JSON biểu đồ) -->
+                        <div class="fw-bold fs-5" data-dashboard-active-orders th:text="${stats.activeOrders}"></div>
                         <div class="text-muted" style="font-size:0.75rem">Chờ xác nhận + Đang xử lý</div>
                     </div>
                 </div>

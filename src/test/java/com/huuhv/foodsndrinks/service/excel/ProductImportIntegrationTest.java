@@ -1,0 +1,261 @@
+package com.huuhv.foodsndrinks.service.excel;
+
+import com.huuhv.foodsndrinks.dto.request.ProductImportCommand;
+import com.huuhv.foodsndrinks.dto.request.ProductReqDto;
+import com.huuhv.foodsndrinks.dto.response.ImportRowErrorResDto;
+import com.huuhv.foodsndrinks.dto.response.ProductImportResDto;
+import com.huuhv.foodsndrinks.entity.Category;
+import com.huuhv.foodsndrinks.entity.Product;
+import com.huuhv.foodsndrinks.enums.ProductType;
+import com.huuhv.foodsndrinks.exception.ImportNameConflictException;
+import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
+import com.huuhv.foodsndrinks.repository.CategoryRepository;
+import com.huuhv.foodsndrinks.repository.ProductRepository;
+import com.huuhv.foodsndrinks.repository.projection.ProductImportMatch;
+import com.huuhv.foodsndrinks.service.ProductService;
+import com.huuhv.foodsndrinks.support.IntegrationTest;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
+
+import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.productWorkbook;
+import static com.huuhv.foodsndrinks.service.excel.ExcelTestFiles.row;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+
+/**
+ * Import (và export rồi import lại) sản phẩm bằng file .xlsx thật trên MySQL thật: quy tắc "trùng tên" là của collation MySQL (unit test chỉ giả lập),
+ * và tính nguyên tử của bước ghi là của transaction thật. Tên sản phẩm/danh mục gắn hậu tố ngẫu nhiên để không đụng dữ
+ * liệu của class test khác trong cùng DB.
+ */
+@IntegrationTest
+class ProductImportIntegrationTest {
+
+    @Autowired private ProductImportService importService;
+    @Autowired private ProductExportService exportService;
+    @Autowired private ProductService productService;
+    @Autowired private ProductRepository productRepository;
+    @Autowired private CategoryRepository categoryRepository;
+
+    @TempDir Path directory;
+
+    private final String uid = UUID.randomUUID().toString().substring(0, 8);
+
+    @Test
+    @Transactional
+    void validFile_addsNewProducts_updatesExactNameMatches_andSkipsUnchangedRows() {
+        Category drinks = category("Đồ uống " + uid);
+        Category foods = category("Món chính " + uid);
+        importOk(row("Trà đào " + uid, drinks.getName(), "Đồ uống", 30000, "cũ", "Có"),
+                row("Cơm tấm " + uid, foods.getName(), "Đồ ăn", 45000, null, "Có"));
+
+        ProductImportResDto result = importFile(productWorkbook(
+                // đổi giá, danh mục, mô tả, ngừng bán
+                row("Trà đào " + uid, foods.getName(), "Đồ uống", 35000.5, "mới", "Không"),
+                // giống hệt sản phẩm đang có
+                row("Cơm tấm " + uid, foods.getName(), "FOOD", 45000, null, null),
+                row("Bánh mì " + uid, foods.getName(), "Đồ ăn", 20000, "=1+1", "Có")));
+
+        assertThat(result).isEqualTo(new ProductImportResDto(3, 1, 1, 1, 0, List.of()));
+
+        ProductImportMatch tea = only("Trà đào " + uid);
+        assertThat(tea.categoryId()).isEqualTo(foods.getId());
+        assertThat(tea.price()).isEqualByComparingTo("35000.5");
+        assertThat(tea.description()).isEqualTo("mới");
+        assertThat(tea.isAvailable()).isFalse();
+        // Cập nhật giữ nguyên slug (URL trang sản phẩm không đổi)
+        assertThat(productRepository.findById(tea.id()).orElseThrow().getSlug()).isEqualTo("tra-dao-" + uid);
+
+        ProductImportMatch bread = only("Bánh mì " + uid);
+        assertThat(bread.type()).isEqualTo(ProductType.FOOD);
+        // Giá trị trông như công thức được lưu nguyên văn dạng chữ (được chống khi export/hiển thị)
+        assertThat(bread.description()).isEqualTo("=1+1");
+        assertThat(productRepository.findById(bread.id()).orElseThrow().getSlug()).isEqualTo("banh-mi-" + uid);
+    }
+
+    @Test
+    @Transactional
+    void oneBadRow_meansNoRowIsSaved_andEveryErrorIsReportedWithItsRowAndColumn() {
+        Category foods = category("Món chính " + uid);
+
+        ProductImportResDto result = importFile(productWorkbook(
+                row("Hợp lệ " + uid, foods.getName(), "Đồ ăn", 10000, null, "Có"),
+                row("Sai giá " + uid, foods.getName(), "Đồ ăn", 0, null, "Có"),
+                row("Sai danh mục " + uid, "Không có " + uid, "Nước", "abc", null, "Có")));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.totalRows()).isEqualTo(3);
+        assertThat(result.errors()).containsExactly(
+                new ImportRowErrorResDto(3, "Giá", "Giá phải lớn hơn 0!"),
+                new ImportRowErrorResDto(4, "Danh mục",
+                        "Danh mục không tồn tại! Hãy tạo danh mục trước hoặc nhập đúng tên danh mục."),
+                new ImportRowErrorResDto(4, "Loại", "Loại không hợp lệ! Chỉ nhận: Đồ ăn hoặc Đồ uống."),
+                new ImportRowErrorResDto(4, "Giá",
+                        "Giá phải là số (nhập số, không kèm chữ, dấu phẩy hay ký hiệu tiền tệ)!"));
+        assertThat(productRepository.findImportMatchesByName("Hợp lệ " + uid)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void nameDifferingOnlyByCaseOrAccents_matchesInMySql_butIsRejectedInsteadOfUpdated() {
+        Category foods = category("Món chính " + uid);
+        importOk(row("Bò kho " + uid, foods.getName(), "Đồ ăn", 50000, null, "Có"));
+
+        // Collation của cột coi cả ba cách viết là cùng một tên
+        assertThat(productRepository.findImportMatchesByName("BO KHO " + uid.toUpperCase()))
+                .extracting(ProductImportMatch::name).containsExactly("Bò kho " + uid);
+        assertThat(productRepository.findImportMatchesByName("Bơ khô " + uid)).hasSize(1);
+
+        ProductImportResDto result = importFile(productWorkbook(
+                row("Bơ khô " + uid, foods.getName(), "Đồ ăn", 99000, null, "Có"),
+                row("Mới " + uid, foods.getName(), "Đồ ăn", 1000, null, "Có")));
+
+        assertThat(result.errors()).singleElement().satisfies(error -> {
+            assertThat(error.row()).isEqualTo(2);
+            assertThat(error.column()).isEqualTo("Tên");
+            assertThat(error.message()).startsWith("Tên gần trùng với một sản phẩm đã có");
+        });
+        // Sản phẩm "Bò kho" không bị sửa, dòng hợp lệ cũng không được thêm
+        assertThat(only("Bò kho " + uid).price()).isEqualByComparingTo("50000");
+        assertThat(productRepository.findImportMatchesByName("Mới " + uid)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void exportedList_matchesTheAdminSearch_andReimportingItChangesNothingUntilACellIsEdited() throws IOException {
+        Category drinks = category("Đồ uống " + uid);
+        importOk(row("Trà đào " + uid, drinks.getName(), "Đồ uống", 35000.5, "=1+1", "Có"),
+                row("Cà phê " + uid, drinks.getName(), "Đồ uống", 29000, null, "Không"));
+        List<String> listed = productRepository.search(uid, null, null, null, PageRequest.of(0, 50))
+                .map(Product::getName).getContent();
+
+        byte[] exported;
+        try (ExcelFile file = exportService.export(uid, null, null, null)) {
+            assertThat(file.rowCount()).isEqualTo(2);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            file.writeTo(out);
+            exported = out.toByteArray();
+        }
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(exported))) {
+            Sheet sheet = workbook.getSheetAt(0);
+            // File export = đúng danh sách admin đang lọc, cùng thứ tự (mới nhất trước)
+            assertThat(List.of(sheet.getRow(1).getCell(0).getStringCellValue(),
+                    sheet.getRow(2).getCell(0).getStringCellValue()))
+                    .isEqualTo(listed).containsExactly("Cà phê " + uid, "Trà đào " + uid);
+
+            // Import lại nguyên file: không dòng nào đổi (kể cả giá lẻ và mô tả trông như công thức)
+            assertThat(importFile(exported)).isEqualTo(new ProductImportResDto(2, 0, 0, 2, 0, List.of()));
+
+            // Sửa giá một dòng rồi import lại: đúng sản phẩm đó được cập nhật
+            sheet.getRow(1).getCell(3).setCellValue(31000);
+            assertThat(importFile(ExcelTestFiles.bytes(workbook)))
+                    .isEqualTo(new ProductImportResDto(2, 0, 1, 1, 0, List.of()));
+            assertThat(only("Cà phê " + uid).price()).isEqualByComparingTo("31000");
+            assertThat(only("Trà đào " + uid).description()).isEqualTo("=1+1");
+        }
+
+        // Bộ lọc của danh sách cũng áp dụng cho file export
+        try (ExcelFile available = exportService.export(uid, null, "DRINK", "true")) {
+            assertThat(available.rowCount()).isEqualTo(1);
+        }
+        try (ExcelFile none = exportService.export(uid, null, "FOOD", null)) {
+            assertThat(none.rowCount()).isZero();
+        }
+    }
+
+    /** Không {@code @Transactional}: kiểm tra đúng transaction của {@code applyImport} rollback mọi dòng đã ghi. */
+    @Test
+    void writeFailingOnALaterRow_rollsBackTheRowsAlreadyWritten() {
+        Category foods = categoryRepository.save(newCategory("Rollback " + uid));
+        try {
+            ProductReqDto valid = new ProductReqDto();
+            valid.setName("Ghi dở " + uid);
+            valid.setCategoryId(foods.getId());
+            valid.setType(ProductType.FOOD);
+            valid.setPrice(new BigDecimal("10000"));
+
+            // Dòng 1 thêm được, dòng 2 cập nhật một sản phẩm không còn tồn tại
+            assertThatExceptionOfType(ResourceNotFoundException.class).isThrownBy(() -> productService.applyImport(List.of(
+                    new ProductImportCommand(2, null, valid),
+                    new ProductImportCommand(3, Long.MAX_VALUE, valid))));
+
+            assertThat(productRepository.findImportMatchesByName("Ghi dở " + uid)).isEmpty();
+        } finally {
+            categoryRepository.delete(foods);
+        }
+    }
+
+    /**
+     * Hai dòng mà collation MySQL coi là một tên nhưng bước kiểm tra trùng trong file (xấp xỉ collation) không bắt được —
+     * "ß" = "ss" với {@code utf8mb4_0900_ai_ci}. Lúc ghi phải nhận ra đó là trùng TRONG file (lỗi dòng, không giao lại),
+     * không phải dữ liệu vừa đổi; cả file rollback.
+     */
+    @Test
+    void twoNewRowsThatMySqlConsidersTheSameName_failAtTheSecondRow_andNothingIsSaved() {
+        Category foods = categoryRepository.save(newCategory("Trùng ẩn " + uid));
+        try {
+            String first = "Strasse " + uid;
+            String second = "Straße " + uid;
+            ProductImportPlan plan = importService.plan(ExcelTestFiles.write(directory, productWorkbook(
+                    row("Bánh " + uid, foods.getName(), "Đồ ăn", 1000, null, "Có"),
+                    row(first, foods.getName(), "Đồ ăn", 2000, null, "Có"),
+                    row(second, foods.getName(), "Đồ ăn", 3000, null, "Có"))));
+            assertThat(plan.hasErrors()).as("validator không bắt được cặp tên này").isFalse();
+
+            assertThatExceptionOfType(ImportNameConflictException.class)
+                    .isThrownBy(() -> productService.applyImport(plan.commands()))
+                    .satisfies(conflict -> {
+                        assertThat(conflict.getRow()).isEqualTo(4);
+                        assertThat(conflict.getConflictingRow()).isEqualTo(3);
+                    });
+            assertThat(productRepository.findImportMatchesByName("Bánh " + uid)).isEmpty();
+            assertThat(productRepository.findImportMatchesByName(first)).isEmpty();
+        } finally {
+            categoryRepository.delete(foods);
+        }
+    }
+
+    /** Như {@code ImportJobProcessor}: đọc + validate file thật, không lỗi thì ghi trong một transaction. */
+    private ProductImportResDto importFile(byte[] content) {
+        ProductImportPlan plan = importService.plan(ExcelTestFiles.write(directory, content));
+        if (plan.hasErrors()) {
+            return importService.failed(plan);
+        }
+        productService.applyImport(plan.commands());
+        return new ProductImportResDto(plan.totalRows(), plan.createCount(), plan.updateCount(), plan.unchangedCount(),
+                0, List.of());
+    }
+
+    private void importOk(Object[]... rows) {
+        ProductImportResDto result = importFile(productWorkbook(rows));
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.created()).isEqualTo(rows.length);
+    }
+
+    private ProductImportMatch only(String name) {
+        List<ProductImportMatch> found = productRepository.findImportMatchesByName(name);
+        assertThat(found).hasSize(1);
+        return found.getFirst();
+    }
+
+    private Category category(String name) {
+        return categoryRepository.saveAndFlush(newCategory(name));
+    }
+
+    private Category newCategory(String name) {
+        return Category.builder().name(name).slug("import-" + UUID.randomUUID()).build();
+    }
+}
