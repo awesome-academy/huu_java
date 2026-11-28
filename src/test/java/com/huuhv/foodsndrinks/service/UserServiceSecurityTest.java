@@ -20,7 +20,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.InstantSource;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -144,7 +146,8 @@ class UserServiceSecurityTest {
         for (int i = 0; i < 2; i++) {
             assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess")));
         }
-        userService.updateProfile(1L, passwordChange("right"));
+        Instant before = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        Optional<Instant> changedAt = userService.updateProfile(1L, passwordChange("right"));
         for (int i = 0; i < 2; i++) {
             assertThatIllegalArgumentException().isThrownBy(() -> userService.updateProfile(1L, passwordChange("guess")));
         }
@@ -152,5 +155,22 @@ class UserServiceSecurityTest {
         ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(saved.capture());
         assertThat(saved.getValue().getPassword()).isEqualTo("new-hash");
+        // Mốc đổi mật khẩu được lưu (mili giây) và trả về cho người gọi — để giữ lại đúng session vừa đổi (issue #37)
+        assertThat(changedAt).get().isEqualTo(saved.getValue().getPasswordChangedAt());
+        assertThat(changedAt.get()).isAfterOrEqualTo(before).isEqualTo(changedAt.get().truncatedTo(ChronoUnit.MILLIS));
+    }
+
+    @Test
+    void profileUpdateWithoutNewPassword_doesNotTouchPasswordChangedAt() {
+        User victim = existing("hash");
+        when(userRepository.findById(1L)).thenReturn(Optional.of(victim));
+
+        Optional<Instant> changedAt = userService.updateProfile(1L,
+                new ProfileUpdateReqDto("Victim Renamed", EMAIL, "0912345678", null, "", ""));
+
+        // Không đổi mật khẩu → không session nào bị huỷ
+        assertThat(changedAt).isEmpty();
+        assertThat(victim.getPasswordChangedAt()).isNull();
+        assertThat(victim.getPassword()).isEqualTo("hash");
     }
 }

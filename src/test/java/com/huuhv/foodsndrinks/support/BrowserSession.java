@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.support;
 
+import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.JacksonJsonMessageConverter;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
@@ -247,7 +248,12 @@ public final class BrowserSession {
 
         public void close() {
             if (future.isDone() && !future.isCompletedExceptionally() && future.join().isConnected()) {
-                future.join().disconnect();
+                try {
+                    future.join().disconnect();
+                } catch (MessageDeliveryException alreadyClosed) {
+                    // Server vừa đóng socket (SUBSCRIBE bị từ chối, session bị thu hồi...) giữa lúc kiểm tra isConnected()
+                    // và lúc gửi DISCONNECT — dọn dẹp sau test không được làm test fail vì cuộc đua này
+                }
             }
             client.stop();
         }

@@ -42,6 +42,7 @@ Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong 
 - Google map tài khoản theo provider id, sau đó theo email đã verify; xử lý ở `CustomOidcUserService`.
 - Mọi provider đều dùng username nội bộ làm principal key (claim/attribute tổng hợp `local_username`), nên `Authentication#getName()` (audit log, MDC `user.name`) giống nhau dù đăng nhập bằng form, API, Google, Facebook hay X.
 - Tài khoản local đã bị admin khoá không đăng nhập được bằng bất kỳ provider nào (giống form/API): cả hai service ném `DisabledOAuth2AccountException` → `/login?error=true` với thông báo chung, audit ghi `LOGIN_FAILURE reason=DISABLED auth.method=OAUTH2:<provider>` kèm username.
+- **Đổi mật khẩu đăng xuất các thiết bị khác:** khi bạn đổi mật khẩu ở hồ sơ, mọi session khác của tài khoản (trình duyệt/thiết bị đăng nhập bằng mật khẩu cũ) bị huỷ ở request kế tiếp của chúng — audit `SESSION_REVOKED`, `event.reason=PASSWORD_CHANGED`; cookie remember-me cũ cũng hết hiệu lực. Session vừa đổi mật khẩu được giữ lại (đổi session id, cấp lại cookie remember-me nếu trình duyệt đang ghi nhớ đăng nhập). Admin đặt lại mật khẩu của một tài khoản thì **mọi** session của tài khoản đó bị huỷ, phải đăng nhập lại bằng mật khẩu mới. Tài khoản chưa từng đổi mật khẩu (kể cả tài khoản chỉ đăng nhập Google/Facebook/X) không bị ảnh hưởng.
 - Người dùng đang đăng nhập (mọi cách: form, remember-me, OAuth2) mà bị admin khoá hoặc đổi role thì session bị huỷ ở request kế tiếp (`AccountStatusFilter`): cookie remember-me bị xoá, trang public hiển thị như khách, trang cần đăng nhập chuyển về `/login`; audit ghi `SESSION_REVOKED`. Đổi role (kể cả nâng quyền) cũng phải đăng nhập lại để nhận quyền mới.
 - Facebook/Twitter xử lý ở `CustomOAuth2UserService`; Twitter là provider cấu hình thủ công (không nằm trong `CommonOAuth2Provider`).
 - Provider của tài khoản lưu ở enum `AuthProvider`.
@@ -119,7 +120,7 @@ Dưới mỗi sản phẩm có nút chia sẻ mạng xã hội (client-side, tro
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
 | GET | `/profile` | USER | Trang hồ sơ (thông tin + đơn gần đây + số item giỏ hàng) |
-| GET / POST | `/profile/edit` | USER | Cập nhật hồ sơ (validate, check trùng) |
+| GET / POST | `/profile/edit` | USER | Cập nhật hồ sơ (validate, check trùng). Đổi mật khẩu ở đây huỷ mọi session khác của tài khoản — xem [Xác thực](#xác-thực) |
 
 ## Xử Lý Lỗi
 

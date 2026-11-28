@@ -1,10 +1,12 @@
 package com.huuhv.foodsndrinks.security;
 
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.AccountStatusException;
 import org.springframework.security.authentication.AccountStatusUserDetailsChecker;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsChecker;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -53,12 +55,26 @@ public class AuditingRememberMeServices extends TokenBasedRememberMeServices {
     protected UserDetails processAutoLoginCookie(String[] cookieTokens, HttpServletRequest request,
                                                  HttpServletResponse response) {
         try {
-            return super.processAutoLoginCookie(cookieTokens, request, response);
+            UserDetails user = super.processAutoLoginCookie(cookieTokens, request, response);
+            // Cookie hợp lệ (chữ ký chứa hash mật khẩu HIỆN TẠI) → session sắp được tạo là một lần xác thực mới: ghi mốc
+            // để AccountStatusService không coi nó là session cũ của tài khoản đã từng đổi mật khẩu.
+            SessionAuthenticationTime.stamp(request, SessionAuthenticationTime.now());
+            return user;
         } catch (RememberMeAuthenticationException | UsernameNotFoundException | AccountStatusException ex) {
             // token[0] là username ghi trong cookie — AuditLogService chỉ ghi nếu tài khoản tồn tại
             auditFailure(cookieTokens.length > 0 ? cookieTokens[0] : null, ex);
             throw ex;
         }
+    }
+
+    /**
+     * Cấp cookie remember-me mới cho {@code user} (nạp lại từ DB, mang hash mật khẩu mới) — dùng sau khi user tự đổi mật
+     * khẩu: cookie cũ ký bằng hash cũ nên đã vô hiệu, không cấp lại thì trình duyệt đang "ghi nhớ đăng nhập" sẽ bị đăng
+     * xuất khi session hết hạn.
+     */
+    public void reissueCookie(HttpServletRequest request, HttpServletResponse response, UserDetails user) {
+        onLoginSuccess(request, response,
+                UsernamePasswordAuthenticationToken.authenticated(user, null, user.getAuthorities()));
     }
 
     private UserDetailsChecker auditing(UserDetailsChecker delegate) {

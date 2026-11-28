@@ -17,7 +17,7 @@ import java.util.Optional;
  * Đóng các kết nối WebSocket không còn được phép — tương đương {@code AccountStatusFilter} của request HTTP, vì frame
  * STOMP không đi qua filter chain:
  * <ul>
- *   <li>tài khoản bị khoá, bị xoá hoặc đổi role từ lúc handshake (một query cho mọi username đang kết nối, cùng quy tắc
+ *   <li>tài khoản bị khoá, bị xoá, đổi role hoặc đổi mật khẩu sau khi session của socket đăng nhập (một query cho mọi username đang kết nối, cùng quy tắc
  *       {@link AccountStatusService#revocationReason}) → audit {@code SESSION_REVOKED};</li>
  *   <li>session HTTP đã kết thúc (logout, hết hạn, bị huỷ) — {@link HttpSessionLookup}.</li>
  * </ul>
@@ -70,7 +70,7 @@ public class WebSocketSessionRevalidationJob {
                 continue;
             }
             Optional<String> reason = AccountStatusService.revocationReason(
-                    statuses.get(tracked.username()), tracked.authorities());
+                    statuses.get(tracked.username()), tracked.authorities(), tracked.authenticatedAt());
             if (reason.isPresent()) {
                 if (tracker.revoke(tracked.session())) {
                     auditLogService.webSocketSessionRevoked(tracked.username(), reason.get());

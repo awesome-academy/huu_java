@@ -13,6 +13,7 @@ import com.huuhv.foodsndrinks.exception.ResourceNotFoundException;
 import com.huuhv.foodsndrinks.repository.UserRepository;
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import com.huuhv.foodsndrinks.utils.SlugUtils;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -22,8 +23,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 
 @Service
 @Slf4j
@@ -153,8 +156,13 @@ public class UserService {
         return dto;
     }
 
+    /**
+     * @return thời điểm đổi mật khẩu vừa ghi vào {@code passwordChangedAt} nếu lần cập nhật này có đổi mật khẩu — người
+     *         gọi dùng nó để giữ lại session hiện tại ({@code PasswordChangeSessionHandler}); mọi session khác của tài
+     *         khoản bị huỷ ({@code AccountStatusService}). Rỗng nếu không đổi mật khẩu.
+     */
     @Transactional
-    public void updateProfile(Long id, ProfileUpdateReqDto dto) {
+    public Optional<Instant> updateProfile(Long id, ProfileUpdateReqDto dto) {
         User user = findById(id);
 
         if (userRepository.existsByEmailAndIdNot(dto.getEmail(), id)) {
@@ -184,6 +192,7 @@ public class UserService {
                 throw new IllegalArgumentException("Mật khẩu xác nhận mới không khớp!");
             }
             user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+            user.setPasswordChangedAt(SessionAuthenticationTime.now());
         }
 
         user.setFullName(dto.getFullName());
@@ -198,6 +207,7 @@ public class UserService {
         if (emailChanged) {
             auditLogService.userEmailChanged(id, user.getUsername());
         }
+        return passwordChanged ? Optional.of(user.getPasswordChangedAt()) : Optional.empty();
     }
 
     // -------------------------------------------------------
@@ -266,6 +276,9 @@ public class UserService {
 
         if (passwordReset) {
             user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+            // Admin đặt lại mật khẩu: MỌI session của tài khoản này (đều xác thực trước mốc) bị huỷ ở request kế tiếp —
+            // kể cả session của chính admin nếu họ đặt lại mật khẩu của mình ở đây
+            user.setPasswordChangedAt(SessionAuthenticationTime.now());
         }
 
         userRepository.save(user);

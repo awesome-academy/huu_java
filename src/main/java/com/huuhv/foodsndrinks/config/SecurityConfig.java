@@ -22,6 +22,7 @@ import com.huuhv.foodsndrinks.service.security.AccountStatusService;
 import com.huuhv.foodsndrinks.service.security.LoginAttemptService;
 import com.huuhv.foodsndrinks.service.security.RegistrationRateLimitService;
 import com.huuhv.foodsndrinks.service.websocket.StompDestinations;
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -251,6 +252,10 @@ public class SecurityConfig {
     @Bean
     public AuthenticationSuccessHandler customAuthenticationSuccessHandler() {
         return (HttpServletRequest request, HttpServletResponse response, Authentication authentication) -> {
+
+            // Form + OAuth2: ghi mốc xác thực vào session — session đăng nhập trước lần đổi mật khẩu gần nhất bị huỷ
+            // (AccountStatusService). Remember-me ghi ở AuditingRememberMeServices.
+            SessionAuthenticationTime.stamp(request, SessionAuthenticationTime.now());
 
             // Honor any saved request (e.g. user was trying to access /profile before being redirected to /login)
             var requestCache = new HttpSessionRequestCache();

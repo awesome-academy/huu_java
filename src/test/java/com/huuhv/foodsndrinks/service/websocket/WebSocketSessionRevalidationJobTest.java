@@ -13,6 +13,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,13 @@ class WebSocketSessionRevalidationJobTest {
     private final WebSocketSessionRevalidationJob job =
             new WebSocketSessionRevalidationJob(tracker, httpSessionLookup, accountStatusService, auditLogService);
 
-    private record Status(Boolean getActive, Role getRole) implements UserAccountStatus {
+    private static final Instant PASSWORD_CHANGED_AT = Instant.parse("2026-11-28T03:00:00Z");
+
+    private record Status(Boolean getActive, Role getRole, Instant getPasswordChangedAt) implements UserAccountStatus {
+        /** Tài khoản chưa từng đổi mật khẩu. */
+        Status(Boolean active, Role role) {
+            this(active, role, null);
+        }
     }
 
     @Test
@@ -90,6 +97,28 @@ class WebSocketSessionRevalidationJobTest {
         verify(auditLogService).webSocketSessionRevoked("deleted", AccountStatusService.ACCOUNT_NOT_FOUND);
         verify(accountStatusService, times(1)).findAccountStatuses(anyCollection());
         assertThat(tracker.snapshot()).extracting(WebSocketSessionTracker.TrackedSession::username).containsExactly("ok");
+    }
+
+    @Test
+    void socketsOfSessionsAuthenticatedBeforeThePasswordChange_areClosedAndAudited() throws Exception {
+        // Cùng một user, ba trình duyệt: đăng nhập trước khi đổi mật khẩu, session vừa đổi mật khẩu (mốc = lúc đổi),
+        // và session không mang mốc xác thực (coi như cũ)
+        WebSocketSession oldLogin = open("ws-1", "alice", "ROLE_USER", PASSWORD_CHANGED_AT.minusSeconds(60));
+        WebSocketSession changer = open("ws-2", "alice", "ROLE_USER", PASSWORD_CHANGED_AT);
+        WebSocketSession unstamped = open("ws-3", "alice", "ROLE_USER");
+        WebSocketSession otherUser = open("ws-4", "bob", "ROLE_USER", PASSWORD_CHANGED_AT.minusSeconds(60));
+        when(httpSessionLookup.isAlive(any())).thenReturn(true);
+        when(accountStatusService.findAccountStatuses(anyCollection())).thenReturn(Map.of(
+                "alice", new Status(true, Role.ROLE_USER, PASSWORD_CHANGED_AT),
+                "bob", new Status(true, Role.ROLE_USER)));
+
+        assertThat(job.revalidateOpenSessions()).isEqualTo(2);
+
+        verify(oldLogin).close(WebSocketSessionTracker.REVOKED);
+        verify(unstamped).close(WebSocketSessionTracker.REVOKED);
+        verify(changer, never()).close(any(CloseStatus.class));
+        verify(otherUser, never()).close(any(CloseStatus.class));
+        verify(auditLogService, times(2)).webSocketSessionRevoked("alice", AccountStatusService.PASSWORD_CHANGED);
     }
 
     @Test
@@ -191,8 +220,16 @@ class WebSocketSessionRevalidationJobTest {
     }
 
     private WebSocketSession open(String id, String username, String role) throws Exception {
+        return open(id, username, role, null);
+    }
+
+    /** @param authenticatedAt mốc xác thực của session HTTP lúc handshake, {@code null} = session không mang mốc */
+    private WebSocketSession open(String id, String username, String role, Instant authenticatedAt) throws Exception {
         WebSocketSession socket = mock(WebSocketSession.class);
         Map<String, Object> attributes = new HashMap<>(Map.of(HttpSessionLookup.HTTP_SESSION_ID_ATTRIBUTE, "http-" + id));
+        if (authenticatedAt != null) {
+            attributes.put(HttpSessionLookup.AUTHENTICATED_AT_ATTRIBUTE, authenticatedAt);
+        }
         when(socket.getId()).thenReturn(id);
         when(socket.getAttributes()).thenReturn(attributes);
         when(socket.getPrincipal()).thenReturn(new TestingAuthenticationToken(username, "n/a", List.of(

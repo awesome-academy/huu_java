@@ -18,6 +18,7 @@ import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 import org.springframework.web.socket.handler.WebSocketHandlerDecoratorFactory;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -151,8 +152,8 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
             return TOO_MANY_CONNECTIONS;
         }
         sessions.put(session.getId(), new TrackedSession(session, username,
-                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session), false, false,
-                sequence.incrementAndGet()));
+                List.copyOf(authentication.getAuthorities()), HttpSessionLookup.httpSessionId(session),
+                HttpSessionLookup.authenticatedAt(session), false, false, sequence.incrementAndGet()));
         return null;
     }
 
@@ -295,6 +296,8 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
      * @param username      {@code Authentication#getName()} lúc handshake (username local với mọi kiểu đăng nhập)
      * @param authorities   quyền lúc handshake — so với DB để phát hiện đổi role
      * @param httpSessionId id session HTTP lúc handshake (không bao giờ ghi ra log)
+     * @param authenticatedAt mốc xác thực của session HTTP lúc handshake ({@code null} nếu không có) — so với lần đổi
+     *                      mật khẩu gần nhất của tài khoản
      * @param revoked       đã bị thu hồi nhưng chưa đóng được — chỉ còn việc đóng lại, không kiểm tra/audit lại
      * @param resyncPending phải đóng ({@link #RESYNC}) để client resync — subscription realtime đã được tạo lại sau khi
      *                      socket mở; còn dấu này nghĩa là chưa đóng được, job đóng lại
@@ -302,14 +305,16 @@ public class WebSocketSessionTracker implements WebSocketHandlerDecoratorFactory
      */
     public record TrackedSession(WebSocketSession session, String username,
                                  Collection<? extends GrantedAuthority> authorities, String httpSessionId,
-                                 boolean revoked, boolean resyncPending, long sequence) {
+                                 Instant authenticatedAt, boolean revoked, boolean resyncPending, long sequence) {
 
         TrackedSession asRevoked() {
-            return new TrackedSession(session, username, authorities, httpSessionId, true, resyncPending, sequence);
+            return new TrackedSession(session, username, authorities, httpSessionId, authenticatedAt, true,
+                    resyncPending, sequence);
         }
 
         TrackedSession asResyncPending() {
-            return new TrackedSession(session, username, authorities, httpSessionId, revoked, true, sequence);
+            return new TrackedSession(session, username, authorities, httpSessionId, authenticatedAt, revoked, true,
+                    sequence);
         }
     }
 }

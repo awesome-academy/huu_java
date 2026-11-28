@@ -19,6 +19,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -223,6 +225,24 @@ class UserServiceTest {
             verify(auditLogService, never()).userPasswordReset(any(), any());
             verify(auditLogService, never()).userActiveChanged(any(), any(), anyBoolean());
             verifyNoInteractions(passwordEncoder);
+            // Không đặt lại mật khẩu → session đang đăng nhập không bị huỷ vì lý do mật khẩu
+            assertThat(user.getPasswordChangedAt()).isNull();
+        }
+
+        @Test
+        void passwordReset_storesNewHash_andMarksWhenItChanged_soEverySessionOfThatUserIsRevoked() {
+            User user = existing(5L, "bob", true);
+            when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+            when(passwordEncoder.encode("new-password-123")).thenReturn("new-hash");
+            UserEditReqDto dto = edit("bob@example.com", Role.ROLE_USER, true);
+            dto.setNewPassword("new-password-123");
+            Instant before = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+
+            userService.updateUser(5L, dto);
+
+            assertThat(user.getPassword()).isEqualTo("new-hash");
+            assertThat(user.getPasswordChangedAt()).isAfterOrEqualTo(before);
+            verify(auditLogService).userPasswordReset(5L, "bob");
         }
     }
 }

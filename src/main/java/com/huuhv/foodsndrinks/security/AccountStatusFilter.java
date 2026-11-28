@@ -2,6 +2,7 @@ package com.huuhv.foodsndrinks.security;
 
 import com.huuhv.foodsndrinks.service.audit.AuditLogService;
 import com.huuhv.foodsndrinks.service.security.AccountStatusService;
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,15 +16,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 
 /**
- * Chain web: huỷ session của tài khoản đã bị admin khoá, bị xoá/đổi username hoặc bị đổi role kể từ lúc đăng nhập —
- * có hiệu lực ngay ở request tiếp theo thay vì chờ session hết hạn (30 phút không hoạt động).
+ * Chain web: huỷ session của tài khoản đã bị admin khoá, bị xoá/đổi username, bị đổi role hoặc đã đổi mật khẩu kể từ lúc
+ * session đăng nhập — có hiệu lực ngay ở request tiếp theo thay vì chờ session hết hạn (30 phút không hoạt động).
  * <p>
  * Kiểm tra DB ở mỗi request đã đăng nhập (giống {@code JwtAuthenticationFilter} của chain API) thay vì huỷ session lúc
  * khoá qua {@code SessionRegistry}: registry nằm trong bộ nhớ từng instance và không biết session tạo bởi remember-me.
- * Một query 2 cột theo index UNIQUE; bỏ qua file tĩnh.
+ * Một query 3 cột theo index UNIQUE; bỏ qua file tĩnh. Mốc xác thực của session: {@link SessionAuthenticationTime}.
  * <p>
  * Khi huỷ: ghi audit {@code SESSION_REVOKED}, xoá cookie remember-me, invalidate session, xoá SecurityContext rồi cho
  * request đi tiếp như khách — trang public vẫn hiển thị, trang cần đăng nhập thì entry point đưa về {@code /login}
@@ -60,7 +62,8 @@ public class AccountStatusFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.isAuthenticated() && !(auth instanceof AnonymousAuthenticationToken)) {
-            accountStatusService.sessionRevocationReason(auth.getName(), auth.getAuthorities())
+            Instant authenticatedAt = SessionAuthenticationTime.of(request.getSession(false));
+            accountStatusService.sessionRevocationReason(auth.getName(), auth.getAuthorities(), authenticatedAt)
                     .ifPresent(reason -> revoke(request, response, auth, reason));
         }
         filterChain.doFilter(request, response);

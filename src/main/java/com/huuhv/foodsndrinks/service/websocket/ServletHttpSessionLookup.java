@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
@@ -10,6 +11,7 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Map;
 
 /**
@@ -51,6 +53,10 @@ public class ServletHttpSessionLookup implements HttpSessionLookup {
         }
         attributes.put(HTTP_SESSION_ID_ATTRIBUTE, session.getId());
         attributes.put(HTTP_SESSION_ATTRIBUTE, session);
+        Instant authenticatedAt = SessionAuthenticationTime.of(session);
+        if (authenticatedAt != null) {
+            attributes.put(AUTHENTICATED_AT_ATTRIBUTE, authenticatedAt);
+        }
         return true;
     }
 

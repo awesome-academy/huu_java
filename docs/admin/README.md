@@ -86,7 +86,7 @@ JS của admin nằm ở `static/js/admin/`: `main.js` (hộp xác nhận qua th
 | Method | Path | Mô tả |
 |---|---|---|
 | GET | `/admin/users` | Danh sách phân trang, filter theo keyword / role / trạng thái active |
-| GET / POST | `/admin/users/{id}/edit` | Sửa thông tin người dùng; ô mật khẩu mới để trống = giữ nguyên, nếu nhập thì theo chính sách mật khẩu 8–64 ký tự (xem [docs/web](../web/README.md#form-login--đăng-ký--authcontroller)) |
+| GET / POST | `/admin/users/{id}/edit` | Sửa thông tin người dùng; ô mật khẩu mới để trống = giữ nguyên, nếu nhập thì theo chính sách mật khẩu 8–64 ký tự (xem [docs/web](../web/README.md#form-login--đăng-ký--authcontroller)). **Đặt lại mật khẩu huỷ mọi session đang đăng nhập của tài khoản đó** ở request kế tiếp (audit `SESSION_REVOKED`, `event.reason=PASSWORD_CHANGED`; socket realtime bị đóng trong ≤ 60s) — kể cả session của chính bạn nếu bạn đặt lại mật khẩu của mình ở đây |
 | POST | `/admin/users/{id}/toggle-active` | Khóa / mở khóa tài khoản |
 
 ### Quản lý góp ý — `SuggestionAdminController` (`/admin/suggestions`)

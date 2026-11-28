@@ -8,6 +8,7 @@ import org.springframework.security.core.authority.AuthorityUtils;
 
 import com.huuhv.foodsndrinks.repository.projection.UsernameAccountStatus;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -29,18 +30,34 @@ class AccountStatusServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final AccountStatusService service = new AccountStatusService(userRepository);
 
-    private record Status(Boolean getActive, Role getRole) implements UserAccountStatus {
+    private static final Instant CHANGED_AT = Instant.parse("2026-11-28T03:00:00.123Z");
+
+    private record Status(Boolean getActive, Role getRole, Instant getPasswordChangedAt) implements UserAccountStatus {
+        /** Tài khoản chưa từng đổi mật khẩu. */
+        Status(Boolean active, Role role) {
+            this(active, role, null);
+        }
     }
 
     private void givenAccount(Boolean active, Role role) {
         when(userRepository.findAccountStatusByUsername(USERNAME)).thenReturn(Optional.of(new Status(active, role)));
     }
 
+    private void givenPasswordChangedAt(Instant changedAt) {
+        when(userRepository.findAccountStatusByUsername(USERNAME))
+                .thenReturn(Optional.of(new Status(true, Role.ROLE_USER, changedAt)));
+    }
+
+    private Optional<String> reasonForSessionAuthenticatedAt(Instant authenticatedAt) {
+        return service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER"),
+                authenticatedAt);
+    }
+
     @Test
     void activeAccount_withSameRole_keepsSession() {
         givenAccount(true, Role.ROLE_USER);
 
-        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER")))
+        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER"), null))
                 .isEmpty();
     }
 
@@ -50,14 +67,14 @@ class AccountStatusServiceTest {
 
         // vd. factor authority Spring Security tự thêm khi đăng nhập
         assertThat(service.sessionRevocationReason(USERNAME,
-                AuthorityUtils.createAuthorityList("ROLE_ADMIN", "FACTOR_PASSWORD"))).isEmpty();
+                AuthorityUtils.createAuthorityList("ROLE_ADMIN", "FACTOR_PASSWORD"), null)).isEmpty();
     }
 
     @Test
     void lockedAccount_revokesSession() {
         givenAccount(false, Role.ROLE_USER);
 
-        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER")))
+        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER"), null))
                 .contains(AccountStatusService.DISABLED);
     }
 
@@ -65,7 +82,7 @@ class AccountStatusServiceTest {
     void demotedAdmin_revokesSession() {
         givenAccount(true, Role.ROLE_USER);
 
-        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_ADMIN")))
+        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_ADMIN"), null))
                 .contains(AccountStatusService.ROLE_CHANGED);
     }
 
@@ -73,7 +90,7 @@ class AccountStatusServiceTest {
     void promotedUser_revokesSession_soNewRoleNeedsFreshLogin() {
         givenAccount(true, Role.ROLE_ADMIN);
 
-        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER")))
+        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER"), null))
                 .contains(AccountStatusService.ROLE_CHANGED);
     }
 
@@ -81,8 +98,56 @@ class AccountStatusServiceTest {
     void deletedOrRenamedAccount_revokesSession() {
         when(userRepository.findAccountStatusByUsername(USERNAME)).thenReturn(Optional.empty());
 
-        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER")))
+        assertThat(service.sessionRevocationReason(USERNAME, AuthorityUtils.createAuthorityList("ROLE_USER"), null))
                 .contains(AccountStatusService.ACCOUNT_NOT_FOUND);
+    }
+
+    // -------------------------------------------------------
+    // Đổi mật khẩu (issue #37)
+    // -------------------------------------------------------
+
+    @Test
+    void sessionAuthenticatedBeforePasswordChange_isRevoked() {
+        givenPasswordChangedAt(CHANGED_AT);
+
+        assertThat(reasonForSessionAuthenticatedAt(CHANGED_AT.minusMillis(1)))
+                .contains(AccountStatusService.PASSWORD_CHANGED);
+        assertThat(reasonForSessionAuthenticatedAt(CHANGED_AT.minusSeconds(3600)))
+                .contains(AccountStatusService.PASSWORD_CHANGED);
+    }
+
+    @Test
+    void sessionAuthenticatedAtOrAfterPasswordChange_isKept() {
+        givenPasswordChangedAt(CHANGED_AT);
+
+        // Bằng đúng mốc: session vừa tự đổi mật khẩu được ghi lại mốc = passwordChangedAt
+        assertThat(reasonForSessionAuthenticatedAt(CHANGED_AT)).isEmpty();
+        // Sau mốc: đăng nhập lại bằng mật khẩu mới
+        assertThat(reasonForSessionAuthenticatedAt(CHANGED_AT.plusMillis(1))).isEmpty();
+    }
+
+    @Test
+    void sessionWithoutAuthenticationTime_isRevoked_onceThePasswordHasEverChanged() {
+        givenPasswordChangedAt(CHANGED_AT);
+
+        // Fail-closed: không biết session đăng nhập lúc nào thì coi như cũ
+        assertThat(reasonForSessionAuthenticatedAt(null)).contains(AccountStatusService.PASSWORD_CHANGED);
+    }
+
+    @Test
+    void accountThatNeverChangedPassword_keepsEverySession_withOrWithoutAuthenticationTime() {
+        givenPasswordChangedAt(null);   // kể cả tài khoản chỉ đăng nhập OAuth2 (không có mật khẩu)
+
+        assertThat(reasonForSessionAuthenticatedAt(null)).isEmpty();
+        assertThat(reasonForSessionAuthenticatedAt(CHANGED_AT.minusSeconds(3600))).isEmpty();
+    }
+
+    @Test
+    void lockedOrDemotedAccount_isReportedBeforePasswordChange() {
+        when(userRepository.findAccountStatusByUsername(USERNAME))
+                .thenReturn(Optional.of(new Status(false, Role.ROLE_USER, CHANGED_AT)));
+
+        assertThat(reasonForSessionAuthenticatedAt(CHANGED_AT.minusSeconds(1))).contains(AccountStatusService.DISABLED);
     }
 
     // -------------------------------------------------------
@@ -90,6 +155,10 @@ class AccountStatusServiceTest {
     // -------------------------------------------------------
 
     private record NamedStatus(String getUsername, Boolean getActive, Role getRole) implements UsernameAccountStatus {
+        @Override
+        public Instant getPasswordChangedAt() {
+            return null;
+        }
     }
 
     @Test
@@ -114,13 +183,17 @@ class AccountStatusServiceTest {
 
     @Test
     void revocationReason_sameRulesAsSessionCheck() {
-        assertThat(AccountStatusService.revocationReason(null, AuthorityUtils.createAuthorityList("ROLE_USER")))
+        assertThat(AccountStatusService.revocationReason(null, AuthorityUtils.createAuthorityList("ROLE_USER"), null))
                 .contains(AccountStatusService.ACCOUNT_NOT_FOUND);
         assertThat(AccountStatusService.revocationReason(new Status(false, Role.ROLE_USER),
-                AuthorityUtils.createAuthorityList("ROLE_USER"))).contains(AccountStatusService.DISABLED);
+                AuthorityUtils.createAuthorityList("ROLE_USER"), null)).contains(AccountStatusService.DISABLED);
         assertThat(AccountStatusService.revocationReason(new Status(true, Role.ROLE_USER),
-                AuthorityUtils.createAuthorityList("ROLE_ADMIN"))).contains(AccountStatusService.ROLE_CHANGED);
+                AuthorityUtils.createAuthorityList("ROLE_ADMIN"), null)).contains(AccountStatusService.ROLE_CHANGED);
         assertThat(AccountStatusService.revocationReason(new Status(true, Role.ROLE_USER),
-                AuthorityUtils.createAuthorityList("ROLE_USER"))).isEmpty();
+                AuthorityUtils.createAuthorityList("ROLE_USER"), null)).isEmpty();
+        // Kết nối WebSocket mở từ session đăng nhập trước khi mật khẩu đổi
+        assertThat(AccountStatusService.revocationReason(new Status(true, Role.ROLE_USER, CHANGED_AT),
+                AuthorityUtils.createAuthorityList("ROLE_USER"), CHANGED_AT.minusSeconds(1)))
+                .contains(AccountStatusService.PASSWORD_CHANGED);
     }
 }

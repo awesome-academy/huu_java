@@ -1,5 +1,6 @@
 package com.huuhv.foodsndrinks.service.websocket;
 
+import com.huuhv.foodsndrinks.utils.SessionAuthenticationTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServletServerHttpRequest;
@@ -49,6 +50,18 @@ class ServletHttpSessionLookupTest {
 
         session.invalidate();
         assertThat(lookup.isAlive(webSocket)).isFalse();
+    }
+
+    @Test
+    void handshake_copiesTheSessionAuthenticationTime_soSocketsOfOldLoginsCanBeRevokedAfterPasswordChange() {
+        Instant authenticatedAt = Instant.parse("2026-11-28T03:00:00.123Z");
+        MockHttpSession stamped = new MockHttpSession(null, "http-3");
+        stamped.setAttribute(SessionAuthenticationTime.ATTRIBUTE, authenticatedAt.toEpochMilli());
+        ServletHttpSessionLookup lookup = new ServletHttpSessionLookup();
+
+        assertThat(HttpSessionLookup.authenticatedAt(handshake(lookup, stamped))).isEqualTo(authenticatedAt);
+        // Session không mang mốc (đăng nhập trước khi có tính năng này) → null, job coi là cũ nếu mật khẩu đã từng đổi
+        assertThat(HttpSessionLookup.authenticatedAt(handshake(lookup, new MockHttpSession(null, "http-4")))).isNull();
     }
 
     @Test

@@ -30,12 +30,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByUsernameOrEmail(String username, String email);
     Optional<User> findByEmail(String email);
 
-    /** Chạy ở mỗi request của người dùng đã đăng nhập (xem {@code AccountStatusService}) — chỉ lấy 2 cột, theo index UNIQUE. */
-    @Query("SELECT u.isActive AS active, u.role AS role FROM User u WHERE u.username = :username")
+    /** Chạy ở mỗi request của người dùng đã đăng nhập (xem {@code AccountStatusService}) — chỉ lấy 3 cột, theo index UNIQUE. */
+    @Query("SELECT u.isActive AS active, u.role AS role, u.passwordChangedAt AS passwordChangedAt"
+            + " FROM User u WHERE u.username = :username")
     Optional<UserAccountStatus> findAccountStatusByUsername(@Param("username") String username);
 
     /** Trạng thái của nhiều tài khoản trong một query (job kiểm tra lại các kết nối WebSocket đang mở). */
-    @Query("SELECT u.username AS username, u.isActive AS active, u.role AS role FROM User u"
+    @Query("SELECT u.username AS username, u.isActive AS active, u.role AS role,"
+            + " u.passwordChangedAt AS passwordChangedAt FROM User u"
             + " WHERE u.username IN :usernames")
     List<UsernameAccountStatus> findAccountStatusesByUsernameIn(@Param("usernames") Collection<String> usernames);
     Optional<User> findByAuthProviderAndProviderId(AuthProvider authProvider, String providerId);
