@@ -40,6 +40,7 @@ import java.util.stream.LongStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -287,14 +288,31 @@ class OrderServiceTest {
         }
 
         @Test
-        void updateItemOfAnotherUser_isRejected() {
+        void updateItemOfAnotherUser_isReportedExactlyLikeAnUnknownItem() {
             Order aliceCart = cartOf(alice, OrderStatus.CART);
             OrderDetail coffee = line(500L, aliceCart, product(10L, "25000", true), 1);
             when(orderDetailRepository.findById(500L)).thenReturn(Optional.of(coffee));
+            when(orderDetailRepository.findById(404L)).thenReturn(Optional.empty());
 
-            assertThatIllegalArgumentException()
-                    .isThrownBy(() -> orderService.updateCartItemQuantity(mallory, 500L, 50));
+            // Cùng exception + cùng thông điệp → cùng 404: không dò được id nào đang nằm trong giỏ của người khác
+            Throwable foreign = catchThrowable(() -> orderService.updateCartItemQuantity(mallory, 500L, 50));
+            Throwable unknown = catchThrowable(() -> orderService.updateCartItemQuantity(mallory, 404L, 50));
+
+            assertThat(foreign).isInstanceOf(ResourceNotFoundException.class).hasMessage(unknown.getMessage());
+            assertThat(unknown).isInstanceOf(ResourceNotFoundException.class);
             assertThat(coffee.getQuantity()).isEqualTo(1);
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        void itemOfAnotherUsersPlacedOrder_isNotFound_notABadRequest() {
+            // Trạng thái đơn của người khác cũng không được lộ qua mã lỗi (400 "không thể cập nhật" chỉ dành cho chủ đơn)
+            Order alicePlaced = cartOf(alice, OrderStatus.PENDING);
+            OrderDetail coffee = line(500L, alicePlaced, product(10L, "25000", true), 1);
+            when(orderDetailRepository.findById(500L)).thenReturn(Optional.of(coffee));
+
+            assertThatThrownBy(() -> orderService.removeCartItem(mallory, 500L))
+                    .isInstanceOf(ResourceNotFoundException.class);
             verify(orderRepository, never()).save(any());
         }
 
@@ -313,12 +331,13 @@ class OrderServiceTest {
         }
 
         @Test
-        void removeItemOfAnotherUser_isRejected() {
+        void removeItemOfAnotherUser_isNotFound() {
             Order aliceCart = cartOf(alice, OrderStatus.CART);
             OrderDetail coffee = line(500L, aliceCart, product(10L, "25000", true), 1);
             when(orderDetailRepository.findById(500L)).thenReturn(Optional.of(coffee));
 
-            assertThatIllegalArgumentException().isThrownBy(() -> orderService.removeCartItem(mallory, 500L));
+            assertThatThrownBy(() -> orderService.removeCartItem(mallory, 500L))
+                    .isInstanceOf(ResourceNotFoundException.class);
             assertThat(aliceCart.getOrderDetails()).containsExactly(coffee);
             verify(orderRepository, never()).save(any());
         }

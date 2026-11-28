@@ -302,13 +302,18 @@ public class OrderService {
         return orderRepository.save(cart);
     }
 
+    /**
+     * Món {@code orderDetailId} trong GIỎ HÀNG của chính {@code user}. Món của người khác được báo y hệt món không tồn
+     * tại (cùng exception, cùng thông điệp → cùng 404): id tăng dần nên câu trả lời khác nhau sẽ cho phép dò id nào
+     * đang có trong giỏ/đơn của người khác. Món thuộc đơn ĐÃ ĐẶT của chính user là dữ liệu của họ → 400 nói rõ lý do.
+     */
     private OrderDetail requireOwnedCartItem(User user, Long orderDetailId) {
         OrderDetail detail = orderDetailRepository.findById(orderDetailId)
+                .filter(found -> found.getOrder().getUser() != null
+                        && found.getOrder().getUser().getId().equals(user.getId()))
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm trong giỏ không tồn tại!"));
 
-        Order order = detail.getOrder();
-        if (order.getUser() == null || !order.getUser().getId().equals(user.getId())
-                || order.getStatus() != OrderStatus.CART) {
+        if (detail.getOrder().getStatus() != OrderStatus.CART) {
             throw new IllegalArgumentException("Không thể cập nhật giỏ hàng này!");
         }
         return detail;

@@ -69,6 +69,16 @@ Hỗ trợ **Google** (OIDC), **Facebook**, **Twitter/X** — cấu hình trong 
 
 Các endpoint AJAX vẫn thuộc chain web (session + CSRF token), không phải API JWT.
 
+Lỗi của ba endpoint AJAX cũng là JSON `{"message": "..."}` (`main.js` hiện `message` thành toast), không phải trang lỗi HTML:
+
+| Mã | Khi nào |
+|---|---|
+| `404` | Sản phẩm không tồn tại (`/cart/add`); món `detailId` không tồn tại **hoặc thuộc giỏ/đơn của người khác** (`update`, `remove`) — hai trường hợp trả lời giống hệt nhau nên không dò được id của người khác |
+| `400` | Sản phẩm đã ngừng kinh doanh; món thuộc một đơn **đã đặt** của chính bạn (không còn là giỏ hàng) |
+| `403` | Thiếu/sai CSRF token |
+
+Chưa đăng nhập → redirect `/login` như mọi trang.
+
 ### Đơn hàng — `OrderController`
 
 | Method | Path | Auth | Mô tả |
